@@ -36,10 +36,32 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <optional>
 
 extern "C" {
 #include <correct.h>
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// bitstream_state                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+LIBMODEM_AX25_NAMESPACE_BEGIN
+
+void bitstream_state::reset()
+{
+    searching = true;
+    complete = false;
+    last_nrzi_level = 0;
+    frame_start_index = 0;
+    bitstream.clear();
+}
+
+LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
 //                                                                  //
@@ -54,9 +76,14 @@ std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const aprs::route
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) const
+bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
+}
+
+bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, aprs::router::packet& p)
+{
+    return converter.try_decode(bit, p);
 }
 
 // **************************************************************** //
@@ -72,9 +99,14 @@ std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const aprs::router
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) const
+bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
+}
+
+bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, aprs::router::packet& p)
+{
+    return false;
 }
 
 // **************************************************************** //
@@ -87,12 +119,23 @@ bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bi
 
 std::vector<uint8_t> basic_bitstream_converter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
     return encode_basic_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) const
+bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
 {
-    return try_decode_basic_bitstream(bitstream, offset, p, read);
+LIBMODEM_AX25_USING_NAMESPACE
+
+    return try_decode_basic_bitstream(bitstream, offset, p, read, state);
+}
+
+bool basic_bitstream_converter::try_decode(uint8_t bit, aprs::router::packet& p)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    return try_decode_basic_bitstream(bit, p, state);
 }
 
 // **************************************************************** //
@@ -105,13 +148,53 @@ bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream
 
 std::vector<uint8_t> fx25_bitstream_converter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
 {
+LIBMODEM_FX25_USING_NAMESPACE
+
     return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) const
+bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
 {
+LIBMODEM_FX25_USING_NAMESPACE
+
     return false;
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// bitstream routines                                               //
+//                                                                  //
+// ends_with_hdlc_flag                                              //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+LIBMODEM_AX25_NAMESPACE_BEGIN
+
+bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream)
+{
+    if (bitstream.size() < 8)
+    {
+        return false;
+    }
+
+    size_t start = bitstream.size() - 8;
+
+    // HDLC flag pattern: 0 1 1 1 1 1 1 0 (LSB first representation of 0x7E)
+    return bitstream[start + 0] == 0 &&
+        bitstream[start + 1] == 1 &&
+        bitstream[start + 2] == 1 &&
+        bitstream[start + 3] == 1 &&
+        bitstream[start + 4] == 1 &&
+        bitstream[start + 5] == 1 &&
+        bitstream[start + 6] == 1 &&
+        bitstream[start + 7] == 0;
+}
+
+LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
 //                                                                  //
@@ -292,6 +375,8 @@ std::string trim(const std::string& str)
 //                                                                  //
 // **************************************************************** //
 
+LIBMODEM_AX25_NAMESPACE_BEGIN
+
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path)
 {
     std::vector<uint8_t> header;
@@ -347,11 +432,15 @@ std::array<uint8_t, 7> encode_address(const struct address& address, bool last)
 
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last)
 {
+	assert(ssid >= 0 && ssid <= 15);
+
     std::array<uint8_t, 7> data = {};
 
     // AX.25 addresses are always exactly 7 bytes:
-    // - Bytes 0-5: Callsign (6 characters, space-padded)
-    // - Byte 6: SSID + control bits
+    // 
+    //  - Bytes 0-5: Callsign (6 characters, space-padded)
+	//    - Each character is left-shifted by 1 bit
+    //  - Byte 6: SSID + last used marker
 
     for (size_t i = 0; i < 6; i++)
     {
@@ -372,13 +461,19 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
 
     // Encode the SSID byte (byte 6)
     // This byte contains multiple fields.
+    // 
+    // Byte 6 initialized with 01100000 (0x60)
+    // 
+    //  - SSID represented as ASCII code and shift left by one bit
+    //  - Bit 0 set to 1 if this is the last address in the path
+    //  - Bit 7 (H - bit) set to 1 if the address is used(marked with*)
     //
-    // Byte Format:
+    // Byte 6 Format:
     //
     //      H-bit  Reserved     SSID        Last
-    //   -------------------------------------------------------------
+    //   ------------------------------------------
     //        7       6 5      4 3 2 1        0          bits
-    //   -------------------------------------------------------------
+    //   ------------------------------------------
     //        1        2          4           1
     //
     // Examples:
@@ -396,9 +491,11 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
     // 
     //   0 1 1 0 0 0 0 0 = 0x60                                            starting value
     //     ~~~
-    //   0 1 1 0 0 1 0 1 = 0x60 | (ssid + '0') = 0x65                      append ssid
-    //           ~~~~~~~
-    //   0 1 1 0 1 0 1 0 = 0x60 | (ssid + '0') << 1 = 0x6A                 append ssid
+    //   0 1 0 1 = (ssid + '0') = 0x05                                     calculate ssid
+    // 
+    //   0 1 0 1 0 = (ssid + '0') << 1 = 0x0A                              shift SSID left by 1 bit
+    //   ~~~~~~~
+	//   0 1 1 0 1 0 1 0 = 0x60 | (ssid + '0') << 1 = 0x6A                 append ssid
     //         ~~~~~~~
     //   0 1 1 0 1 0 1 1 = 0x60 | (ssid + '0') << 1 | 0x01 = 0x6B          mark as last address
     //                 ~
@@ -458,18 +555,7 @@ std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t> frame, in
 
 void parse_address(std::string_view data, std::string& address_text, int& ssid, bool& mark)
 {
-    address_text = std::string(6, '\0'); // addresses are 6 characters long
-
-    for (size_t i = 0; i < 6; i++)
-    {
-        address_text[i] = ((uint8_t)data[i]) >> 1; // data is organized in 7 bits
-    }
-
-    ssid = (data[6] >> 1) & 0xf; // 0b00001111
-
-    mark = (data[6] & 0b10000000) != 0; // 0x80 masks for the H bit in the last byte
-
-    address_text = trim(address_text);
+	try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
 }
 
 void parse_address(std::string_view data, struct address& address)
@@ -507,12 +593,39 @@ void parse_addresses(std::string_view data, std::vector<address>& addresses)
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::packet& p)
 {
+	address from;
+	address to;
+	std::vector<address> path;
+	std::vector<uint8_t> data;
+
+    if (try_decode_frame(frame_bytes, from, to, path, data))
+    {
+        p.from = to_string(from);
+        p.to = to_string(to);
+
+        p.path.clear();
+
+        for (const auto& path_address : path)
+        {
+            p.path.push_back(to_string(path_address));
+        }
+
+        p.data = std::string(data.begin(), data.end());
+
+		return true;
+    }
+
+	return false;
+}
+
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
+{
     if (frame_bytes.size() < 18)
     {
         return false;
     }
 
-    std::array<uint8_t, 2> computed_crc = compute_crc(frame_bytes.begin(), frame_bytes.end() - 2);
+    std::array<uint8_t, 2> computed_crc = compute_crc_using_lut(frame_bytes.begin(), frame_bytes.end() - 2);
     std::array<uint8_t, 2> received_crc = { frame_bytes[frame_bytes.size() - 2], frame_bytes[frame_bytes.size() - 1] };
 
     if (computed_crc != received_crc)
@@ -520,11 +633,8 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::pac
         return false;
     }
 
-    address to_address;
-    parse_address({ reinterpret_cast<const char*>(&(*frame_bytes.begin())), 7 }, to_address);
-
-    address from_address;
-    parse_address({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + 7))), 7 }, from_address);
+    parse_address({ reinterpret_cast<const char*>(&(*frame_bytes.begin())), 7 }, to);
+    parse_address({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + 7))), 7 }, from);
 
     size_t addresses_start = 14;
     auto addresses_end = std::find(frame_bytes.begin() + addresses_start, frame_bytes.end() - 2, 0x03);
@@ -542,8 +652,7 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::pac
         return false;
     }
 
-    std::vector<address> path_addresses;
-    parse_addresses({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + addresses_start))), addresses_length }, path_addresses);
+    parse_addresses({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + addresses_start))), addresses_length }, path);
 
     size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
     size_t info_field_length = (frame_bytes.size() - 2) - info_field_start; // subtract CRC bytes
@@ -553,72 +662,158 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::pac
         return false;
     }
 
-    std::string info_field;
     if (info_field_length > 0)
     {
-        info_field = std::string(frame_bytes.begin() + info_field_start, frame_bytes.begin() + info_field_start + info_field_length);
+        data = std::vector<uint8_t>(frame_bytes.begin() + info_field_start, frame_bytes.begin() + info_field_start + info_field_length);
     }
-
-    p.from = to_string(from_address);
-    p.to = to_string(to_address);
-
-    p.path.clear();
-
-    for (const auto& path_address : path_addresses)
-    {
-        p.path.push_back(to_string(path_address));
-    }
-
-    p.data = info_field;
 
     return true;
 }
 
-bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
+bool try_decode_basic_bitstream(uint8_t bit, aprs::router::packet& packet, bitstream_state& state)
 {
-    read = 0;
+    // Process one bit at a time through the AX.25 bitstream decoding pipeline:
+    //
+    // 1. NRZI decode the incoming raw bit
+    // 2. Add to internal buffer
+    // 3. Check for HDLC flag patterns (0x7E = 01111110)
+    // 4. State machine:
+    //    - searching: Looking for first preamble flag
+    //    - in_preamble: Found flag(s), waiting for frame data or more flags
+    //    - in_frame: Collecting frame data until postamble flag
+    // 5. When postamble found, decode the accumulated frame
+    //
+    // Returns true when a complete packet has been decoded into 'packet'
 
-    if (offset >= bitstream.size())
+    // After a successful decode, we preserve the state (in_preamble with the shared flag)
+    // Only reset the complete flag, not the entire state - this allows shared flags to work
+    // where the postamble of one packet serves as the preamble of the next
+    if (state.complete)
     {
-        return false;
+        state.complete = false;
+        // Don't reset phase, bitstream, or frame_start_index
+        // They were set correctly after decode to handle potential shared flags
     }
 
-    std::vector<uint8_t> decoded_bits(bitstream.begin() + offset, bitstream.end());
+    // NRZI decode: no transition = 1, transition = 0
+    uint8_t decoded_bit = (bit == state.last_nrzi_level) ? 1 : 0;
 
-    nrzi_decode(decoded_bits.begin(), decoded_bits.end());
+    state.last_nrzi_level = bit;
 
-    auto last_preamble_flag = find_last_consecutive_hdlc_flag(decoded_bits.begin(), decoded_bits.end());
-    if (last_preamble_flag == decoded_bits.end())
+    // Add decoded bit to buffer
+    state.bitstream.push_back(decoded_bit);
+
+    // Check for HDLC flag pattern in the last 8 bits
+    bool found_hdlc_flag = ends_with_hdlc_flag(state.bitstream);
+
+    if (state.searching)
     {
-        return false;
+        // Looking for the first HDLC flag
+        if (found_hdlc_flag)
+        {
+            state.searching = false;
+            state.in_preamble = true;
+            state.frame_start_index = state.bitstream.size(); // Frame starts after this flag
+        }
+
+        // Optimization: prevent buffer from growing indefinitely while searching
+        // Keep only the last 8 bits needed for flag detection
+        else if (state.bitstream.size() > 16)
+        {
+            state.bitstream.erase(state.bitstream.begin(), state.bitstream.begin() + (state.bitstream.size() - 8));
+        }
+    }
+    else if (state.in_preamble)
+    {
+        // We've seen at least one flag. Check if this is another consecutive flag
+        // or if frame data has started.
+        if (found_hdlc_flag)
+        {
+            // Another consecutive flag - update frame start position
+            state.frame_start_index = state.bitstream.size();
+        }
+        else
+        {
+            // Check if we have at least 8 bits since the last flag
+            // to confirm we're in frame data (not still at a flag boundary)
+            if (state.bitstream.size() >= state.frame_start_index + 8)
+            {
+				state.in_preamble = false;
+                state.in_frame = true;
+            }
+        }
+    }
+    else if (state.in_frame)
+    {
+        // Collecting frame data. Check for postamble flag.
+        if (found_hdlc_flag)
+        {
+            // Found postamble! Extract frame bits (excluding the 8-bit postamble flag)
+            size_t frame_end = state.bitstream.size() - 8;
+
+            if (frame_end > state.frame_start_index)
+            {
+                // Extract frame bits
+                std::vector<uint8_t> frame_bits(state.bitstream.begin() + state.frame_start_index, state.bitstream.begin() + frame_end);
+
+                // Try to decode the packet
+                bool result = try_decode_packet(frame_bits.begin(), frame_bits.end(), packet);
+
+                // Prepare for next packet - the postamble can be the preamble of the next
+                // Keep only the last 8 bits (the flag) for potential reuse as preamble
+                state.bitstream.erase(state.bitstream.begin(), state.bitstream.begin() + frame_end);
+                state.frame_start_index = state.bitstream.size(); // = 8 (position after the flag)
+                state.in_preamble = true; // Ready for next frame
+				state.in_frame = false;
+                state.complete = true;
+
+                return result;
+            }
+            else
+            {
+                // Empty frame - just consecutive flags, stay in preamble mode
+                state.frame_start_index = state.bitstream.size();
+				state.in_frame = false;
+				state.in_preamble = true;
+            }
+        }
+
+        // Continue collecting frame bits
+        //
+        // Safety check: prevent runaway buffer growth (max reasonable AX.25 frame)
+        // AX.25 max frame is ~330 bytes = 2640 bits, with bit stuffing could be ~3200 bits
+        // Add preamble flags overhead, let's say 4000 bits max
+
+        assert(state.bitstream.size() < 8000);
+
+        if (state.bitstream.size() > 8000)
+        {
+            // Something went wrong (noise, lost sync), reset to search mode
+			state.searching = true;
+			state.in_frame = false;
+            state.bitstream.clear();
+            state.frame_start_index = 0;
+        }
     }
 
-    auto frame_data_start = last_preamble_flag + 8;
-    if (frame_data_start >= decoded_bits.end())
-    {
-        return false;
-    }
-    
-    auto frame_data_end = find_first_hdlc_flag(frame_data_start, decoded_bits.end());
-    if (frame_data_end == decoded_bits.end())
-    {
-        return false;
-    }
-
-    // Distance within decoded_bits = distance from bitstream[offset]
-    // So read is the correct delta to add to offset
-    read = std::distance(decoded_bits.begin(), frame_data_end) + 8; // include the ending flag
-
-    std::vector<uint8_t> unstuffed_bits;
-
-    bit_unstuff(frame_data_start, frame_data_end, std::back_inserter(unstuffed_bits));
-
-    std::vector<uint8_t> frame_bytes;
-
-    bits_to_bytes(unstuffed_bits.begin(), unstuffed_bits.end(), std::back_inserter(frame_bytes));
-
-    return try_decode_frame(frame_bytes, p);
+    return false; // No complete packet yet
 }
+
+bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& packet, size_t& read, bitstream_state& state)
+{
+    for (size_t i = offset; i < bitstream.size(); i++)
+    {
+        if (try_decode_basic_bitstream(bitstream[i], packet, state))
+        {
+            read = i - offset + 1;
+            return true;
+        }
+    }
+    read = bitstream.size() - offset;
+    return false;
+}
+
+LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
 //                                                                  //
@@ -630,72 +825,36 @@ bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t of
 //                                                                  //
 // **************************************************************** //
 
+LIBMODEM_FX25_NAMESPACE_BEGIN
+
 std::vector<uint8_t> encode_fx25_bitstream(const aprs::router::packet& p, int preamble_flags, int postamble_flags)
 {
-    // Create AX.25 frame from the packet
-    // Convert AX.25 frame to bits
-    // Bit-stuff the bits
+LIBMODEM_AX25_USING_NAMESPACE
 
-    std::vector<uint8_t> ax25_frame = encode_frame(p);   
-        
-    std::vector<uint8_t> frame_bits;
-
-    bytes_to_bits(ax25_frame.begin(), ax25_frame.end(), std::back_inserter(frame_bits));
-
-    std::vector<uint8_t> stuffed_bits;
-
-    bit_stuff(frame_bits.begin(), frame_bits.end(), std::back_inserter(stuffed_bits));
-
-    // Build complete Ax.25 frame bits: preamble + stuffed bits + postamble
-
-    std::vector<uint8_t> ax25_bits;
-
-    add_hdlc_flags(std::back_inserter(ax25_bits), 1);
-    ax25_bits.insert(ax25_bits.end(), stuffed_bits.begin(), stuffed_bits.end());
-    add_hdlc_flags(std::back_inserter(ax25_bits), 1);
-
-    // Create FX.25 frame
-
-    std::vector<uint8_t> ax25_packet_bytes;
-
-    bits_to_bytes(ax25_bits.begin(), ax25_bits.end(), std::back_inserter(ax25_packet_bytes));
-
-    std::vector<uint8_t> fx25_frame = encode_fx25_frame(ax25_packet_bytes);
-
-    if (fx25_frame.empty())
-    {
-        return {};
-    }
-
-    // Build complete bitstream: preamble + data + postamble
-
-    std::vector<uint8_t> bitstream;
-
-    add_hdlc_flags(std::back_inserter(bitstream), preamble_flags);
-    bytes_to_bits(fx25_frame.begin(), fx25_frame.end(), std::back_inserter(bitstream));
-    add_hdlc_flags(std::back_inserter(bitstream), postamble_flags);
-
-    // NRZI encoding of the bitstream
-
-    nrzi_encode(bitstream.begin(), bitstream.end());
-
-    return bitstream;
+    std::vector<uint8_t> ax25_frame = encode_frame(p);
+    return encode_fx25_bitstream(ax25_frame.begin(), ax25_frame.end(), preamble_flags, postamble_flags);
 }
 
 std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
 {
     // FX.25 RS code modes from the specification
     // Each mode defines: correlation_tag, transmitted_size, data_size, check_bytes
+	// Sorted by increasing data size
     constexpr std::tuple<uint64_t, int, int, int> modes[] =
     {
-        {0xB74DB7DF8A532F3EULL, 255, 239, 16},  // Tag_01: RS(255,239)
-        {0x26FF60A600CC8FDEULL, 144, 128, 16},  // Tag_02: RS(144,128)
-        {0xC7DC0508F3D9B09EULL,  80,  64, 16},  // Tag_03: RS(80,64)
-        {0x8F056EB4369660EEULL,  48,  32, 16},  // Tag_04: RS(48,32)
-        {0x6E260B1AC5835FAEULL, 255, 223, 32},  // Tag_05: RS(255,223)
-        {0xFF94DC634F1CFF4EULL, 160, 128, 32},  // Tag_06: RS(160,128)
-        {0x1EB7B9CDBC09C00EULL,  96,  64, 32},  // Tag_07: RS(96,64)
-        {0xDBF869BD2DBB1776ULL,  64,  32, 32},  // Tag_08: RS(64,32)
+        { 0x8F056EB4369660EEULL,  48,  32, 16 },  // Tag_04: RS(48,32)
+        { 0xDBF869BD2DBB1776ULL,  64,  32, 32 },  // Tag_08: RS(64,32)
+        { 0xC7DC0508F3D9B09EULL,  80,  64, 16 },  // Tag_03: RS(80,64)
+        { 0x1EB7B9CDBC09C00EULL,  96,  64, 32 },  // Tag_07: RS(96,64)
+        { 0x26FF60A600CC8FDEULL, 144, 128, 16 },  // Tag_02: RS(144,128)
+        { 0xFF94DC634F1CFF4EULL, 160, 128, 32 },  // Tag_06: RS(160,128)
+        { 0x6E260B1AC5835FAEULL, 255, 223, 32 },  // Tag_05: RS(255,223)
+        { 0xB74DB7DF8A532F3EULL, 255, 239, 16 },  // Tag_01: RS(255,239)
+#if 0
+        { 0x3ADB0C13DEAE2836ULL, 255, 191, 64 },  // Tag_09: RS(255,191)
+		{ 0xAB69DB6A543188D6ULL, 192, 128, 64 },  // Tag_10: RS(192,128)
+		{ 0x4A4ABEC4A724B796ULL, 128,  64, 64 },  // Tag_11: RS(128,64)
+#endif
     };
 
     // Select smallest RS code that fits
@@ -715,6 +874,7 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
             break;
         }
     }
+
     // FX.25 Frame Structure (transmitted left to right):
     // 
     // +-----------------+------------------------+--------------------+
@@ -749,7 +909,7 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
 
     // Prepare the data block for RS encoding
     // The AX.25 packet bytes are placed here UNMODIFIED
-    // This preserves backward compatibility - the AX.25 portion is unchange
+    // This preserves backward compatibility - the AX.25 portion is unchanged
 
     std::vector<uint8_t> rs_data_block(data_size, 0x00);
 
@@ -758,7 +918,7 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
     // packet_bytes contains: [0x7E] [AX.25 frame with bit stuffing] [0x7E]
 
     std::copy(packet_bytes.begin(), packet_bytes.end(), rs_data_block.begin());
-   
+
     // Pad the rest with 0x7E (HDLC flag pattern)
     // This padding allows the RS encoder to work with fixed block sizes
     // 0x7E is chosen because AX.25 receivers will see it as idle flags
@@ -776,11 +936,21 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
     // RS encoding does NOT modify the data portion!
     // It only ADDS check bytes for error correction
     //
+    // For shortened RS codes (e.g., RS(48,32)), we must encode using the parent
+    // RS(255, 255-check_size) code. The data is placed at the beginning with
+    // implicit trailing zeros to fill to full length.
+    //
     // Create RS encoder with:
     // 
     //   - polynomial 0x11d (x^8 + x^4 + x^3 + x^2 + 1)
     //   - fcr = 1 (first consecutive root)
     //   - prim = 1 (primitive element)
+
+    int full_data_size = 255 - check_size;
+
+    std::vector<uint8_t> full_block(full_data_size, 0x00);
+
+    std::copy(rs_data_block.begin(), rs_data_block.end(), full_block.begin());
 
     correct_reed_solomon* rs = correct_reed_solomon_create(correct_rs_primitive_polynomial_8_4_3_2_0, 1, 1, check_size);
 
@@ -790,30 +960,37 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
         return {};
     }
 
-    std::vector<uint8_t> encoded_block(total);
+    std::vector<uint8_t> full_encoded(255);
 
     // Encode: creates data + check bytes
-    // The first 'data_size' bytes are our data (unchanged)
+    // The first 'full_data_size' bytes are our data (unchanged)
     // The last 'check_size' bytes are the calculated RS parity
 
-    ssize_t result = correct_reed_solomon_encode(rs, rs_data_block.data(), data_size, encoded_block.data());
-
-    if (result != total)
-    {
-        correct_reed_solomon_destroy(rs);
-        return {};
-    }
+    ssize_t result = correct_reed_solomon_encode(rs, full_block.data(), full_data_size, full_encoded.data());
 
     correct_reed_solomon_destroy(rs);
 
-    // Append the encoded block to output
+    if (result != 255)
+    {
+        return {};
+    }
+
+    // Append the encoded block to output (only the transmitted portion)
     // 
     // This contains:
     // 
     //   - First 'data_size' bytes: The EXACT SAME AX.25 packet + padding
     //   - Last 'check_size' bytes: RS parity for error correction
 
-    output.insert(output.end(), encoded_block.begin(), encoded_block.end());
+    for (int i = 0; i < data_size; i++)
+    {
+        output.push_back(full_encoded[i]);
+    }
+
+    for (int i = 0; i < check_size; i++)
+    {
+        output.push_back(full_encoded[full_data_size + i]);
+    }
 
     // Final transmitted frame structure:
     // [8-byte correlation tag][Unmodified AX.25][0x7E padding][RS check bytes]
@@ -824,3 +1001,5 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes)
 
     return output;
 }
+
+LIBMODEM_FX25_NAMESPACE_END
