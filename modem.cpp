@@ -1,4 +1,35 @@
-﻿#include "modem.h"
+﻿// **************************************************************** //
+// modem - APRS modem                                               // 
+// Version 0.1.0                                                    //
+// https://github.com/iontodirel/libmodem                           //
+// Copyright (c) 2025 Ion Todirel                                   //
+// **************************************************************** //
+//
+// modem.cpp
+//
+// MIT License
+//
+// Copyright (c) 2025 Ion Todirel
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files(the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#include "modem.h"
 
 #include "modulator.h"
 #include "bitstream.h"
@@ -14,16 +45,22 @@
 //                                                                  //
 // **************************************************************** //
 
-void modem::initialize(audio_stream& stream, modulator_base& modulator, bitstream_converter_base& converter)
+void modem::initialize(audio_stream_base& stream, modulator_base& modulator)
 {
     audio = std::ref(stream);
     mod = std::ref(modulator);
-    conv = std::ref(converter);
 
     double ms_per_flag = (8.0 * 1000.0) / baud_rate_;
 
     preamble_flags = (std::max)(static_cast<int>(tx_delay_ms / ms_per_flag), 1);
     postamble_flags = (std::max)(static_cast<int>(tx_tail_ms / ms_per_flag), 1);
+}
+
+void modem::initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter)
+{
+    conv = std::ref(converter);
+
+    initialize(stream, modulator);
 }
 
 void modem::transmit()
@@ -54,9 +91,9 @@ void modem::transmit(aprs::router::packet p)
 void modem::transmit(const std::vector<uint8_t>& bits)
 {
     modulator_base& modulator = mod.value().get();
-    struct audio_stream& audio_stream = audio.value().get();
+    struct audio_stream_base& audio_stream = audio.value().get();
 
-    // AFSK modulation
+    // A(FSK) modulation
 
     std::vector<double> audio_buffer;
 
@@ -73,7 +110,7 @@ void modem::transmit(const std::vector<uint8_t>& bits)
 
 void modem::postprocess_audio(std::vector<double>& audio_buffer)
 {
-    struct audio_stream& audio_stream = audio.value().get();
+    struct audio_stream_base& audio_stream = audio.value().get();
 
     int silence_samples = static_cast<int>(start_silence_duration_s * audio_stream.sample_rate());
 
@@ -92,20 +129,23 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
 void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer)
 {
     modulator_base& modulator = mod.value().get();
-    struct audio_stream& audio_stream = audio.value().get();
-
-    size_t signal_samples = bitstream.size() * modulator.samples_per_bit();
+    struct audio_stream_base& audio_stream = audio.value().get();
 
     int silence_samples = static_cast<int>(start_silence_duration_s * audio_stream.sample_rate());
 
-    audio_buffer.resize(silence_samples + signal_samples);
+    audio_buffer.reserve(silence_samples + static_cast<int>(bitstream.size() * 1.5));
+
+    audio_buffer.insert(audio_buffer.end(), silence_samples, 0.0);
 
     int write_pos = silence_samples;
+
     for (uint8_t bit : bitstream)
     {
-        for (int i = 0; i < modulator.samples_per_bit(); ++i)
+		int samples_per_bit = modulator.next_samples_per_bit();
+
+        for (int i = 0; i < samples_per_bit; ++i)
         {
-            audio_buffer[write_pos++] = modulator.modulate(bit);
+			audio_buffer.push_back(modulator.modulate_double(bit));
         }
     }
 
@@ -114,7 +154,7 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
 
 void modem::render_audio(const std::vector<double>& audio_buffer)
 {
-    struct audio_stream& audio_stream = audio.value().get();
+    struct audio_stream_base& audio_stream = audio.value().get();
     const size_t chunk_size = 480;  // 10ms at 48kHz
     size_t pos = 0;
     while (pos < audio_buffer.size())
