@@ -1,13 +1,58 @@
+﻿// **************************************************************** //
+// modem - APRS modem                                               // 
+// Version 0.1.0                                                    //
+// https://github.com/iontodirel/libmodem                           //
+// Copyright (c) 2025 Ion Todirel                                   //
+// **************************************************************** //
+//
+// tests.cpp
+//
+// MIT License
+//
+// Copyright (c) 2025 Ion Todirel
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files(the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "bitstream.h"
 #include "audio_stream.h"
 #include "modem.h"
 #include "demodulator.h"
 #include "modulator.h"
+#include "io.h"
 
 #include <random>
 #include <fstream>
+#include <sstream>
+#include <fmt/core.h>
+#include <fmt/format.h>
 
+#include <boost/process.hpp>
+#include <boost/process/pipe.hpp>
 #include <gtest/gtest.h>
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// Utilities                                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 std::vector<uint8_t> generate_random_bits(size_t count)
 {
@@ -21,6 +66,267 @@ std::vector<uint8_t> generate_random_bits(size_t count)
         bits[i] = dis(gen);
     }
     return bits;
+}
+
+size_t random_size(size_t max_size)
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dis(8, max_size);
+    return dis(gen);
+}
+
+void print_hex(const std::vector<uint8_t>& data, std::size_t per_line = 16)
+{
+    std::ios_base::fmtflags f = std::cout.flags(); // save flags
+
+    std::cout << std::uppercase << std::hex << std::setfill('0');
+
+    for (std::size_t i = 0; i < data.size(); ++i)
+    {
+        std::cout << std::setw(2) << static_cast<unsigned int>(data[i]);
+        if (i + 1 != data.size())
+        {
+            std::cout << ' ';
+        }
+        if (per_line && ((i + 1) % per_line == 0))
+        {
+            std::cout << '\n';
+        }
+    }
+
+    std::cout << '\n';
+
+    std::cout.flags(f); // restore flags
+}
+
+void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line = 8)
+{
+    for (size_t i = 0; uint8_t bit : bits)
+    {
+        std::cout << static_cast<int>(bit) << ", ";
+
+        if (per_line && ((i + 1) % per_line == 0))
+        {
+            std::cout << '\n';
+        }
+
+        i++;
+    }
+    std::cout << std::endl;
+}
+
+template<typename... Args>
+int run_process(const std::string& exe_path, std::string& output, Args&&... args)
+{
+namespace bp = boost::process;
+
+    bp::ipstream stdout_pipe;
+    bp::ipstream stderr_pipe;
+
+    bp::child process(
+        exe_path,
+        std::forward<Args>(args)...,
+        bp::std_out > stdout_pipe,
+        bp::std_err > stderr_pipe
+    );
+
+    std::string line;
+    std::stringstream output_stream;
+
+    while (stdout_pipe && std::getline(stdout_pipe, line))
+    {
+        output_stream << line << "\n";
+    }
+
+    process.wait();
+
+    output = output_stream.str();
+
+    return process.exit_code();
+}
+
+struct fft_bin
+{
+    double frequency;
+    double magnitude;
+};
+
+std::vector<fft_bin> compute_fft(const std::string& wav_file)
+{
+    std::string output;
+
+	// Python executable path is set by CMake at build time using find_package(Python3 COMPONENTS Interpreter)
+	// The python script fft.py is located in the source directory
+
+    run_process(PYTHON_EXE_PATH, output, "fft.py", wav_file);
+
+    // Output is in the format "frequency:magnitude\n"
+
+    std::vector<fft_bin> bins;
+
+    std::istringstream stream(output);
+    std::string line;
+
+    while (std::getline(stream, line))
+    {
+        size_t colon_pos = line.find(',');
+        if (colon_pos != std::string::npos)
+        {
+            fft_bin bin;
+            bin.frequency = std::stod(line.substr(0, colon_pos));
+            bin.magnitude = std::stod(line.substr(colon_pos + 1));
+            bins.push_back(bin);
+        }
+    }
+
+    return bins;
+}
+
+fft_bin dominant_frequency(const std::vector<fft_bin>& bins)
+{
+    auto it = std::max_element(bins.begin(), bins.end(), [](const fft_bin& a, const fft_bin& b) {
+        return a.magnitude < b.magnitude;
+    });
+    if (it == bins.end())
+    {
+        return fft_bin { 0.0, 0.0 };
+	}
+    return *it;
+}
+
+std::vector<fft_bin> frequencies_above_threshold(const std::vector<fft_bin>& bins, double threshold)
+{
+    std::vector<fft_bin> frequencies;
+    for (const auto& bin : bins)
+    {
+        if (bin.magnitude >= threshold)
+        {
+            frequencies.push_back(bin);
+        }
+    }
+    return frequencies;
+}
+
+std::string to_string(const std::vector<address>& path)
+{
+    std::string result;
+    for (size_t i = 0; i < path.size(); i++)
+    {
+        result += to_string(path[i]);
+        if (i + 1 < path.size())
+        {
+            result += ",";
+        }
+    }
+    return result;
+}
+
+std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; uint8_t byte : data)
+    {
+        oss << std::setw(2) << static_cast<int>(byte) << " ";
+        if (columns && ((i + 1) % columns == 0))
+        {
+            oss << "\n";
+		}
+        i++;
+    }
+    return oss.str();
+}
+
+static std::string replace_crlf(std::string_view s)
+{
+    std::string out;
+    out.reserve(s.size()); // grows as needed if many replacements
+    size_t i = 0;
+    while (true)
+    {
+        size_t j = s.find_first_of("\r\n", i);
+        if (j == std::string_view::npos)
+        {
+            out.append(s.substr(i));
+            break;
+        }
+        out.append(s.substr(i, j - i));
+        out += (s[j] == '\r') ? "<CR>" : "<LF>";
+        i = j + 1;
+    }
+    return out;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// Tests                                                            //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+TEST(address, try_parse_address)
+{
+    {
+        address s;
+        EXPECT_TRUE(try_parse_address("WIDE2-1", s));
+        EXPECT_TRUE(s.text == "WIDE");
+        EXPECT_TRUE(s.n == 2);
+        EXPECT_TRUE(s.N == 1);
+        EXPECT_TRUE(s.ssid == 0);
+    }
+
+    {
+        address s;
+        EXPECT_TRUE(s.mark == false);
+        EXPECT_TRUE(try_parse_address("WIDE2-1*", s));
+        EXPECT_TRUE(s.text == "WIDE");
+        EXPECT_TRUE(s.n == 2);
+        EXPECT_TRUE(s.N == 1);
+        EXPECT_TRUE(s.mark == true);
+        EXPECT_TRUE(s.ssid == 0);
+    }
+
+    {
+        address s;
+        EXPECT_TRUE(try_parse_address("WIDE2*", s));
+        EXPECT_TRUE(s.text == "WIDE");
+        EXPECT_TRUE(s.n == 2);
+        EXPECT_TRUE(s.N == 0);
+        EXPECT_TRUE(s.mark == true);
+        EXPECT_TRUE(s.ssid == 0);
+    }
+
+    {
+        address s;
+        EXPECT_TRUE(try_parse_address("WIDE*", s));
+        EXPECT_TRUE(s.text == "WIDE");
+        EXPECT_TRUE(s.n == 0);
+        EXPECT_TRUE(s.N == 0);
+        EXPECT_TRUE(s.mark == true);
+        EXPECT_TRUE(s.ssid == 0);
+    }
+
+    {
+        address s;
+        EXPECT_TRUE(try_parse_address("N0CALL-10", s));
+        EXPECT_TRUE(s.text == "N0CALL");
+        EXPECT_TRUE(s.ssid == 10);
+        EXPECT_TRUE(s.mark == false);
+        EXPECT_TRUE(s.n == 0);
+        EXPECT_TRUE(s.N == 0);
+    }
+
+    {
+        address s;
+        EXPECT_TRUE(try_parse_address("N0CALL-10*", s));
+        EXPECT_TRUE(s.text == "N0CALL");
+        EXPECT_TRUE(s.ssid == 10);
+        EXPECT_TRUE(s.mark == true);
+        EXPECT_TRUE(s.n == 0);
+        EXPECT_TRUE(s.N == 0);
+    }
 }
 
 TEST(address, to_string)
@@ -60,172 +366,189 @@ TEST(address, to_string)
     EXPECT_TRUE(to_string(s) == "N0CALL-10-10"); // to_string preserves the text even if ssid is specified and results in an invalid address
 }
 
-TEST(dds_afsk_modulator_dft_demodulator, modulate_demodulate_8bits)
+TEST(ax25, encode_header)
 {
-    std::vector<double> audio_buffer;
+LIBMODEM_AX25_USING_NAMESPACE
 
-    std::vector<uint8_t> bitstream = { 0, 0, 1, 1, 0, 1, 0, 0 };
-
-    dds_afsk_modulator modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
-
-    for (uint8_t bit : bitstream)
     {
-        for (int i = 0; i < modulator.samples_per_bit(); ++i)
-        {
-            audio_buffer.push_back(modulator.modulate(bit));
-        }
-    }
+        address from = { "N0CALL", 0, 0, 10, false };
+        address to = { "APZ001", 0, 0, 0, false };
+        std::vector<address> path = {
+            { "WIDE1", 0, 1, 0, false },
+            { "WIDE2", 0, 2, 0, false }
+	    };
 
-    dft_demodulator demodulator(1200.0, 2200.0, 1200, 48000);
+        std::vector<uint8_t> header = encode_header(from, to, path);
 
-    std::vector<uint8_t> demodulated_bits = demodulator.demodulate(audio_buffer);
-    
-    EXPECT_EQ(bitstream, demodulated_bits);
-}
+        EXPECT_TRUE(header.size() == 28);
 
-TEST(dds_afsk_modulator_dft_demodulator, modulate_demodulate_random_100000bits)
-{
-    std::vector<double> audio_buffer;
-
-    std::vector<uint8_t> bitstream = generate_random_bits(100'000);
-
-    dds_afsk_modulator modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
-
-    for (uint8_t bit : bitstream)
-    {
-        for (int i = 0; i < modulator.samples_per_bit(); ++i)
-        {
-            audio_buffer.push_back(modulator.modulate(bit));
-        }
-    }
-
-    dft_demodulator demodulator(1200.0, 2200.0, 1200, 48000);
-
-    std::vector<uint8_t> demodulated_bits = demodulator.demodulate(audio_buffer);
-
-    EXPECT_EQ(bitstream, demodulated_bits);
-}
-
-TEST(dds_afsk_modulator_dft_demodulator, modulate_demodulate_packet)
-{
-    std::vector<double> audio_buffer;
-
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
-
-    std::vector<uint8_t> bitstream = encode_basic_bitstream(p, 45, 30);
-
-    dds_afsk_modulator modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
-
-    for (uint8_t bit : bitstream)
-    {
-        for (int i = 0; i < modulator.samples_per_bit(); ++i)
-        {
-            audio_buffer.push_back(modulator.modulate(bit));
-        }
-    }
-
-    dft_demodulator demodulator(1200.0, 2200.0, 1200, 48000);
-
-    std::vector<uint8_t> demodulated_bits = demodulator.demodulate(audio_buffer);
-
-    aprs::router::packet p2;
-
-    size_t read = 0;
-    try_decode_basic_bitstream(demodulated_bits, 0, p2, read);
-
-    EXPECT_TRUE(p == p2);
-}
-
-TEST(modem, modulate_demodulate_packet)
-{
-    {
-        dds_afsk_modulator_adapter modulator(1200.0, 2200.0, 1200, 48000);
-        basic_bitstream_converter_adapter bitstream_converter;
-        wav_audio_stream wav_stream("test.wav", true, 48000);
-
-        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
-
-        modem m;
-        m.baud_rate(1200);
-        m.tx_delay(300);
-        m.tx_tail(45);
-        m.gain(0.3);
-        m.preemphasis(true);
-        m.initialize(wav_stream, modulator, bitstream_converter);
-
-        m.transmit(p);
-
-        wav_stream.close();
+        EXPECT_TRUE(header == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2 (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,      
+        }));
     }
 
     {
-        std::vector<double> audio_buffer;
+        // Source address is set as set becuase the path is empty
 
-        wav_audio_stream wav_stream("test.wav", false, 48'000);
+        address from = { "N0CALL", 0, 0, 10, false };
+        address to = { "APZ001", 0, 0, 0, false };
 
-        while (true)
-        {
-            std::vector<double> audio_samples(4096);
-            size_t read = wav_stream.read(audio_samples.data(), audio_samples.size());
-            if (read == 0) break;
-            audio_buffer.insert(audio_buffer.end(), audio_samples.begin(), audio_samples.begin() + read);
-        }
+        std::vector<uint8_t> header = encode_header(from, to, {});
 
-        dft_demodulator demodulator(1200.0, 2200.0, 1200, 48000);
+        EXPECT_TRUE(header.size() == 14);
 
-        std::vector<uint8_t> bitstream = demodulator.demodulate(audio_buffer);
-
-        basic_bitstream_converter_adapter bitstream_converter;
-
-        std::vector<aprs::router::packet> packets;
-        size_t read = 0;
-        size_t offset = 0;
-        aprs::router::packet packet;
-        while (offset < bitstream.size())
-        {
-            if (bitstream_converter.try_decode(bitstream, offset, packet, read))
-            {
-                packets.push_back(packet);
-            }
-            if (read == 0) break; // No more data
-            offset += read;
-        }
-        wav_stream.close();
-
-        EXPECT_TRUE(packets.size() == 1);
-        EXPECT_TRUE(to_string(packets[0]) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
+        EXPECT_TRUE(header == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10 (last addr, end bit set)
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x75,
+        }));
     }
 }
 
 TEST(ax25, encode_frame)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+        std::vector<uint8_t> frame = encode_frame(p);
+
+        EXPECT_TRUE(frame.size() == 44);
+
+        EXPECT_TRUE(frame == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2 (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x50, 0x7B
+        }));
+    }
+
+    {
+        // N0CALL-10>APZ001,WIDE1-1,WIDE2-2*:Hello, APRS!
+        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2*" }, "Hello, APRS!" };
+
+        std::vector<uint8_t> frame = encode_frame(p);
+
+        EXPECT_TRUE(frame.size() == 44);
+
+        EXPECT_TRUE(frame == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2* (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0xE5,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x25, 0x44
+        }));
+    }
+
+    {
+        // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        struct frame frame {
+            { "N0CALL", 0, 0, 10, false },
+            { "APZ001", 0, 0, 0, false },
+            {
+                { "WIDE1", 0, 1, 0, false },
+                { "WIDE2", 0, 2, 0, false }
+			},
+            { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+        };
+
+        std::vector<uint8_t> frame_bytes = encode_frame(frame);
+
+        EXPECT_TRUE(frame_bytes.size() == 44);
+
+        EXPECT_TRUE(frame_bytes == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2 (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x50, 0x7B
+        }));
+    }
+
+    {
+        // N0CALL-10>APZ001:Hello, APRS!
+        aprs::router::packet p = { "N0CALL-10", "APZ001", {}, "Hello, APRS!" };
+
+        std::vector<uint8_t> frame_bytes = encode_frame(p);
+
+		EXPECT_TRUE(frame_bytes.size() == 30);
+
+        EXPECT_TRUE(frame_bytes == (std::vector<uint8_t>{
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+				// Source: N0CALL-10 (last addr, end bit set)
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x75,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0xAE, 0xE6
+        }));
+    }
+}
+
+TEST(ax25, to_packet)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    struct frame frame
+    {
+        { "N0CALL", 0, 0, 10, false },
+        { "APZ001", 0, 0, 0, false },
+            {
+                { "WIDE1", 0, 1, 0, false },
+                { "WIDE2", 0, 2, 0, false }
+            },
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+    };
 
-    std::vector<uint8_t> frame = encode_frame(p);
-
-    EXPECT_TRUE(frame.size() == 44);
-
-    EXPECT_TRUE(frame == (std::vector<uint8_t>{
-        // Destination: APZ001
-        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
-        // Source: N0CALL-10
-        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
-        // Path 1: WIDE1-1
-        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
-        // Path 2: WIDE2-2* (last addr, end bit set)
-        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
-        // Control, PID
-        0x03, 0xF0,
-        // Payload: "Hello, APRS!"
-        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
-        // CRC (FCS), little-endian
-        0x50, 0x7B
-    }));
+	EXPECT_TRUE(to_string(to_packet(frame)) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
 }
 
 TEST(ax25, encode_address)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
     {
         std::array<uint8_t, 7> address = encode_address("N0CALL", 10, false, false);
         EXPECT_TRUE(address == (std::array<uint8_t, 7>{ 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 }));
@@ -252,8 +575,45 @@ TEST(ax25, encode_address)
     }
 }
 
+TEST(ax25, encode_address_ssid_0_15)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> ssids = std::vector<uint8_t>({
+        0b01100000, // 0 - or not set
+        0b01100010, // 1
+        0b01100100, // 2
+        0b01100110, // 3
+        0b01101000, // 4
+        0b01101010, // 5
+        0b01101100, // 6
+        0b01101110, // 7
+        0b01110000, // 8
+        0b01110010, // 9
+        0b01110100, // 10
+        0b01110110, // 11
+        0b01111000, // 12
+        0b01111010, // 13
+        0b01111100, // 14
+        0b01111110, // 15
+    });
+
+    // Encode the address "T7SVVQ" with ssid values from 0 to 15
+    // Compare the encoded address bytes with expected values
+    // The comparsion is made against an address created with known byte values for "T7SVVQ" and varying ssid byte
+    // The ssid byte is taken from the ssids vector
+
+    for (int i = 0; i <= 15; i++)
+    {
+        std::array<uint8_t, 7> address = encode_address("T7SVVQ", i, false, false);
+        EXPECT_TRUE(address == (std::array<uint8_t, 7>{ 0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, ssids[i] }));
+    }
+}
+
 TEST(ax25, parse_address)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
     {
         std::string address;
         int ssid;
@@ -305,9 +665,231 @@ TEST(ax25, parse_address)
     }
 }
 
+TEST(ax25, try_parse_address)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::string address;
+        int ssid;
+        bool mark;
+        std::vector<uint8_t> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, mark);
+        EXPECT_EQ(address, "N0CALL");
+        EXPECT_EQ(ssid, 10);
+        EXPECT_FALSE(mark);
+    }
+
+    {
+        std::string address;
+        int ssid;
+        bool mark;
+        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, mark);
+        EXPECT_EQ(address, "N0CALL");
+        EXPECT_EQ(ssid, 10);
+        EXPECT_FALSE(mark);
+    }
+}
+
+TEST(ax25, parse_address_ssid_0_15)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> ssids = std::vector<uint8_t>({
+        0b01100000, // 0 - or not set
+        0b01100010, // 1
+        0b01100100, // 2
+        0b01100110, // 3
+        0b01101000, // 4
+        0b01101010, // 5
+        0b01101100, // 6
+        0b01101110, // 7
+        0b01110000, // 8
+        0b01110010, // 9
+        0b01110100, // 10
+        0b01110110, // 11
+        0b01111000, // 12
+        0b01111010, // 13
+        0b01111100, // 14
+        0b01111110, // 15
+    });
+
+    // Create address bytes by substituting the ssid byte 
+    // Pick the ssid byte 0 to 15 from the ssid byte array
+    // Parse the address from the address bytes
+    // Convert the parsed address back to string and verify correctness
+
+    for (int i = 0; i <= 15; i++)
+    {
+        std::array<uint8_t, 7> address_bytes = { 0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, ssids[i] };
+        struct address address;
+        parse_address(std::string_view(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size()), address);
+        
+        if (i == 0)
+        {
+            EXPECT_TRUE(to_string(address) == "T7SVVQ");
+        }
+        else
+        {
+            EXPECT_TRUE(to_string(address) == "T7SVVQ-" + std::to_string(i));
+        }
+    }
+}
+
 TEST(ax25, try_decode_frame)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    std::vector<uint8_t> frame = {
+        // Destination: APZ001
+        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+        // Source: N0CALL-10
+        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-2 (last addr, end bit set)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: "Hello, APRS!"
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+        // CRC (FCS), little-endian
+        0x50, 0x7B
+    };
+
+    {
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+        EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
+    }
+
+    {
+        address from;
+        address to;
+        std::vector<address> path;
+        std::vector<uint8_t> data;
+        EXPECT_TRUE(try_decode_frame(frame, from, to, path, data));
+        EXPECT_TRUE(to_string(from) == "N0CALL-10");
+        EXPECT_TRUE(to_string(to) == "APZ001");
+        EXPECT_TRUE(path.size() == 2);
+        EXPECT_TRUE(to_string(path[0]) == "WIDE1-1");
+        EXPECT_TRUE(to_string(path[1]) == "WIDE2-2");
+        EXPECT_TRUE(data == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
+    }
+
+    {
+        // N6XQY-12>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73<0x0d>
+
+        std::vector<uint8_t> frame = { 0x8e, 0xa0, 0xa6, 0x98, 0x94, 0x40, 0x60, 0x9c, 0x6c, 0xb0, 0xa2, 0xb2, 0x40, 0xf8, 0xa4, 0x8a, 0x98, 0x82, 0xb2, 0x40, 0x60, 0xae, 0x92, 0x88, 0x8a, 0x64, 0x40, 0x65, 0x03, 0xf0, 0x24, 0x47, 0x50, 0x52, 0x4d, 0x43, 0x2c, 0x30, 0x31, 0x33, 0x36, 0x34, 0x31, 0x2e, 0x30, 0x36, 0x2c, 0x41, 0x2c, 0x33, 0x33, 0x34, 0x38, 0x2e, 0x31, 0x36, 0x30, 0x37, 0x2c, 0x4e, 0x2c, 0x31, 0x31, 0x38, 0x30, 0x37, 0x2e, 0x34, 0x36, 0x33, 0x31, 0x2c, 0x57, 0x2c, 0x33, 0x34, 0x2e, 0x30, 0x2c, 0x30, 0x39, 0x30, 0x2e, 0x35, 0x2c, 0x32, 0x33, 0x31, 0x31, 0x30, 0x35, 0x2c, 0x31, 0x33, 0x2e, 0x2c, 0x45, 0x2a, 0x37, 0x33, 0x0d, 0xc9, 0x42 };
+
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+        EXPECT_TRUE(to_string(p) == "N6XQY-12>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73\r");
+    }
+
+    {
+        // WA6YLB>APRX46,WA6YLB-7*,W6SCE-10*:>081839z wa6ylb@theworks.com<0x0d>
+
+        std::vector<uint8_t> frame = { 0x82, 0xa0, 0xa4, 0xb0, 0x68, 0x6c, 0x60, 0xae, 0x82, 0x6c, 0xb2, 0x98, 0x84, 0x60, 0xae, 0x82, 0x6c, 0xb2, 0x98, 0x84, 0xee, 0xae, 0x6c, 0xa6, 0x86, 0x8a, 0x40, 0xf5, 0x03, 0xf0, 0x3e, 0x30, 0x38, 0x31, 0x38, 0x33, 0x39, 0x7a, 0x20, 0x77, 0x61, 0x36, 0x79, 0x6c, 0x62, 0x40, 0x74, 0x68, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x2e, 0x63, 0x6f, 0x6d, 0x0d, 0x0c, 0x66 };
+
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+        EXPECT_TRUE(to_string(p) == "WA6YLB>APRX46,WA6YLB-7*,W6SCE-10*:>081839z wa6ylb@theworks.com\r");
+    }
+
+    {
+        // N0CALL-10>APZ001:Hello, APRS!
+        std::vector<uint8_t> frame = {
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10 (last addr, end bit set)
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x75,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0xAE, 0xE6
+        };
+
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+		EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001:Hello, APRS!");
+    }
+
+    {
+        // KD7FNO-5>S5RTQP,W6PVG-3,WB6JAR-10,WIDE2*:'/3hl"Ku/]"4t}     
+
+        std::vector<uint8_t> frame = { 0xa6, 0x6a, 0xa4, 0xa8, 0xa2, 0xa0, 0x60, 0x96, 0x88, 0x6e, 0x8c, 0x9c, 0x9e, 0xea, 0xae, 0x6c, 0xa0, 0xac, 0x8e, 0x40, 0xe6, 0xae, 0x84, 0x6c, 0x94, 0x82, 0xa4, 0xf4, 0xae, 0x92, 0x88, 0x8a, 0x64, 0x40, 0xe1, 0x03, 0xf0, 0x27, 0x2f, 0x33, 0x68, 0x6c, 0x22, 0x4b, 0x75, 0x2f, 0x5d, 0x22, 0x34, 0x74, 0x7d, 0x0d, 0x20, 0xef };
+       
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+        EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
+    }
+}
+
+TEST(bitstream, nrzi_encode)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 1,0,1,1,0,0,1 };
+        nrzi_encode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 1, 1, 1, 0, 1, 1 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1,1,1 };
+        nrzi_encode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 0, 0, 0, 0, 0 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0,0,0,0 };
+        nrzi_encode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 1, 0, 1, 0, 1, 0, 1 }));
+    }
+}
+
+TEST(bitstream, nrzi_decode)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 0,1,1,1,0,1,1 };
+        nrzi_decode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 1, 1, 0, 0, 1 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0,0,0,0 };
+        nrzi_decode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 1, 1, 1, 1, 1, 1 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,0,1,0,1,0,1 };
+        nrzi_decode(bits.begin(), bits.end());
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 0, 0, 0, 0, 0 }));
+    }
+}
+
+TEST(bitstream, compute_crc)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
     std::vector<uint8_t> frame = {
         // Destination: APZ001
         0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
@@ -320,20 +902,239 @@ TEST(ax25, try_decode_frame)
         // Control, PID
         0x03, 0xF0,
         // Payload: "Hello, APRS!"
-        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
-        // CRC (FCS), little-endian
-        0x50, 0x7B
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21
     };
 
-    aprs::router::packet p;
+    std::array<uint8_t, 2> crc = compute_crc(frame.begin(), frame.end());
 
-    EXPECT_TRUE(try_decode_frame(frame, p));
+    EXPECT_TRUE(crc == (std::array<uint8_t, 2>{ 0x50, 0x7B }));
+}
 
-    EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
+TEST(bitstream, compute_crc_using_lut)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> frame = {
+        // Destination: APZ001
+        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+        // Source: N0CALL-10
+        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-2* (last addr, end bit set)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: "Hello, APRS!"
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21
+    };
+
+    std::array<uint8_t, 2> crc = compute_crc_using_lut(frame.begin(), frame.end());
+
+    EXPECT_TRUE(crc == (std::array<uint8_t, 2>{ 0x50, 0x7B }));
+}
+
+TEST(bitstream, bytes_to_bits)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bytes = { 0xA5 }; // 10100101
+        std::vector<uint8_t> bits;
+        bytes_to_bits(bytes.begin(), bytes.end(), std::back_inserter(bits));
+        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 1, 0, 1, 0, 0, 1, 0, 1 }));
+    }
+
+    {
+        std::vector<uint8_t> bytes = { 0xFF, 0x00, 0x55 }; // 11111111 00000000 01010101
+        std::vector<uint8_t> bits;
+        bytes_to_bits(bytes.begin(), bytes.end(), std::back_inserter(bits));
+        EXPECT_TRUE(bits == (std::vector<uint8_t> {
+            1, 1, 1, 1, 1, 1, 1, 1,  // 0xFF LSB-first
+            0, 0, 0, 0, 0, 0, 0, 0,  // 0x00 LSB-first
+            1, 0, 1, 0, 1, 0, 1, 0   // 0x55 LSB-first (bit 0, bit 1, bit 2, ...)
+        }));
+    }
+}
+
+TEST(bitstream, bits_to_bytes)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 1, 0, 1, 0, 0, 1, 0, 1 }; // 0xA5
+        std::vector<uint8_t> bytes;
+        bits_to_bytes(bits.begin(), bits.end(), std::back_inserter(bytes));
+        EXPECT_TRUE(bytes == (std::vector<uint8_t>{ 0xA5 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = {
+            1, 1, 1, 1, 1, 1, 1, 1,  // 0xFF LSB-first
+            0, 0, 0, 0, 0, 0, 0, 0,  // 0x00 LSB-first
+            1, 0, 1, 0, 1, 0, 1, 0   // 0x55 LSB-first (bit 0, bit 1, bit 2, ...)
+        };
+        std::vector<uint8_t> bytes;
+        bits_to_bytes(bits.begin(), bits.end(), std::back_inserter(bytes));
+        EXPECT_TRUE(bytes == (std::vector<uint8_t>{ 0xFF, 0x00, 0x55 }));
+    }
+}
+
+TEST(bitstream, add_hdlc_flags)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> buffer(20, 0);
+    add_hdlc_flags(buffer.begin(), 2);
+    EXPECT_TRUE(buffer == std::vector<uint8_t>({ 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 }));
+}
+
+TEST(bitstream, find_first_hdlc_flag)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,1,1,1,1,1,1,0,0,0 };
+        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.begin() + 2);
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0 };
+        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.begin());
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0,0 };
+        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.end());
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0 };
+        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.end());
+    }
+}
+
+TEST(bitstream, find_last_consecutive_hdlc_flag)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,1,1,1,1,1,1,0,0,0 };
+        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.begin() + 2);
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0 };
+        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.begin() + 8);
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0,0 };
+        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.end());
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0 };
+        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
+        EXPECT_TRUE(it == bits.end());
+    }
+}
+
+TEST(bitstream, ends_with_hdlc_flag)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,1,1,1,1,1,1,0,0,0 };
+        EXPECT_FALSE(ends_with_hdlc_flag(bits));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0 };
+        EXPECT_TRUE(ends_with_hdlc_flag(bits));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0,0 };
+        EXPECT_FALSE(ends_with_hdlc_flag(bits));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0 };
+        EXPECT_FALSE(ends_with_hdlc_flag(bits));
+    }
+}
+
+TEST(bitstream, bit_stuff)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0,0,0 }; // 5 consecutive 1s
+        std::vector<uint8_t> stuffed;
+        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
+        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 1, 1, 1, 1, 0, 1, 0, 0, 0 })); // Stuff a 0 after 5 consecutive 1s
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,0,1,1,1,1,1,1,0 }; // 5 consecutive 1s
+        std::vector<uint8_t> stuffed;
+        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
+        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 0, 1, 1, 1, 1, 1, 0, 1, 0 })); // Stuff a 0 after 5 consecutive 1s
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0,0,0,0 }; // No 1s
+        std::vector<uint8_t> stuffed;
+        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
+        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 0, 0, 0, 0 })); // No stuffing needed
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1,1,1,1,1 }; // 5 consecutive 1s
+        std::vector<uint8_t> stuffed;
+        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
+        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 1, 1, 1, 1, 0 }));
+    }
+}
+
+TEST(bitstream, bit_unstuff)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::vector<uint8_t> bits = { 1, 1, 1, 1, 1, 0, 1, 0, 0, 0 };
+        std::vector<uint8_t> unstuffed;
+        bit_unstuff(bits.begin(), bits.end(), std::back_inserter(unstuffed));
+        EXPECT_TRUE(unstuffed == (std::vector<uint8_t>{ 1, 1, 1, 1, 1, 1, 0, 0, 0 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 1, 0, 1, 1, 1, 1, 1, 0, 1, 0 };
+        std::vector<uint8_t> unstuffed;
+        bit_unstuff(bits.begin(), bits.end(), std::back_inserter(unstuffed));
+        EXPECT_TRUE(unstuffed == (std::vector<uint8_t>{ 1, 0, 1, 1, 1, 1, 1, 1, 0 }));
+    }
+
+    {
+        std::vector<uint8_t> bits = { 0, 0, 0, 0 };
+        std::vector<uint8_t> unstuffed;
+        bit_unstuff(bits.begin(), bits.end(), std::back_inserter(unstuffed));
+        EXPECT_TRUE(unstuffed == (std::vector<uint8_t>{ 0, 0, 0, 0 }));
+    }
 }
 
 TEST(bitstream, encode_basic_bitstream)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
@@ -400,8 +1201,551 @@ TEST(bitstream, encode_basic_bitstream)
     }));
 }
 
+TEST(bitstream, encode_fx25_bitstream)
+{
+LIBMODEM_FX25_USING_NAMESPACE
+
+    // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+
+    EXPECT_TRUE(bitstream.size() == 720);
+
+    EXPECT_TRUE(bitstream == (std::vector<uint8_t>{
+        // Preamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Correlation Tag Tag_03: RS(80,64) 0xC7DC0508F3D9B09E -- 64 bytes with 16 bytes parity
+        1, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 1, 1, 0, 0,
+        0, 1, 0, 0, 0, 1, 1, 1,
+        1, 1, 0, 1, 1, 1, 1, 1,
+        0, 1, 0, 0, 1, 0, 1, 0,
+        0, 1, 1, 0, 1, 0, 1, 0,
+        1, 0, 0, 0, 0, 1, 1, 1,
+        1, 1, 1, 0, 1, 0, 0, 0,
+        // Begin AX.25 Frame (46 bytes)
+        // Preamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: APZ001
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        // Source: N0CALL-10
+        0, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 1, 0,
+        // Path 1: WIDE1-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        // Path 2: WIDE2-2
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0, 
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1, 
+        // Control, PID
+        1, 1, 0, 1, 0, 1, 0, 1,        
+        0, 1, 0, 1, 1, 1, 1, 1, 
+        // Data: "Hello, APRS!"
+        0, 1, 0, 0, 1, 0, 0, 1,        
+        1, 0, 0, 1, 0, 0, 0, 1, 
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1, 
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 1, 0,
+        1, 0, 1, 0, 1, 1, 0, 1,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 1, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0, 
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 0, 1, 0, 0, 1, 0,  
+        // CRC (FCS), little-endian
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 1, 1, 1, 0,
+        // Postamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+		// End of AX.25 Frame
+        // Padding (18 bytes)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // RS check bytes (16 bytes)
+        0, 0, 1, 0, 1, 1, 1, 0,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        1, 1, 1, 0, 0, 0, 1, 1,
+        1, 1, 1, 0, 0, 1, 1, 0,
+        1, 0, 1, 0, 0, 0, 0, 0,
+        0, 1, 1, 0, 1, 0, 0, 1,
+        1, 1, 0, 1, 1, 0, 1, 0,
+        0, 0, 0, 1, 0, 1, 0, 1,
+        1, 1, 0, 0, 1, 1, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 1,
+        1, 0, 1, 0, 0, 0, 1, 0,
+        0, 1, 0, 1, 1, 1, 1, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 0, 0, 1, 0, 1, 1, 1,
+        1, 1, 1, 0, 1, 0, 1, 1,
+        // Postamble HDLC flag (0x7E)
+        0, 0, 0, 0, 0, 0, 0, 1,
+    }));
+}
+
+TEST(bitstream, encode_end_to_end_demo)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    std::vector<uint8_t> frame = encode_frame(p);
+
+    EXPECT_TRUE(frame == std::vector<uint8_t>({
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C
+    })); 
+
+    std::vector<uint8_t> frame_bits_lsb;
+
+    bytes_to_bits(frame.begin(), frame.end(), std::back_inserter(frame_bits_lsb));
+
+    EXPECT_TRUE(frame_bits_lsb == std::vector<uint8_t>({
+        // Destination: T7SVVQ
+        0, 0, 0, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 1, 0, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 0, 1, 0, 1,
+        0, 0, 0, 0, 0, 1, 1, 0,
+        // Source: W7ION-5
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 1, 1, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 1,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 1, 0, 1, 1, 0,
+        // Path 1: WIDE1-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        // Path 2: WIDE2-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        1, 1, 0, 0, 0, 1, 1, 0,
+        // Control, PID
+        1, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 1, 1, 1, 1,
+        // Data: `2(al"|[/>"3u}hello world^)
+        0, 0, 0, 0, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 0, 0,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 0, 0, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        0, 0, 1, 1, 1, 1, 1, 0,
+        1, 1, 0, 1, 1, 0, 1, 0,
+        1, 1, 1, 1, 0, 1, 0, 0,
+        0, 1, 1, 1, 1, 1, 0, 0,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 1, 1, 1, 1, 0,
+        0, 0, 0, 1, 0, 1, 1, 0,
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 1, 0, 0,
+        1, 1, 1, 0, 1, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 1, 1, 1, 0, 1, 0,
+        // CRC (FCS), little-endian
+        1, 0, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 1, 0, 0,
+    }));
+
+    std::vector<uint8_t> frame_bits_bit_stuffed;
+
+    bit_stuff(frame_bits_lsb.begin(), frame_bits_lsb.end(), std::back_inserter(frame_bits_bit_stuffed));
+
+    EXPECT_TRUE(frame_bits_bit_stuffed == std::vector<uint8_t>({
+        // Destination: T7SVVQ
+        0, 0, 0, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 1, 0, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 0, 1, 0, 1,
+        0, 0, 0, 0, 0, 1, 1, 0,
+        // Source: W7ION-5
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 1, 1, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 1,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 1, 0, 1, 1, 0,
+        // Path 1: WIDE1-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        // Path 2: WIDE2-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        1, 1, 0, 0, 0, 1, 1, 0,
+        // Control, PID
+        1, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 1, 1, 1, 1,
+        // Data: `2(al"|[/>"3u}hello world^)
+        0, 0, 0, 0, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 0, 0,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 0, 0, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        0, 0, 1, 1, 1, 1, 1, 0, 0,
+        //    ~~~~~~~~~~~~~~~~
+        //    bit stuffed
+        1, 1, 0, 1, 1, 0, 1, 0,
+        1, 1, 1, 1, 0, 1, 0, 0,
+        0, 1, 1, 1, 1, 1, 0, 0, 0,
+        // ~~~~~~~~~~~~~~~~
+        // bit stuffed
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 1, 1, 1, 1, 0, 0,
+        //    ~~~~~~~~~~~~~~~~
+        //     bit stuffed
+        0, 0, 0, 1, 0, 1, 1, 0,
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 1, 0, 0,
+        1, 1, 1, 0, 1, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 1, 1, 1, 0, 1, 0,
+        // CRC (FCS), little-endian
+        1, 0, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 1, 0, 0,
+    }));
+
+    std::vector<uint8_t> frame_bits_bit_stuffed_with_hdlc;
+
+    add_hdlc_flags(std::back_inserter(frame_bits_bit_stuffed_with_hdlc), 1);
+
+    frame_bits_bit_stuffed_with_hdlc.insert(frame_bits_bit_stuffed_with_hdlc.end(), frame_bits_bit_stuffed.begin(), frame_bits_bit_stuffed.end());
+
+    add_hdlc_flags(std::back_inserter(frame_bits_bit_stuffed_with_hdlc), 1);
+
+    EXPECT_TRUE(frame_bits_bit_stuffed_with_hdlc == std::vector<uint8_t>({
+        // HDLC flag
+        0, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: T7SVVQ
+        0, 0, 0, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 1, 0, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 0, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 0, 1, 0, 1,
+        0, 0, 0, 0, 0, 1, 1, 0,
+        // Source: W7ION-5
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 1, 1, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 0, 0, 1,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 1, 0, 1, 1, 0,
+        // Path 1: WIDE1-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 1, 1, 0,
+        // Path 2: WIDE2-1
+        0, 1, 1, 1, 0, 1, 0, 1,
+        0, 1, 0, 0, 1, 0, 0, 1,
+        0, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 0,
+        1, 1, 0, 0, 0, 1, 1, 0,
+        // Control, PID
+        1, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 1, 1, 1, 1,
+        // Data: `2(al"|[/>"3u}hello world^)
+        0, 0, 0, 0, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 0, 0,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 0, 0, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        0, 0, 1, 1, 1, 1, 1, 0, 0,
+        //    ~~~~~~~~~~~~~~~~
+        //    bit stuffed
+        1, 1, 0, 1, 1, 0, 1, 0,
+        1, 1, 1, 1, 0, 1, 0, 0,
+        0, 1, 1, 1, 1, 1, 0, 0, 0,
+        // ~~~~~~~~~~~~~~~~
+        // bit stuffed
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 1, 1, 1, 1, 0, 0,
+        //    ~~~~~~~~~~~~~~~~
+        //     bit stuffed
+        0, 0, 0, 1, 0, 1, 1, 0,
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 0, 0, 0, 0, 1, 0, 0,
+        1, 1, 1, 0, 1, 1, 1, 0,
+        1, 1, 1, 1, 0, 1, 1, 0,
+        0, 1, 0, 0, 1, 1, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 1, 1, 1, 0, 1, 0,
+        // CRC (FCS), little-endian
+        1, 0, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 1, 1, 1, 0, 0,
+        // HDLC flag
+        0, 1, 1, 1, 1, 1, 1, 0
+    }));
+
+    std::vector<uint8_t> bitstream = frame_bits_bit_stuffed_with_hdlc;
+
+    nrzi_encode(bitstream.begin(), bitstream.end());
+
+    EXPECT_TRUE(bitstream == std::vector<uint8_t>({
+        // HDLC flag
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: T7SVVQ
+        1, 0, 1, 1, 0, 0, 1, 1,
+        0, 0, 0, 0, 1, 1, 1, 0,
+        1, 1, 1, 0, 1, 1, 0, 0,
+        1, 0, 0, 0, 1, 1, 0, 0,
+        1, 0, 0, 0, 1, 1, 0, 0,
+        1, 1, 0, 1, 0, 0, 1, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        // Source: W7ION-5
+        0, 0, 0, 0, 1, 1, 0, 0,
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 0, 1, 1, 0,
+        1, 1, 0, 0, 1, 1, 1, 0,
+        // Path 1: WIDE1-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        // Path 2: WIDE2-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        1, 1, 0, 1, 0, 0, 0, 1,
+        // Control, PID
+        1, 1, 0, 1, 0, 1, 0, 1,
+        0, 1, 0, 1, 1, 1, 1, 1,
+        // Data: `2(al"|[/>"3u}hello world^)
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 0, 1, 0,
+        1, 0, 1, 1, 0, 0, 1, 0,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 0, 1,
+        0, 1, 1, 1, 1, 1, 1, 0, 1,
+        //    ~~~~~~~~~~~~~~~~
+        //    bit stuffed
+        1, 1, 0, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 1, 1, 0, 1,
+        0, 0, 0, 0, 0, 0, 1, 0, 1,
+        // ~~~~~~~~~~~~~~~~
+        // bit stuffed
+        0, 0, 1, 0, 1, 1, 0, 1,
+        1, 1, 0, 1, 1, 1, 0, 1,
+        1, 0, 0, 1, 1, 1, 1, 0,
+        0, 1, 1, 1, 1, 1, 1, 0, 1,
+        //    ~~~~~~~~~~~~~~~~
+        //     bit stuffed
+        0, 1, 0, 0, 1, 1, 1, 0,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 0, 0, 1, 1, 1, 0,
+        1, 0, 0, 0, 1, 1, 1, 0,
+        0, 0, 0, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 1, 0, 1,
+        1, 1, 1, 0, 0, 0, 0, 1,
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 0, 1, 0, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 1, 1, 1, 1, 0, 0, 1,
+        // CRC (FCS), little-endian
+        1, 0, 1, 1, 1, 0, 1, 1,
+        0, 1, 1, 1, 1, 1, 0, 1,
+        // HDLC flag
+        0, 0, 0, 0, 0, 0, 0, 1
+    }));
+}
+
 TEST(bitstream, try_decode_basic_bitstream)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> bitstream = {
+        // Preamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: APZ001
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        // Source: N0CALL-10
+        0, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 1, 0,
+        // Path 1: WIDE1-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        // Path 2: WIDE2-2
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        // Control, PID
+        1, 1, 0, 1, 0, 1, 0, 1,
+        0, 1, 0, 1, 1, 1, 1, 1,
+        // Data: "Hello, APRS!"
+        0, 1, 0, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 1, 0,
+        1, 0, 1, 0, 1, 1, 0, 1,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 1, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 0, 1, 0, 0, 1, 0,
+        // CRC (FCS), little-endian
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 1, 1, 1, 0,
+        // Postamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+    };
+
+    aprs::router::packet p;
+    bitstream_state state;
+
+    for (uint8_t bit : bitstream)
+    {
+        if (try_decode_basic_bitstream(bit, p, state))
+        {
+            break;
+        }
+    }
+
+    EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
+}
+
+TEST(bitstream, try_decode_basic_bitstream_with_offset)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
     std::vector<uint8_t> bitstream = {
         // Preamble HDLC flag (0x7E)
         1, 1, 1, 1, 1, 1, 1, 0,
@@ -463,16 +1807,20 @@ TEST(bitstream, try_decode_basic_bitstream)
     aprs::router::packet p;
 
     size_t read = 0;
-    EXPECT_TRUE(try_decode_basic_bitstream(bitstream, 0, p, read));
+    bitstream_state state;
+    EXPECT_TRUE(try_decode_basic_bitstream(bitstream, 0, p, read, state));
 
+    // The entire bitstream should be consumed
     EXPECT_TRUE(read == bitstream.size());
 
     EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
 }
 
-TEST(bitstream, try_decode_basic_bitstream_offset)
+TEST(bitstream, try_decode_basic_bitstream_1005_random_feed)
 {
-    std::ifstream file("bitstream.txt");
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
     if (!file.is_open())
     {
         FAIL() << "Failed to open bitstream.txt";
@@ -487,218 +1835,945 @@ TEST(bitstream, try_decode_basic_bitstream_offset)
     }
 
     std::vector<aprs::router::packet> packets;
-    size_t read = 0;
-    size_t offset = 0;
-    while (offset < bitstream.size())
+
+    std::vector<uint8_t> buffer;
+    bitstream_state state;
+
+    size_t buffer_offset = 0;
+
+    while (buffer_offset < bitstream.size())
+    {
+        size_t size = random_size(512);
+        buffer.assign(bitstream.begin() + buffer_offset, bitstream.begin() + (std::min)(buffer_offset + size, bitstream.size()));
+        buffer_offset += buffer.size();
+
+        size_t offset = 0;
+        while (offset < buffer.size())  // Inner loop to get ALL packets from this chunk
+        {
+            size_t read = 0;
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(buffer, offset, packet, read, state))
+            {
+                packets.push_back(packet);
+            }
+
+            if (read == 0)
+            {
+                break;
+            }
+
+            offset += read;
+        }
+    }
+
+    EXPECT_EQ(packets.size(), 1005);
+}
+
+TEST(bitstream, try_decode_basic_bitstream_1005)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    {
+
+        std::vector<aprs::router::packet> packets;
+
+        bitstream_state state;
+
+        for (uint8_t bit : bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, packet, state))
+            {
+				EXPECT_TRUE(state.complete == true);
+
+                packets.push_back(packet);
+            }
+        }
+
+        EXPECT_TRUE(packets.size() == 1005);
+    }
+
+    {
+		// Decoding frames and converting to packets explicitly
+
+        std::vector<aprs::router::packet> packets;
+
+        bitstream_state state;
+
+        for (uint8_t bit : bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, state))
+            {
+                packet = to_packet(state.frame);
+                packets.push_back(packet);
+            }
+        }
+
+        EXPECT_TRUE(packets.size() == 1005);
+    }
+}
+
+TEST(bitstream, try_decode_basic_bitstream_demo)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // Read bitstream from file generated by Direwolf using DEBUG5
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    bitstream_state state;
+
+    for (uint8_t bit : bitstream)
+    {
+        if (try_decode_basic_bitstream(bit, state)) // AX.25 only
+        {
+			const frame& f = state.frame; // decoded frame
+
+            fmt::println("from: {}\nto: {}\npath: {}\n{}\ncrc: {}",
+                to_string(f.from), // from address to string
+                to_string(f.to),   // from address to string
+                to_string(f.path), // from vector<address> to string
+                to_hex_string(f.data),  // from vector<uint8_t> to hex string
+                std::bit_cast<uint16_t>(f.crc));
+
+			// Convert to packet
+			aprs::router::packet p = to_packet(f); // frame to packet
+			std::string packet_str = to_string(p); // packet to string
+			packet_str = replace_crlf(packet_str); // replace newlines for printing
+            
+			fmt::print("packet: ");
+            std::cout.write(packet_str.data(), packet_str.size()); // write packet string instead of data
+			fmt::print("\n\n");
+
+            //try
+            //{
+            //    fmt::println("packet: {}\n", to_string(p)); // packet to string
+            //}
+            //catch (const std::exception& e)
+            //{
+            //    fmt::println("Error converting frame to packet: {}\n", e.what());
+            //}
+        }
+    }
+}
+
+TEST(bitstream, try_decode_basic_bitstream_1005_enable_diagnostics)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    std::vector<aprs::router::packet> packets;
+
+    bitstream_state state;
+
+	state.enable_diagnostics = true;
+
+    std::vector<std::vector<uint8_t>> packet_bitstreams;
+	std::vector<uint8_t> packet_bitstream_nrzi_levels;
+
+    for (uint8_t bit : bitstream)
     {
         aprs::router::packet packet;
-        if (try_decode_basic_bitstream(bitstream, offset, packet, read))
+        if (try_decode_basic_bitstream(bit, packet, state))
         {
+            std::vector<uint8_t> packet_bitstream;
+            // state.start and state.end are 1-based, convert to 0-based for array indexing
+            // state.start is first bit of preamble, state.end is last bit of postamble
+            packet_bitstream.insert(packet_bitstream.end(),
+                bitstream.begin() + (state.frame_start - 1),  // 1-based to 0-based
+                bitstream.begin() + state.frame_end);          // end is exclusive in C++
+            packet_bitstreams.push_back(packet_bitstream);
+            packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);  // Use output field
+
             packets.push_back(packet);
         }
-        if (read == 0) break; // No more data
-        offset += read;
     }
 
-    EXPECT_TRUE(packets.size() == 804);
+    EXPECT_TRUE(packets.size() == 1005);
+
+    std::vector<aprs::router::packet> diag_packets;
+
+    for (int j = 0; const auto& packet_bitstream : packet_bitstreams)
+    {
+        bitstream_state packet_state;
+		packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[j];
+        for (uint8_t bit : packet_bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            {
+				diag_packets.push_back(packet);
+            }
+        }
+        j++;
+	}
+
+    EXPECT_TRUE(diag_packets.size() == 1005);
+
+	EXPECT_TRUE(packets == diag_packets);
 }
 
-TEST(bitstream, nrzi_encode)
+TEST(bitstream, try_decode_basic_bitstream_1005_enable_diagnostics_batch)
 {
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
     {
-        std::vector<uint8_t> bits = { 1,0,1,1,0,0,1 };
-        nrzi_encode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 1, 1, 1, 0, 1, 1 }));
+        FAIL() << "Failed to open bitstream.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    std::vector<aprs::router::packet> packets;
+
+    bitstream_state state;
+
+	state.enable_diagnostics = true;
+
+    std::vector<std::vector<uint8_t>> packet_bitstreams;
+	std::vector<uint8_t> packet_bitstream_nrzi_levels;
+
+    std::vector<uint8_t> buffer;
+
+    for (uint8_t bit : bitstream)
+    {
+		buffer.push_back(bit);
+
+        aprs::router::packet packet;
+        if (try_decode_basic_bitstream(bit, packet, state))
+        {
+            packets.push_back(packet);
+
+            size_t frame_total_bits = state.frame_end - state.frame_start + 1;
+
+            std::vector<uint8_t> packet_bitstream(buffer.end() - frame_total_bits, buffer.end());            
+            packet_bitstreams.push_back(packet_bitstream);
+
+            packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);
+
+            buffer.erase(buffer.begin(), buffer.end() - 8);
+        }
+    }
+
+    EXPECT_TRUE(packets.size() == 1005);
+
+    std::vector<aprs::router::packet> diag_packets;
+
+    for (int j = 0; const auto& packet_bitstream : packet_bitstreams)
+    {
+        bitstream_state packet_state;
+		packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[j];
+        for (uint8_t bit : packet_bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            {
+				diag_packets.push_back(packet);
+            }
+        }
+        j++;
+	}
+
+    EXPECT_TRUE(diag_packets.size() == 1005);
+
+	EXPECT_TRUE(packets == diag_packets);
+}
+
+TEST(bitstream, try_decode_basic_bitstream_shared_preamble_postamble)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    aprs::router::packet p1 = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    aprs::router::packet p2 = { "N0CALL-11", "APZ002", { "WIDE1-1", "WIDE2-2" }, "Another test!" };
+	aprs::router::packet p3 = { "N0CALL-12", "APZ003", { "WIDE1-1", "WIDE2-2" }, "Yet another packet." };
+	aprs::router::packet p4 = { "N0CALL-13", "APZ004", { "WIDE1-1", "WIDE2-2" }, "Packet." };
+	aprs::router::packet p5 = { "N0CALL-14", "APZ005", { "WIDE1-1", "WIDE2-2" }, "A packet." };
+	aprs::router::packet p6 = { "N0CALL-15", "APZ006", { "WIDE1-1", "WIDE2-2" }, "0 packet!" };
+	aprs::router::packet p7 = { "N0CALL-15", "APZ007", { "WIDE1-1", "WIDE2-2" }, "Final packet." };
+
+    std::vector<uint8_t> frame1 = encode_frame(p1);
+    std::vector<uint8_t> frame2 = encode_frame(p2);
+    std::vector<uint8_t> frame3 = encode_frame(p3);
+    std::vector<uint8_t> frame4 = encode_frame(p4);
+    std::vector<uint8_t> frame5 = encode_frame(p5);
+    std::vector<uint8_t> frame6 = encode_frame(p6);
+    std::vector<uint8_t> frame7 = encode_frame(p7);
+
+    std::vector<uint8_t> frame1_bits_lsb;
+	std::vector<uint8_t> frame2_bits_lsb;
+	std::vector<uint8_t> frame3_bits_lsb;
+    std::vector<uint8_t> frame4_bits_lsb;
+    std::vector<uint8_t> frame5_bits_lsb;
+    std::vector<uint8_t> frame6_bits_lsb;
+    std::vector<uint8_t> frame7_bits_lsb;
+
+    bytes_to_bits(frame1.begin(), frame1.end(), std::back_inserter(frame1_bits_lsb));
+    bytes_to_bits(frame2.begin(), frame2.end(), std::back_inserter(frame2_bits_lsb));
+    bytes_to_bits(frame3.begin(), frame3.end(), std::back_inserter(frame3_bits_lsb));
+    bytes_to_bits(frame4.begin(), frame4.end(), std::back_inserter(frame4_bits_lsb));
+    bytes_to_bits(frame5.begin(), frame5.end(), std::back_inserter(frame5_bits_lsb));
+    bytes_to_bits(frame6.begin(), frame6.end(), std::back_inserter(frame6_bits_lsb));
+    bytes_to_bits(frame7.begin(), frame7.end(), std::back_inserter(frame7_bits_lsb));
+
+    std::vector<uint8_t> frame1_bits_bit_stuffed;
+    std::vector<uint8_t> frame2_bits_bit_stuffed;
+    std::vector<uint8_t> frame3_bits_bit_stuffed;
+    std::vector<uint8_t> frame4_bits_bit_stuffed;
+    std::vector<uint8_t> frame5_bits_bit_stuffed;
+    std::vector<uint8_t> frame6_bits_bit_stuffed;
+    std::vector<uint8_t> frame7_bits_bit_stuffed;
+
+    bit_stuff(frame1_bits_lsb.begin(), frame1_bits_lsb.end(), std::back_inserter(frame1_bits_bit_stuffed));
+    bit_stuff(frame2_bits_lsb.begin(), frame2_bits_lsb.end(), std::back_inserter(frame2_bits_bit_stuffed));
+    bit_stuff(frame3_bits_lsb.begin(), frame3_bits_lsb.end(), std::back_inserter(frame3_bits_bit_stuffed));
+    bit_stuff(frame4_bits_lsb.begin(), frame4_bits_lsb.end(), std::back_inserter(frame4_bits_bit_stuffed));
+    bit_stuff(frame5_bits_lsb.begin(), frame5_bits_lsb.end(), std::back_inserter(frame5_bits_bit_stuffed));
+    bit_stuff(frame6_bits_lsb.begin(), frame6_bits_lsb.end(), std::back_inserter(frame6_bits_bit_stuffed));
+    bit_stuff(frame7_bits_lsb.begin(), frame7_bits_lsb.end(), std::back_inserter(frame7_bits_bit_stuffed));
+
+    std::vector<uint8_t> combined_bitstream;
+
+    add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame1_bits_bit_stuffed.begin(), frame1_bits_bit_stuffed.end());
+
+    add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame2_bits_bit_stuffed.begin(), frame2_bits_bit_stuffed.end());
+
+    add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame3_bits_bit_stuffed.begin(), frame3_bits_bit_stuffed.end());
+
+    add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame4_bits_bit_stuffed.begin(), frame4_bits_bit_stuffed.end());
+
+    add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame5_bits_bit_stuffed.begin(), frame5_bits_bit_stuffed.end());
+
+	add_hdlc_flags(std::back_inserter(combined_bitstream), 45);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame6_bits_bit_stuffed.begin(), frame6_bits_bit_stuffed.end());
+
+	add_hdlc_flags(std::back_inserter(combined_bitstream), 30);
+
+	combined_bitstream.insert(combined_bitstream.end(), frame7_bits_bit_stuffed.begin(), frame7_bits_bit_stuffed.end());
+
+	add_hdlc_flags(std::back_inserter(combined_bitstream), 1);
+
+    nrzi_encode(combined_bitstream.begin(), combined_bitstream.end());
+
+	std::vector<aprs::router::packet> packets;
+
+    bitstream_state state;
+
+    for (uint8_t bit : combined_bitstream)
+    {
+        aprs::router::packet p;
+        if (try_decode_basic_bitstream(bit, p, state))
+        {
+			packets.push_back(p);
+        }
+    }
+
+	EXPECT_TRUE(packets.size() == 7);
+
+	EXPECT_TRUE(to_string(packets[0]) == to_string(p1));
+
+	EXPECT_TRUE(to_string(packets[1]) == to_string(p2));
+
+	EXPECT_TRUE(to_string(packets[2]) == to_string(p3));
+
+	EXPECT_TRUE(to_string(packets[3]) == to_string(p4));
+
+	EXPECT_TRUE(to_string(packets[4]) == to_string(p5));
+
+	EXPECT_TRUE(to_string(packets[5]) == to_string(p6));
+
+	EXPECT_TRUE(to_string(packets[6]) == to_string(p7));
+}
+
+TEST(bitstream, try_decode_basic_bitstream_heavy_bit_stuffing)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    aprs::router::packet p1 = { "N0CALL", "APZ001", {}, "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" };
+    aprs::router::packet p2 = { "N0CALL", "APZ001", {}, "\x7E\x7E\x7E\x7E" };
+
+    std::vector<uint8_t> frame1 = encode_frame(p1);
+    std::vector<uint8_t> frame2 = encode_frame(p2);
+
+    std::vector<uint8_t> bits1, bits2;
+    bytes_to_bits(frame1.begin(), frame1.end(), std::back_inserter(bits1));
+    bytes_to_bits(frame2.begin(), frame2.end(), std::back_inserter(bits2));
+
+    std::vector<uint8_t> stuffed1, stuffed2;
+    bit_stuff(bits1.begin(), bits1.end(), std::back_inserter(stuffed1));
+    bit_stuff(bits2.begin(), bits2.end(), std::back_inserter(stuffed2));
+
+    std::vector<uint8_t> bitstream;
+    add_hdlc_flags(std::back_inserter(bitstream), 5);
+    bitstream.insert(bitstream.end(), stuffed1.begin(), stuffed1.end());
+    add_hdlc_flags(std::back_inserter(bitstream), 1);
+    bitstream.insert(bitstream.end(), stuffed2.begin(), stuffed2.end());
+    add_hdlc_flags(std::back_inserter(bitstream), 1);
+
+    nrzi_encode(bitstream.begin(), bitstream.end());
+
+    std::vector<aprs::router::packet> packets;
+    bitstream_state state;
+
+    for (uint8_t bit : bitstream)
+    {
+        aprs::router::packet p;
+        if (try_decode_basic_bitstream(bit, p, state))
+        {
+            packets.push_back(p);
+        }
+    }
+
+    ASSERT_EQ(packets.size(), 2);
+    EXPECT_EQ(to_string(packets[0]), to_string(p1));
+    EXPECT_EQ(to_string(packets[1]), to_string(p2));
+}
+
+TEST(bitstream, encode_fx25_frame_larger_size)
+{
+LIBMODEM_FX25_USING_NAMESPACE
+
+    {
+        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }; // 239
+
+        std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+
+        EXPECT_TRUE(bitstream.size() == 2120);
     }
 
     {
-        std::vector<uint8_t> bits = { 1,1,1,1,1,1,1 };
-        nrzi_encode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 0, 0, 0, 0, 0 }));
-    }
+        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890" }; // 241
 
-    {
-        std::vector<uint8_t> bits = { 0,0,0,0,0,0,0 };
-        nrzi_encode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 1, 0, 1, 0, 1, 0, 1 }));
+        std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+
+        EXPECT_TRUE(bitstream.empty());
     }
 }
 
-TEST(bitstream, nrzi_decode)
+TEST(modem, modulate_afsk_1200_ax25_packet)
 {
-    {
-        std::vector<uint8_t> bits = { 0,1,1,1,0,1,1 };
-        nrzi_decode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 1, 1, 0, 0, 1 }));
-    }
+    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     {
-        std::vector<uint8_t> bits = { 0,0,0,0,0,0,0 };
-        nrzi_decode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 1, 1, 1, 1, 1, 1 }));
+        dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
+        basic_bitstream_converter_adapter bitstream_converter;
+        output_wav_audio_stream wav_stream("test.wav", 48000);        
+
+        modem m;
+        m.baud_rate(1200);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.3);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
     }
 
+    std::string full_output;
+
+    // Run Direwolf's ATEST with -B 1200
+    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+}
+
+TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
+{
+    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+	std::vector<int> sample_rates = { 8000, 9600, 44100, 96000, 192000 };
+
+    for (const auto& rate : sample_rates)
     {
-        std::vector<uint8_t> bits = { 1,0,1,0,1,0,1 };
-        nrzi_decode(bits.begin(), bits.end());
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 0, 0, 0, 0, 0, 0, 0 }));
+        {
+            dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, rate);
+            basic_bitstream_converter_adapter bitstream_converter;
+            output_wav_audio_stream wav_stream("test.wav", rate);
+
+            modem m;
+            m.baud_rate(1200);
+            m.tx_delay(300);
+            m.tx_tail(45);
+            m.gain(0.3);
+            m.initialize(wav_stream, modulator, bitstream_converter);
+
+            m.transmit(p);
+
+            wav_stream.close();
+        }
+
+        std::string full_output;
+
+        // Run Direwolf's ATEST with -B 1200
+        run_process(ATEST_EXE_PATH, full_output, "-B 1200", "test.wav");
+
+        // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
     }
 }
 
-TEST(bitstream, compute_crc)
+TEST(modem, modulate_afsk_1200_fx25_packet_data_lengths)
 {
-    std::vector<uint8_t> frame = {
-        // Destination: APZ001
-        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
-        // Source: N0CALL-10
-        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
-        // Path 1: WIDE1-1
-        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
-        // Path 2: WIDE2-2* (last addr, end bit set)
-        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
-        // Control, PID
-        0x03, 0xF0,
-        // Payload: "Hello, APRS!"
-        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21
+LIBMODEM_FX25_USING_NAMESPACE
+
+    std::vector<aprs::router::packet> packets = {
+        { "N0CALL-10", "APZ001", { "WIDE1-1" }, "Hello" }, // 32
+        { "N0CALL-10", "APZ001", { "WIDE1-1" }, "Hello" }, // 32
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" }, //64
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" }, //64
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" }, //64
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }, // 128
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }, // 128
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }, // 128
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }, // 191
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }, //223
+        { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" } // 239
     };
 
-    std::array<uint8_t, 2> crc = compute_crc(frame.begin(), frame.end());
+    // Corresponding data and check lengths
+	// Include all combinations of data and check lengths supported by FX.25
+    std::vector<int> data_lengths =  { 32, 32, 64, 64, 64, 128, 128, 128, 191, 223, 239 };
+    std::vector<int> check_lengths = { 16, 32, 16, 32, 64, 16,  32,  64,  64,  32,  16  };
 
-    EXPECT_TRUE(crc == (std::array<uint8_t, 2>{ 0x50, 0x7B }));
-}
-
-TEST(bitstream, bytes_to_bits)
-{
+    for (int i = 0; const auto& p : packets)
     {
-        std::vector<uint8_t> bytes = { 0xA5 }; // 10100101
-        std::vector<uint8_t> bits;
-        bytes_to_bits(bytes.begin(), bytes.end(), std::back_inserter(bits));
-        EXPECT_TRUE(bits == (std::vector<uint8_t>{ 1, 0, 1, 0, 0, 1, 0, 1 }));
-    }
+        {
+            dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
+            output_wav_audio_stream wav_stream("test.wav", 48000);
 
-    {
-        std::vector<uint8_t> bytes = { 0xFF, 0x00, 0x55 }; // 11111111 00000000 01010101
-        std::vector<uint8_t> bits;
-        bytes_to_bits(bytes.begin(), bytes.end(), std::back_inserter(bits));
-        EXPECT_TRUE(bits == (std::vector<uint8_t> {
-            1, 1, 1, 1, 1, 1, 1, 1,  // 0xFF LSB-first
-            0, 0, 0, 0, 0, 0, 0, 0,  // 0x00 LSB-first
-            1, 0, 1, 0, 1, 0, 1, 0   // 0x55 LSB-first (bit 0, bit 1, bit 2, ...)
-        }));
-    }
-}
+            modem m;
+            m.baud_rate(1200);
+            m.gain(0.3);
+            m.initialize(wav_stream, modulator);
 
-TEST(bitstream, bits_to_bytes)
-{
-    {
-        std::vector<uint8_t> bits = { 1, 0, 1, 0, 0, 1, 0, 1 }; // 0xA5
-        std::vector<uint8_t> bytes;
-        bits_to_bytes(bits.begin(), bits.end(), std::back_inserter(bytes));
-        EXPECT_TRUE(bytes == (std::vector<uint8_t>{ 0xA5 }));
-    }
+            std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 45, 30, check_lengths[i]);
 
-    {
-        std::vector<uint8_t> bits = {
-            1, 1, 1, 1, 1, 1, 1, 1,  // 0xFF LSB-first
-            0, 0, 0, 0, 0, 0, 0, 0,  // 0x00 LSB-first
-            1, 0, 1, 0, 1, 0, 1, 0   // 0x55 LSB-first (bit 0, bit 1, bit 2, ...)
-        };
-        std::vector<uint8_t> bytes;
-        bits_to_bytes(bits.begin(), bits.end(), std::back_inserter(bytes));
-        EXPECT_TRUE(bytes == (std::vector<uint8_t>{ 0xFF, 0x00, 0x55 }));
+            m.transmit(bitstream);
+
+            wav_stream.close();
+        }
+
+        std::string full_output;
+
+        // Run Direwolf's ATEST with -B 1200 -d x
+        run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+
+        // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+        // Expect FX.25  0 (indicating successful FX.25 decoding)
+        EXPECT_TRUE(full_output.find("FX.25  0") != std::string::npos);
+        // Expect "Expecting 239 data & 16 check bytes"
+        std::string expected_string = fmt::format("Expecting {} data & {} check bytes", data_lengths[i], check_lengths[i]);
+        EXPECT_TRUE(full_output.find(expected_string) != std::string::npos);
+
+        i++;
     }
 }
 
-TEST(bitstream, add_hdlc_flags)
+TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
 {
-    std::vector<uint8_t> buffer(20, 0);
-    add_hdlc_flags(buffer.begin(), 2);
-    EXPECT_TRUE(buffer == std::vector<uint8_t>({ 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0 }));
+    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        std::vector<double> audio_buffer;
+     
+        fx25_bitstream_converter bitstream_converter;
+
+        std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 45, 30);
+
+        // 728
+
+
+        // Introduce some bit errors into the FX.25 bitstream
+        for (size_t i = 400; i <= 500; i += 10)
+        {
+            bitstream[i] ^= 1;
+        }
+        
+        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
+        
+        for (uint8_t bit : bitstream)
+        {
+            for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+            {
+                audio_buffer.push_back(modulator.modulate(bit));
+            }
+        }
+
+        apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
+
+        output_wav_audio_stream wav_stream("test.wav", 48000);
+
+        wav_stream.write(audio_buffer.data(), audio_buffer.size());
+
+        wav_stream.close();
+    }
+
+    std::string full_output;
+
+    // Run Direwolf's ATEST with -B 1200 -d x
+    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+    // Expect FX.25  8 (indicating bit errors during FX.25 decoding)
+    EXPECT_TRUE(full_output.find("FX.25  8") != std::string::npos);
+    // Expect FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9
+    EXPECT_TRUE(full_output.find("FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9") != std::string::npos);
 }
 
-TEST(bitstream, find_first_hdlc_flag)
+#ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
+TEST(modem, transmit_end_to_end)
 {
+	// Note: This test requires a Digirig device connected to COM16 and the audio device named "Speakers (2- USB Audio Device)".
+	// The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.
+	// The radio should be set to transmit when the RTS line is asserted on the Digirig's serial port.
+	// The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
+	// Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
+	// This test is disabled by default.
+	// To enable, define ENABLE_HARDWARE_IN_THE_LOOP_TESTS during compilation.
+
+    // Get the Digirig render audio device
+    audio_device device;
+    if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
     {
-        std::vector<uint8_t> bits = { 0,0,0,1,1,1,1,1,1,0,0,0 };
-        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.begin() + 2);
+        return;
+    }
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1*", "WIDE2-1*" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Connecting to a Digirig serial port, which uses the RTS line for the PTT
+    serial_port port;
+    port.open("COM16", 9600);
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    fx25_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.preemphasis(true);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Turn the transmitter on
+    port.rts(true);
+
+    // Set audio stream volume to 50%
+    stream.volume(50);
+
+    // Send the modulated packet to the audio device
+    m.transmit(p);
+
+    // Turn the transmitter off
+    port.rts(false);
+}
+
+#endif // ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
+TEST(dds_afsk_modulator, samples_per_bit)
+{
+    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        // The next_samples_per_bit function should be constant when the sample rate is an integer multiple of the baud rate
+
+        basic_bitstream_converter bitstream_converter;
+
+        std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 1, 1);
+
+        int total_samples = 0;
+
+        int sample_rate = 48000;
+        int baud_rate = 1200;
+
+        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
+
+        int samples_per_bit = sample_rate / baud_rate;
+
+        for (uint8_t bit : bitstream)
+        {
+            EXPECT_TRUE(modulator.next_samples_per_bit() == samples_per_bit);
+
+            for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+            {
+                EXPECT_TRUE(modulator.next_samples_per_bit() == samples_per_bit);
+
+                modulator.modulate(bit);
+
+                total_samples++;
+            }
+        }
+
+        EXPECT_TRUE(total_samples == bitstream.size() * samples_per_bit);
     }
 
     {
-        std::vector<uint8_t> bits = { 0,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0 };
-        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.begin());
-    }
+        std::vector<double> audio_buffer;
 
-    {
-        std::vector<uint8_t> bits = { 0,0,0,0,0 };
-        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.end());
-    }
+        basic_bitstream_converter bitstream_converter;
 
-    {
-        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0 };
-        auto it = find_first_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.end());
+        std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 45, 30);
+
+        int sample_rate = 44100;
+        int baud_rate = 1200;
+
+        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
+
+        double samples_per_bit_fixed = static_cast<double>(sample_rate) / baud_rate;
+        std::vector<int> samples_per_bit_values;
+
+        for (uint8_t bit : bitstream)
+        {
+            int samples_per_bit = modulator.next_samples_per_bit();
+
+            EXPECT_TRUE(samples_per_bit == 36 || samples_per_bit == 37);
+
+            samples_per_bit_values.push_back(samples_per_bit);
+
+            for (int i = 0; i < samples_per_bit; ++i)
+            {
+                audio_buffer.push_back(modulator.modulate(bit));
+            }
+        }
+
+        int min_samples_per_bit = *std::min_element(samples_per_bit_values.begin(), samples_per_bit_values.end());
+        int max_samples_per_bit = *std::max_element(samples_per_bit_values.begin(), samples_per_bit_values.end());
+
+		EXPECT_TRUE(min_samples_per_bit == 36);
+		EXPECT_TRUE(max_samples_per_bit == 37);
+
+        size_t total_samples = audio_buffer.size();
+        size_t total_bits = bitstream.size();
+
+        double effective_baud = static_cast<double>(total_bits) * static_cast<double>(sample_rate) / static_cast<double>(total_samples);
+
+        EXPECT_NEAR(effective_baud, static_cast<double>(baud_rate), 1e-6);
+
+        apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
+
+        output_wav_audio_stream wav_stream("test.wav", 48000);
+
+        wav_stream.write(audio_buffer.data(), audio_buffer.size());
+
+        wav_stream.close();
     }
 }
 
-TEST(bitstream, find_last_consecutive_hdlc_flag)
+TEST(dds_afsk_modulator, afsk_1200_frequency_accuracy)
 {
-    {
-        std::vector<uint8_t> bits = { 0,0,0,1,1,1,1,1,1,0,0,0 };
-        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.begin() + 2);
-    }
+    const std::vector<std::pair<int, double>> test_cases = {
+       {1, 1200.0},  // mark
+       {0, 2200.0}   // space
+    };
 
+    for (const auto& [bit, expected_freq] : test_cases)
     {
-        std::vector<uint8_t> bits = { 0,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0 };
-        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.begin() + 8);
-    }
+        std::vector<double> audio_buffer;
 
-    {
-        std::vector<uint8_t> bits = { 0,0,0,0,0 };
-        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.end());
-    }
+        std::vector<uint8_t> bitstream = std::vector<uint8_t>(10000, bit);
 
-    {
-        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0 };
-        auto it = find_last_consecutive_hdlc_flag(bits.begin(), bits.end());
-        EXPECT_TRUE(it == bits.end());
+        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+
+        for (uint8_t bit : bitstream)
+        {
+            for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+            {
+                audio_buffer.push_back(modulator.modulate(bit));
+            }
+        }
+
+        apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
+
+        output_wav_audio_stream wav_stream("test.wav", 48000);
+
+        wav_stream.write(audio_buffer.data(), audio_buffer.size());
+
+        wav_stream.close();
+
+        std::vector<fft_bin> fft_bins = compute_fft("test.wav");
+
+        fft_bin dominant_frequency_bin = dominant_frequency(fft_bins);
+
+        EXPECT_NEAR(dominant_frequency_bin.frequency, expected_freq, 0.1f);
+
+		std::vector<fft_bin> significant_frequencies = frequencies_above_threshold(fft_bins, dominant_frequency_bin.magnitude * 0.01); // 1% of dominant frequency as threshold
+
+		// If there is only one significant frequency, it should be the dominant frequency
+		// If there are multiple significant frequencies, they should form a sinc pattern around the dominant frequency
+
+        if (significant_frequencies.size() == 1)
+        {
+            EXPECT_TRUE(significant_frequencies.size() == 1);
+            EXPECT_TRUE(significant_frequencies[0].frequency == dominant_frequency_bin.frequency);
+        }
+        else
+        {
+            for (const auto& bin : significant_frequencies)
+            {
+                // All significant energy should be within ±100 Hz of expected frequency
+                EXPECT_NEAR(bin.frequency, expected_freq, 100.0);
+
+                double distance = std::abs(bin.frequency - expected_freq);
+				if (distance > 0.5)  // skip the peak itself at around ±0.5 Hz
+                {
+                    
+					double ratio = bin.magnitude / dominant_frequency_bin.magnitude; // 0.0 to 1.0, or 0% to 100% normalized
+                    double ratio_percent = ratio * 100.0;  // now 0-100%
+
+                    // Just verify it's decreasing - bins further away should be smaller
+                    // The sinc pattern means ~1/distance relationship approximately
+                    // The magnitude ratio should be less than 1/distance plus a 10% margin
+                    EXPECT_LT(ratio_percent, 100.0 / distance + 10.0);  // rough upper bound
+                }
+            }
+        }
     }
 }
 
-TEST(bitstream, bit_stuff)
+TEST(dds_afsk_modulator, afsk_1200_phase_continuity)
 {
+    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+
+    std::vector<double> audio_buffer;
+
+    // Generate alternating bits to force frequency transitions
+	std::vector<uint8_t> bitstream = generate_random_bits(10000);
+
+    for (uint8_t bit : bitstream)
     {
-        std::vector<uint8_t> bits = { 1,1,1,1,1,1,0,0,0 }; // 5 consecutive 1s
-        std::vector<uint8_t> stuffed;
-        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
-        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 1, 1, 1, 1, 0, 1, 0, 0, 0 })); // Stuff a 0 after 5 consecutive 1s
+        for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+        {
+            audio_buffer.push_back(modulator.modulate(bit));
+        }
     }
 
+    // Check max sample-to-sample difference
+    // For a continuous sine wave at 2200 Hz and 48000 sample rate,
+    // max change per sample is approximately 2 * pi * 2200 / 48000 ≈ 0.288
+    // With some margin for the transition, should still be well under 0.5
+    double max_delta = 0.0;
+    for (size_t i = 1; i < audio_buffer.size(); ++i)
     {
-        std::vector<uint8_t> bits = { 1,0,1,1,1,1,1,1,0 }; // 5 consecutive 1s
-        std::vector<uint8_t> stuffed;
-        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
-        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 0, 1, 1, 1, 1, 1, 0, 1, 0 })); // Stuff a 0 after 5 consecutive 1s
+        double delta = std::abs(audio_buffer[i] - audio_buffer[i - 1]);
+        max_delta = (std::max)(max_delta, delta);
     }
 
+    // A discontinuity would show as a delta close to 2.0 (jumping from +1 to -1)
+    // Continuous phase should never exceed ~0.35 for these frequencies
+    EXPECT_LT(max_delta, 0.4);
+}
+
+TEST(dds_afsk_modulator, afsk_1200_dc_offset)
+{
+    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+
+    std::vector<double> audio_buffer;
+
+    std::vector<uint8_t> bitstream = { 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 };
+
+    for (uint8_t bit : bitstream)
     {
-        std::vector<uint8_t> bits = { 0,0,0,0 }; // No 1s
-        std::vector<uint8_t> stuffed;
-        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
-        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 0, 0, 0, 0 })); // No stuffing needed
+        for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+        {
+            audio_buffer.push_back(modulator.modulate(bit));
+        }
     }
 
+    double sum = std::accumulate(audio_buffer.begin(), audio_buffer.end(), 0.0);
+    double mean = sum / audio_buffer.size();
+
+    EXPECT_NEAR(mean, 0.0, 0.01);  // DC offset should be negligible
+}
+
+TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
+{
+    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+
+    std::vector<double> audio_buffer;
+
+    std::vector<uint8_t> bitstream = generate_random_bits(10000);
+
+    double max_sample = 0.0;
+    double min_sample = 0.0;
+
+    for (uint8_t bit : bitstream)
     {
-        std::vector<uint8_t> bits = { 1,1,1,1,1 }; // 5 consecutive 1s
-        std::vector<uint8_t> stuffed;
-        bit_stuff(bits.begin(), bits.end(), std::back_inserter(stuffed));
-        EXPECT_TRUE(stuffed == (std::vector<uint8_t>{ 1, 1, 1, 1, 1, 0 }));
+        for (int i = 0; i < modulator.next_samples_per_bit(); ++i)
+        {
+            double sample = modulator.modulate(bit);
+            max_sample = (std::max)(max_sample, sample);
+            min_sample = (std::min)(min_sample, sample);
+        }
     }
+
+    // With gain 1.0, samples should reach close to ±1.0
+    EXPECT_NEAR(max_sample, 1.0, 0.01);
+    EXPECT_NEAR(min_sample, -1.0, 0.01);
 }
 
 int main(int argc, char** argv)
