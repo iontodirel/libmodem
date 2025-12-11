@@ -46,6 +46,9 @@
 #include <boost/process/pipe.hpp>
 #include <gtest/gtest.h>
 
+#include "external/aprsroute.hpp"
+#include "external/aprstrack.hpp"
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -114,6 +117,23 @@ void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line = 8)
         i++;
     }
     std::cout << std::endl;
+}
+
+std::string replace_non_printable(const std::string& s)
+{
+    std::ostringstream oss;
+    for (unsigned char c : s)
+    {
+        if (c < 0x20 || c > 0x7e)
+        {
+            oss << "<0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << ">";
+        }
+        else
+        {
+            oss << c;
+        }
+    }
+    return oss.str();
 }
 
 template<typename... Args>
@@ -2481,9 +2501,47 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
     EXPECT_TRUE(full_output.find("FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9") != std::string::npos);
 }
 
+TEST(modem, transmit_demo)
+{
+APRS_TRACK_NAMESPACE_USE
+APRS_TRACK_DETAIL_NAMESPACE_USE
+
+    // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
+    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    
+    EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
+
+	aprs::router::packet packet = packet_string;
+
+    output_wav_audio_stream wav_stream("test.wav", 48000);
+    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(wav_stream, modulator, bitstream_converter);
+
+    m.transmit(packet);
+
+	wav_stream.close();
+
+    std::string full_output;
+
+    // Run Direwolf's ATEST with -B 1200 -d x
+    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(full_output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+}
+
 #ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
-TEST(modem, transmit_end_to_end)
+TEST(modem, transmit_hardware_demo)
 {
 	// Note: This test requires a Digirig device connected to COM16 and the audio device named "Speakers (2- USB Audio Device)".
 	// The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.

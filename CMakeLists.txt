@@ -179,11 +179,11 @@ if (CMAKE_VERSION VERSION_GREATER 3.12)
 endif()
 
 file(DOWNLOAD https://raw.githubusercontent.com/iontodirel/libaprsroute/main/aprsroute.hpp ${CMAKE_SOURCE_DIR}/external/aprsroute.hpp)
+file(DOWNLOAD https://raw.githubusercontent.com/iontodirel/libaprstrack/refs/heads/main/aprstrack.hpp ${CMAKE_SOURCE_DIR}/external/aprstrack.hpp)
 
 include(GoogleTest)
 
 gtest_discover_tests(tests)
 
-configure_file(${CMAKE_SOURCE_DIR}/single_packet.wav ${CMAKE_BINARY_DIR}/single_packet.wav COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/test_assets/bitstream_1.txt ${CMAKE_BINARY_DIR}/bitstream_1.txt COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/fft.py ${CMAKE_BINARY_DIR}/fft.py COPYONLY)
