@@ -46,6 +46,7 @@
 #include <sstream>
 #include <fmt/core.h>
 #include <fmt/format.h>
+#include <filesystem>
 
 #ifdef WIN32
 #include <corecrt_io.h> 
@@ -162,10 +163,16 @@ namespace bp = boost::process;
 
     std::string line;
     std::stringstream output_stream;
+    std::stringstream error_stream;
 
-    while (stdout_pipe && std::getline(stdout_pipe, line))
+    while (std::getline(stdout_pipe, line))
     {
         output_stream << line << "\n";
+    }
+
+    while (std::getline(stderr_pipe, line))
+    {
+        error_stream << line << "\n";
     }
 
     process.wait();
@@ -188,7 +195,19 @@ std::vector<fft_bin> compute_fft(const std::string& wav_file)
 	// Python executable path is set by CMake at build time using find_package(Python3 COMPONENTS Interpreter)
 	// The python script fft.py is located in the source directory
 
-    run_process(PYTHON_EXE_PATH, output, "fft.py", wav_file);
+    std::filesystem::path script_path = std::filesystem::current_path() / "fft.py";
+
+    if (!std::filesystem::exists(script_path))
+    {
+        throw std::runtime_error("FFT script not found: " + script_path.string());
+	}
+
+    run_process(PYTHON_EXE_PATH, output, script_path.string(), wav_file);
+
+    if (output.empty())
+    {
+        throw std::runtime_error("FFT computation failed or produced no output");
+    }
 
     // Output is in the format "frequency:magnitude\n"
 

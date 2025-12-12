@@ -245,6 +245,7 @@ audio_device& audio_device::operator=(const audio_device& other)
 {
     if (this != &other)
     {
+#if WIN32
         if (device_)
         {
             device_->Release();
@@ -263,24 +264,30 @@ audio_device& audio_device::operator=(const audio_device& other)
         {
             device_->AddRef();
         }
+#endif
     }
     return *this;
 }
 
 std::unique_ptr<audio_stream_base> audio_device::stream()
 {
+#if WIN32
     auto stream = std::make_unique<wasapi_audio_stream>(device_);
     stream->start();
     return stream;
+#endif
+	return nullptr;
 }
 
 audio_device::~audio_device()
 {
+#if WIN32
     if (device_)
     {
         device_->Release();
         device_ = nullptr;
     }
+#endif
 }
 
 // **************************************************************** //
@@ -295,6 +302,9 @@ audio_device::~audio_device()
 
 std::vector<audio_device> get_audio_devices()
 {
+    std::vector<audio_device> devices;
+
+#if WIN32
     HRESULT hr;
 
     hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -322,8 +332,6 @@ std::vector<audio_device> get_audio_devices()
         throw std::runtime_error("Failed to get devices count");
     }
 
-    std::vector<audio_device> devices;
-
     for (UINT i = 0; i < count; ++i)
     {
         CComPtr<IMMDevice> dev;
@@ -336,6 +344,7 @@ std::vector<audio_device> get_audio_devices()
 
         devices.push_back(device);
     }
+#endif
 
     return devices;
 }
@@ -374,6 +383,7 @@ bool try_get_audio_device_by_description(const std::string& description, audio_d
 
 bool try_get_default_audio_device(audio_device& device)
 {
+#if WIN32
     HRESULT hr;
 
     if (FAILED(hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
@@ -399,6 +409,7 @@ bool try_get_default_audio_device(audio_device& device)
     }
 
     device = audio_device(device_);
+#endif
 
     return true;
 }

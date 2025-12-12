@@ -43,3 +43,4 @@
 tests/out/*
 .vs/*
 out/*
+tests/external/*
