@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "tests\\CMakeLists.txt",
+      "projectTarget": "tests.exe",
+      "name": "tests.exe"
+    }
+  ]
+}

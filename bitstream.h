@@ -34,8 +34,16 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <iterator>
+#include <string>
+#include <string_view>
+#include <array>
 
-#include "external/aprsroute.hpp"
+#ifndef LIBMODEM_PACKET_NAMESPACE_REFERENCE
+#define LIBMODEM_PACKET_NAMESPACE_REFERENCE
+#endif
+
+typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 
 #define LIBMODEM_AX25_NAMESPACE_BEGIN namespace ax25 {
 #define LIBMODEM_AX25_NAMESPACE_END }
@@ -84,7 +92,7 @@ struct frame
     std::array<uint8_t, 2> crc;
 };
 
-aprs::router::packet to_packet(const struct frame& frame);
+packet_type to_packet(const struct frame& frame);
 
 LIBMODEM_AX25_NAMESPACE_END
 
@@ -140,9 +148,9 @@ LIBMODEM_AX25_NAMESPACE_END
 
 struct basic_bitstream_converter
 {
-    std::vector<uint8_t> encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read);
-    bool try_decode(uint8_t bit, aprs::router::packet& p);
+    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read);
+    bool try_decode(uint8_t bit, packet_type& p);
     void reset();
 
 private:
@@ -159,8 +167,8 @@ private:
 
 struct fx25_bitstream_converter
 {
-    std::vector<uint8_t> encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read);
+    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read);
     void reset();
 };
 
@@ -174,10 +182,11 @@ struct fx25_bitstream_converter
 
 struct bitstream_converter_base
 {
-    virtual std::vector<uint8_t> encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const = 0;
-    virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) = 0;
-    virtual bool try_decode(uint8_t bit, aprs::router::packet& p) = 0;
+    virtual std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const = 0;
+    virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) = 0;
+    virtual bool try_decode(uint8_t bit, packet_type& p) = 0;
     virtual void reset() = 0;
+	virtual ~bitstream_converter_base();
 };
 
 // **************************************************************** //
@@ -190,9 +199,9 @@ struct bitstream_converter_base
 
 struct basic_bitstream_converter_adapter : public bitstream_converter_base
 {
-    std::vector<uint8_t> encode(const aprs::router::packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) override;
-    bool try_decode(uint8_t bit, aprs::router::packet& p) override;
+    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags = 45, int postamble_flags = 5) const override;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) override;
+    bool try_decode(uint8_t bit, packet_type& p) override;
     void reset() override;
 
 private:
@@ -209,9 +218,9 @@ private:
 
 struct fx25_bitstream_converter_adapter : public bitstream_converter_base
 {
-    std::vector<uint8_t> encode(const aprs::router::packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read) override;
-    bool try_decode(uint8_t bit, aprs::router::packet& p) override;
+    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags = 45, int postamble_flags = 5) const override;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) override;
+    bool try_decode(uint8_t bit, packet_type& p) override;
 	void reset() override;
 
 private:
@@ -657,7 +666,7 @@ LIBMODEM_AX25_NAMESPACE_END
 
 LIBMODEM_AX25_NAMESPACE_BEGIN
 
-std::vector<uint8_t> encode_header(const aprs::router::packet& p);
+std::vector<uint8_t> encode_header(const packet_type& p);
 
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path);
 
@@ -667,7 +676,7 @@ std::array<uint8_t, 7> encode_address(const struct address& address, bool last);
 
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last);
 
-std::vector<uint8_t> encode_frame(const aprs::router::packet& p);
+std::vector<uint8_t> encode_frame(const packet_type& p);
 
 std::vector<uint8_t> encode_frame(const struct frame& frame);
 
@@ -701,12 +710,12 @@ inline std::vector<uint8_t> encode_frame(const address& from, const address& to,
     return frame;
 }
 
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::packet& p);
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p);
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 
 template<class InputIt>
-inline bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, aprs::router::packet& p)
+inline bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p)
 {
 	// Decode an APRS packet from an NRZI bitstream
 	// The frame inside the bitstream is set between frame_it_first and frame_it_last
@@ -743,7 +752,7 @@ inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, stru
     return try_decode_frame(frame_bytes, frame);
 }
 
-std::vector<uint8_t> encode_basic_bitstream(const aprs::router::packet& p, int preamble_flags, int postamble_flags);
+std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags);
 
 std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t> frame, int preamble_flags, int postamble_flags);
 
@@ -794,7 +803,7 @@ void parse_address(std::string_view data, struct address& address);
 
 void parse_addresses(std::string_view data, std::vector<address>& addresses);
 
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::packet& p);
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p);
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
 
@@ -804,9 +813,9 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& fra
 
 bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state);
 
-bool try_decode_basic_bitstream(uint8_t bit, aprs::router::packet& packet, bitstream_state& state);
+bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state);
 
-bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& packet, size_t& read, bitstream_state& state);
+bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
 
 LIBMODEM_AX25_NAMESPACE_END
 
@@ -887,6 +896,6 @@ LIBMODEM_AX25_USING_NAMESPACE
     return bitstream;
 }
 
-std::vector<uint8_t> encode_fx25_bitstream(const aprs::router::packet& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
+std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
 
 LIBMODEM_FX25_NAMESPACE_END

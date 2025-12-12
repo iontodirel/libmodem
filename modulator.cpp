@@ -135,16 +135,19 @@ int dds_afsk_modulator_f64::next_samples_per_bit()
 
 double modulator_base::modulate_double(uint8_t bit)
 {
+	(void)bit;
     return 0.0;
 }
 
 float modulator_base::modulate_float(uint8_t bit)
 {
+	(void)bit;
     return 0.0f;
 }
 
 int16_t modulator_base::modulate_int(uint8_t bit)
 {
+	(void)bit;
     return 0;
 }
 

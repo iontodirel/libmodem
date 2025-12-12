@@ -31,6 +31,12 @@
 
 #pragma once
 
+#ifndef LIBMODEM_PACKET_NAMESPACE_REFERENCE
+#define LIBMODEM_PACKET_NAMESPACE_REFERENCE
+#endif
+
+typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
+
 #include <cmath>
 #include <algorithm>
 #include <optional>
@@ -38,8 +44,6 @@
 #include "audio_stream.h"
 #include "modulator.h"
 #include "bitstream.h"
-
-#include "external/aprsroute.hpp"
 
 // **************************************************************** //
 //                                                                  //
@@ -55,10 +59,10 @@ struct modem
     void initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter);
 
     void transmit();
-    void transmit(aprs::router::packet p);
+    void transmit(packet_type p);
     void transmit(const std::vector<uint8_t>& bits);
     
-    size_t receive(std::vector<aprs::router::packet>& packets);
+    size_t receive(std::vector<packet_type>& packets);
 
     void preemphasis(bool);
     bool preemphasis() const;

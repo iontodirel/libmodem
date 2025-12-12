@@ -70,7 +70,7 @@ void modem::transmit()
     transmit(bitstream);
 }
 
-void modem::transmit(aprs::router::packet p)
+void modem::transmit(packet_type p)
 {
     bitstream_converter_base& converter = conv.value().get();
 
@@ -174,7 +174,7 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
     }
 }
 
-size_t modem::receive(std::vector<aprs::router::packet>& packets)
+size_t modem::receive(std::vector<packet_type>& packets)
 {
     return 0;
 }

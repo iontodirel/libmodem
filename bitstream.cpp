@@ -37,6 +37,7 @@
 #include <iostream>
 #include <string>
 #include <optional>
+#include <cassert>
 
 extern "C" {
 #include <correct.h>
@@ -70,22 +71,34 @@ LIBMODEM_AX25_NAMESPACE_END
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// bitstream_converter_base                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bitstream_converter_base::~bitstream_converter_base()
+{
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // basic_bitstream_converter_adapter                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
+bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
 }
 
-bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, aprs::router::packet& p)
+bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
 {
     return converter.try_decode(bit, p);
 }
@@ -103,18 +116,20 @@ void basic_bitstream_converter_adapter::reset()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
+bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
 }
 
-bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, aprs::router::packet& p)
+bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
 {
+	(void)bit;
+	(void)p;
     return false;
 }
 
@@ -131,21 +146,21 @@ void fx25_bitstream_converter_adapter::reset()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> basic_bitstream_converter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> basic_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
     return encode_basic_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
+bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
     return try_decode_basic_bitstream(bitstream, offset, p, read, state);
 }
 
-bool basic_bitstream_converter::try_decode(uint8_t bit, aprs::router::packet& p)
+bool basic_bitstream_converter::try_decode(uint8_t bit, packet_type& p)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -165,16 +180,21 @@ void basic_bitstream_converter::reset()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> fx25_bitstream_converter::encode(const aprs::router::packet& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> fx25_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
 LIBMODEM_FX25_USING_NAMESPACE
 
     return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& p, size_t& read)
+bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
 LIBMODEM_FX25_USING_NAMESPACE
+
+    (void)bitstream;
+    (void)offset;
+	(void)p;
+	(void)read;
 
     return false;
 }
@@ -385,9 +405,9 @@ std::string to_string(const struct address& address)
 
 LIBMODEM_AX25_NAMESPACE_BEGIN
 
-aprs::router::packet to_packet(const struct frame& frame)
+packet_type to_packet(const struct frame& frame)
 {
-    aprs::router::packet p;
+    packet_type p;
 
     p.from = to_string(frame.from);
     p.to = to_string(frame.to);
@@ -510,7 +530,7 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
             // Shift each character left by 1 bit
             // Example: 'W' (0x57 = 01010111) << 1 = 0xAE (10101110)
             // AX.25 uses 7-bit encoding, leaving the LSB for other purposes
-            data[i] = ((uint8_t)address[i]) << 1; // shift left by 1 bit
+            data[i] = static_cast<uint8_t>(address[i] << 1); // shift left by 1 bit
         }
         else
         {
@@ -580,7 +600,7 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
     return data;
 }
 
-std::vector<uint8_t> encode_frame(const aprs::router::packet& p)
+std::vector<uint8_t> encode_frame(const packet_type& p)
 {
     address to_address;
     try_parse_address(p.to, to_address);
@@ -609,7 +629,7 @@ std::vector<uint8_t> encode_frame(const address& from, const address& to, const 
     return encode_frame(from, to, path, data.begin(), data.end());
 }
 
-std::vector<uint8_t> encode_basic_bitstream(const aprs::router::packet& p, int preamble_flags, int postamble_flags)
+std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(encode_frame(p), preamble_flags, postamble_flags);
 }
@@ -658,7 +678,7 @@ void parse_addresses(std::string_view data, std::vector<address>& addresses)
     }
 }
 
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, aprs::router::packet& p)
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p)
 {
 	address from;
 	address to;
@@ -778,7 +798,7 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, ad
     return true;
 }
 
-bool try_decode_basic_bitstream(uint8_t bit, aprs::router::packet& packet, bitstream_state& state)
+bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
 {
 	bool result = try_decode_basic_bitstream(bit, state);
     if (result)
@@ -960,7 +980,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
     return false; // No complete packet yet
 }
 
-bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, aprs::router::packet& packet, size_t& read, bitstream_state& state)
+bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state)
 {
     for (size_t i = offset; i < bitstream.size(); i++)
     {
@@ -988,7 +1008,7 @@ LIBMODEM_AX25_NAMESPACE_END
 
 LIBMODEM_FX25_NAMESPACE_BEGIN
 
-std::vector<uint8_t> encode_fx25_bitstream(const aprs::router::packet& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
+std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 

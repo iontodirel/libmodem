@@ -1,0 +1,275 @@
+{
+  // - supports arbitrary numbers of audio streams, ex: a modulator can render to an arbitrary number of audio devices
+  // - audio streams can be shared as many times as wanted across all modulators/demodulators
+  // - supports an arbitrary number of data streams, ex: multiple KISS interfaces for the same modulator
+  // - modulators/demodulators can use different audio streams and data streams
+  // - random fsk/afsk and data stream sources; this is useful for testing and generating demo packets
+  // - can mix modulators and demodulators as desired 
+  // - audio streams can be wav to file, native WASAPI audio devices or native ALSA; I will look into Mac later
+  // - data streams can be JSON files, or TCP, serial ports, or stdout, or a C dynamic library interface for extensibility; stdout and logging to disk are just another data stream
+  // - data streams formats can be AX25/KISS, JSON format, or text (TNC2 format)
+  // - PTT interface can be serial, gpio on the Pi or a C dynamic library interface
+  // - data stream formats: 
+  //   - aprs_text
+  //   - aprs_json
+  //   - ax25_hex
+  //   - ax25_kiss
+  //   - ax25_bin
+  //   - telemetry
+  //   - bitstream
+  // - telemetry format can be appended to most formats with "_with_telemetry"
+  // - telemetry format is not supported in some modes like KISS
+  "modulators": [
+    {
+      "name": "1200 APRS modulator",
+      "type": "dds_afsk_modulator",
+      "convertor": "basic_bitstream_convertor",
+      "enabled": true,
+      "baud_rate": 1200,
+      "mark_freq_hz": 1200.0,
+      "space_freq_hz": 2200.0,
+      "tx_delay_ms": 300,
+      "tx_tail_ms": 30,
+      "gain": 0.3, 
+      "preemphasis": true,
+      "preemphasis_tau_us": 750,
+      "begin_silence_ms": 100,
+      "end_silence_ms": 100,
+      "output_audio_streams": [ "wasapi_audio_stream_default" ],
+      "input_data_streams": [ "tcp_default" ],
+      "output_ptt_streams": [ "serial_ptt_default", "gpio_ptt_raspberrypi", "gpio_ptt_raspberrypi_2" ]
+    },
+    {
+      "name": "1200 APRS modulator (wav renderer)",
+      "enabled": true,
+      "inherit": "1200 APRS modulator",
+      "input_data_streams": [ "random_packet_stream" ],
+      "output_audio_streams": [ "wav_file_default" ]
+    },
+    {
+      "name": "1200 APRS modulator (multiple)",
+      "enabled": true,
+      "inherit": "1200 APRS modulator",
+      "output_audio_streams": [ "wasapi_audio_stream_default", "wav_file_default" ],
+      "input_data_streams": [ "tcp_default", "serial_default" ]
+    }
+  ],
+  "audio_streams": [
+    {
+      "name": "wasapi_audio_stream_default",
+      "type": "wasapi_audio_stream",
+      "device_name": "default",
+      "sample_rate": 48000,
+      "volume": 20,
+      "write_concurrency": "mutex",
+      "write_concurrency_timeout_ms": 100,
+      "write_concurrency_timeout_action": "drop",
+      "overrun_read_buffer_size_ms": 60000
+    },
+    {
+      "name": "alsa_audio_stream_default",
+      "type": "alsa_audio_stream",
+      "device_id": "hw:1,0",
+      "sample_rate": 44100,
+      "volume": 10
+    },
+    {
+      "name": "tcp_audio_default",
+      "type": "tcp_audio_stream",
+      "host": "192.168.1.11",
+      "audio_port": 8000,
+      "control_port": 8001
+    },
+    {
+      "name": "wav_file_default",
+      "type": "output_wav_audio_stream",
+      "file_path": "output.wav",
+      "sample_rate": 48000,
+      "file_mode": "append",
+      "max_size": "500MB",
+      "max_files": 10
+    },
+    {
+      "name": "modulator_test_wav_file",
+      "type": "input_wav_audio_stream",
+      "file_path": "test.wav",
+      "sample_rate": 48000
+    },
+    {
+      "name": "null_audio",
+      "type": "null_audio_stream"
+    },
+    {
+      "name": "fsk_random_stream",
+      "type": "fsk_audio_stream",
+      "source": "random_bitstream",
+      "duration_ms": 0
+    },
+    {
+      "name": "fsk_random_stream_2",
+      "type": "fsk_audio_stream",
+      "source": "random_ax25",
+      "duration_ms": 0
+    },
+    {
+      "name": "fsk_random_stream_3",
+      "type": "fsk_audio_stream",
+      "source": "random_ax25_aprs",
+      "duration_ms": 0
+    }
+  ],
+  "data_streams": [
+    {
+      "name": "tcp_default",
+      "type": "tcp_data_stream",
+      "bind_address": "0.0.0.0",
+      "port": 8002,
+      "format": "ax25_kiss",
+      "write_concurrency": "mutex",
+      "max_clients": 100
+    },
+    {
+      "name": "tcp_stream_2",
+      "type": "tcp_data_stream",
+      "bind_address": "0.0.0.0",
+      "port": 8002,
+      "format": "aprs_json_with_telemetry",
+      "write_concurrency": "mutex",
+      "max_clients": 100
+    },
+    {
+      "name": "serial_default",
+      "type": "serial_data_stream",
+      "port": "COM3",
+      "baud_rate": 9600,
+      "data_bits": 8,
+      "stop_bits": 1,
+      "parity": "none",
+      "flow_control": "none",
+      "format": "ax25_kiss"
+    },
+    {
+      "name": "random_packet_stream",
+      "type": "test_data_stream",
+      "total_count": 1000,
+      "source": "random",
+      "format": "aprs_text"
+    },
+    {
+      "name": "random_packet_stream_2",
+      "type": "test_data_stream",
+      "total_count": 1000,
+      "source": "repeat",
+      "format": "aprs_text",
+      "packet": "N0CALL>APRS,CALL:messsage"
+    },
+    {
+      "name": "json_stream",
+      "type": "json_data_stream",
+      "path": "default.json",
+      "format": "aprs_json_with_telemetry",
+      "max_size": "100K",
+      "max_files": 10,
+      "auto_flush_s": 10,
+      "auto_flush_size": "100K"
+    },
+    {
+      "name": "stdout_stream",
+      "type": "stdout_data_stream",
+      "format": "ax25_hex"
+    },
+    {
+      "name": "stdout_stream_2",
+      "type": "stdout_data_stream",
+      "format": "bitstream"
+    },
+    // formats can be combined
+    {
+      "name": "stdout_stream_2",
+      "type": "stdout_data_stream",
+      "format": "telemetry"
+    },
+    {
+      "name": "log_stream",
+      "type": "log_data_stream",
+      "file": "log.txt",
+      "format": "aprs_text_with_telemetry",
+      "max_size": "100K",
+      "max_files": 10,
+      "level": "info",
+      "verbosity": "normal",
+      "auto_flush_s": 10,
+      "auto_flush_size": "100K"
+    },
+    {
+      "name": "library_stream",
+      "type": "library_data_stream",
+      "platform": "windows",
+      "path": "library.dll",
+      "format": "aprs_json"
+    }
+  ],
+  "ptt_streams": [
+    {
+      "name": "serial_ptt_default",
+      "type": "serial_ptt_stream",
+      "port": "COM4",
+      "baud_rate": 9600,
+      "line": "dtr",
+      "active": "high"
+    },
+    {
+      "name": "serial_ptt_default_2",
+      "type": "serial_ptt_stream",
+      "port": "COM4",
+      "baud_rate": 9600,
+      "line": "rts",
+      "active": "low"
+    },
+    {
+      "name": "gpio_ptt_raspberrypi",
+      "type": "gpio_ptt_stream",
+      "pin_number": 18,
+      "numbering": "bcm",
+      "active": "low",
+      "pre_delay_ms": 5,
+      "post_delay_ms": 1
+    },
+    {
+      "name": "gpio_ptt_raspberrypi_2",
+      "type": "gpio_ptt_stream",
+      "pin_number": 5,
+      "active": "high",
+      "numbering": "wiringpi"
+    },
+    {
+      "name": "library_ptt",
+      "type": "library_ptt_stream",
+      "platform": "linux",
+      "path": "ptt_library.so"
+    },
+    {
+      "name": "library_ptt",
+      "type": "library_ptt_stream",
+      "platform": "windows",
+      "path": "ptt_library.dll"
+    }
+  ]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
