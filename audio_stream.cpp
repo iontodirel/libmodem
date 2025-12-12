@@ -1,3 +1,34 @@
+// **************************************************************** //
+// modem - APRS modem                                               // 
+// Version 0.1.0                                                    //
+// https://github.com/iontodirel/modem                              //
+// Copyright (c) 2025 Ion Todirel                                   //
+// **************************************************************** //
+//
+// audio_stream.cpp
+//
+// MIT License
+//
+// Copyright (c) 2025 Ion Todirel
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files(the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #include "audio_stream.h"
 
 #include <stdexcept>
@@ -206,36 +237,6 @@ audio_device::audio_device(IMMDevice* device)
         description = get_string_property(props.p, PKEY_Device_FriendlyName);
         name = get_string_property(props.p, PKEY_Device_DeviceDesc);
         container_id = get_guid_property(props.p, PKEY_Device_ContainerId);
-
-		//std::string instance_id = get_string_property(props.p, PKEY_Device_InstanceId);
-
-  //      PROPVARIANT varDeviceId;
-  //      props->GetValue(PKEY_Device_InstanceId, &varDeviceId);
-
-  //      IDeviceTopology* pTopology = nullptr;
-  //      device_->Activate(__uuidof(IDeviceTopology), CLSCTX_ALL, NULL, (void**)&pTopology);
-
-  //      // Get connector at index 0
-  //      IConnector* pConnector = nullptr;
-  //      pTopology->GetConnector(0, &pConnector);
-
-  //      // Walk to the connected device
-  //      IConnector* pConnectedTo = nullptr;
-  //      pConnector->GetConnectedTo(&pConnectedTo);
-
-  //      // Get the part
-  //      IPart* pPart = nullptr;
-  //      pConnectedTo->QueryInterface(__uuidof(IPart), (void**)&pPart);
-
-  //      // Get the topology of the connected part (the actual device)
-  //      IDeviceTopology* pDeviceTopology = nullptr;
-  //      pPart->GetTopologyObject(&pDeviceTopology);
-
-  //      // NOW get the device ID (this is the PnP device instance ID)
-  //      LPWSTR pwszDeviceId = nullptr;
-  //      pDeviceTopology->GetDeviceId(&pwszDeviceId);
-
-        printf("\n");
     }
 }
 
@@ -294,8 +295,6 @@ audio_device::~audio_device()
 //                                                                  //
 //                                                                  //
 // get_audio_devices                                                //
-// try_get_audio_device_by_description                              //
-// try_get_default_audio_device                                     //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -364,6 +363,14 @@ std::vector<audio_device> get_audio_devices(audio_device_type type, audio_device
     return filtered_devices;
 }
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_audio_device_by_description                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 bool try_get_audio_device_by_description(const std::string& description, audio_device& device, audio_device_type type, audio_device_state state)
 {
     std::vector<audio_device> devices = get_audio_devices();
@@ -380,6 +387,14 @@ bool try_get_audio_device_by_description(const std::string& description, audio_d
 
     return false;
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_default_audio_device                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 bool try_get_default_audio_device(audio_device& device)
 {
@@ -802,199 +817,13 @@ bool wasapi_audio_stream::mute()
 
 #endif // WIN32
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-tcp_client_audio_stream::tcp_client_audio_stream(const char* host, int audio_port, int control_port)
-    : socket_(io_context_)
-    , control_socket_(io_context_)
-    , volume_(100)
-    , sample_rate_(44100)
-    , host_(host)
-    , audio_port_(audio_port)
-    , control_port_(control_port)
-{
-    try
-    {
-        boost::asio::ip::tcp::resolver resolver(io_context_);
-
-        // Connect data socket to the specified port
-        auto data_endpoints = resolver.resolve(host, std::to_string(audio_port));
-        boost::asio::connect(socket_, data_endpoints);
-
-        // Connect control socket to port + 1 (you can adjust this convention)
-        auto control_endpoints = resolver.resolve(host, std::to_string(control_port));
-        boost::asio::connect(control_socket_, control_endpoints);
-
-        // Get initial sample rate from server via control channel
-        json request = {
-            {"command", "get_sample_rate"}
-        };
-        send_control_command(request);
-        json response = receive_control_response();
-        sample_rate_ = response["sample_rate"];
-    }
-    catch (const std::exception& e)
-    {
-        throw std::runtime_error(std::string("TCP connection failed: ") + e.what());
-    }
-}
-
-bool tcp_client_audio_stream::wait_write_completed(int timeout_ms)
-{
-    // For TCP, we assume writes are immediate; implement proper flow control if needed
-    return true;
-}
-
-tcp_client_audio_stream::~tcp_client_audio_stream()
-{
-    try
-    {
-        if (control_socket_.is_open())
-        {
-            json request = {
-                {"command", "disconnect"}
-            };
-            send_control_command(request);
-            control_socket_.close();
-        }
-        if (socket_.is_open())
-        {
-            socket_.close();
-        }
-    }
-    catch (...)
-    {
-        // Suppress exceptions in destructor
-    }
-}
-
-std::string tcp_client_audio_stream::name()
-{
-    return host_ + "_" + std::to_string(audio_port_) + "_" + std::to_string(control_port_);
-}
-
-void tcp_client_audio_stream::volume(int percent)
-{
-    if (percent < 0 || percent > 100)
-    {
-        throw std::invalid_argument("Volume must be between 0 and 100");
-    }
-
-    volume_ = percent;
-
-    json request = {
-        {"command", "set_volume"},
-        {"volume", percent}
-    };
-    send_control_command(request);
-
-    json response = receive_control_response();
-    if (response["status"] != "ok")
-    {
-        throw std::runtime_error("Failed to set volume");
-    }
-}
-
-int tcp_client_audio_stream::volume()
-{
-    return volume_;
-}
-
-int tcp_client_audio_stream::sample_rate()
-{
-    return sample_rate_;
-}
-
-size_t tcp_client_audio_stream::write(const double* samples, size_t count)
-{
-    if (!samples || count == 0)
-    {
-        return 0;
-    }
-
-    try
-    {
-        // Send raw audio data directly on data socket
-        size_t bytes_to_send = count * sizeof(double);
-        size_t bytes_sent = boost::asio::write(socket_,
-            boost::asio::buffer(samples, bytes_to_send));
-
-        return bytes_sent / sizeof(double);
-    }
-    catch (const std::exception& e)
-    {
-        throw std::runtime_error(std::string("Write failed: ") + e.what());
-    }
-}
-
-size_t tcp_client_audio_stream::read(double* samples, size_t count)
-{
-    if (!samples || count == 0)
-    {
-        return 0;
-    }
-
-    try
-    {
-        // Read raw audio data directly from data socket
-        size_t bytes_to_read = count * sizeof(double);
-        size_t bytes_read = boost::asio::read(socket_,
-            boost::asio::buffer(samples, bytes_to_read),
-            boost::asio::transfer_exactly(bytes_to_read));
-
-        return bytes_read / sizeof(double);
-    }
-    catch (const std::exception& e)
-    {
-        throw std::runtime_error(std::string("Read failed: ") + e.what());
-    }
-}
-
-void tcp_client_audio_stream::send_control_command(const json& cmd)
-{
-    std::string message = cmd.dump() + "\n";
-    boost::asio::write(control_socket_, boost::asio::buffer(message));
-}
-
-nlohmann::json tcp_client_audio_stream::receive_control_response()
-{
-    boost::asio::streambuf buffer;
-    boost::asio::read_until(control_socket_, buffer, "\n");
-
-    std::istream is(&buffer);
-    std::string response_str;
-    std::getline(is, response_str);
-
-    // Remove trailing carriage return if present
-    if (!response_str.empty() && response_str.back() == '\r')
-    {
-        response_str.pop_back();
-    }
-
-    return json::parse(response_str);
-}
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// input_wav_audio_stream                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 input_wav_audio_stream::input_wav_audio_stream(const std::string& filename)
     : sf_file_(nullptr)
@@ -1098,6 +927,14 @@ void input_wav_audio_stream::close()
         sf_file_ = nullptr;
     }
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// output_wav_audio_stream                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 output_wav_audio_stream::output_wav_audio_stream(const std::string& filename, int sample_rate)
     : sf_file_(nullptr)

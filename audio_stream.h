@@ -1,3 +1,34 @@
+// **************************************************************** //
+// modem - APRS modem                                               // 
+// Version 0.1.0                                                    //
+// https://github.com/iontodirel/modem                              //
+// Copyright (c) 2025 Ion Todirel                                   //
+// **************************************************************** //
+//
+// audio_stream.h
+//
+// MIT License
+//
+// Copyright (c) 2025 Ion Todirel
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files(the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #pragma once
 
 #if WIN32
@@ -21,6 +52,13 @@
 
 #include <sndfile.h>
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_base                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 struct audio_stream_base
 {
     virtual ~audio_stream_base() = default;
@@ -35,6 +73,14 @@ struct audio_stream_base
     virtual size_t write(const double* samples, size_t count) = 0;
     virtual size_t read(double* samples, size_t count) = 0;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 class audio_stream : public audio_stream_base
 {
@@ -60,12 +106,28 @@ private:
     std::unique_ptr<audio_stream_base> stream_;
 };
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_device_type                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 enum class audio_device_type : int
 {
     unknown = 0,
     capture = 1,
     render = 2
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_device_state                                               //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 enum class audio_device_state
 {
@@ -75,6 +137,14 @@ enum class audio_device_state
     unplugged,
     not_present
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_device                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 struct audio_device
 {
@@ -106,9 +176,34 @@ private:
 #endif
 };
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// get_audio_devices                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 std::vector<audio_device> get_audio_devices();
 std::vector<audio_device> get_audio_devices(audio_device_type type, audio_device_state state);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_audio_device_by_description                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 bool try_get_audio_device_by_description(const std::string& description, audio_device& device, audio_device_type type, audio_device_state state);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wasapi_audio_stream                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 #if WIN32
 
@@ -147,6 +242,14 @@ private:
 
 #endif // WIN32
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// input_wav_audio_stream                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 struct input_wav_audio_stream : audio_stream_base
 {
 public:
@@ -172,6 +275,14 @@ private:
     int channels_ = 1;
 };
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// output_wav_audio_stream                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 struct output_wav_audio_stream : audio_stream_base
 {
 public:
@@ -195,35 +306,4 @@ private:
     std::string filename_;
     int sample_rate_;
     int channels_ = 1;
-};
-
-class tcp_client_audio_stream : public audio_stream_base
-{
-using json = nlohmann::json;
-
-public:
-    tcp_client_audio_stream(const char* host, int audio_port, int control_port);
-    virtual ~tcp_client_audio_stream();
-
-    std::string name();
-
-    void volume(int percent) override;
-    int volume() override;
-    int sample_rate() override;
-    size_t write(const double* samples, size_t count) override;
-    size_t read(double* samples, size_t count) override;
-    bool wait_write_completed(int timeout_ms);
-
-private:
-    std::string host_;
-    int audio_port_;
-    int control_port_;
-    boost::asio::io_context io_context_;
-    boost::asio::ip::tcp::socket socket_;         // Audio data socket (raw bytes)
-    boost::asio::ip::tcp::socket control_socket_; // Control commands socket
-    int volume_;
-    int sample_rate_;
-
-    void send_control_command(const json& cmd);
-    json receive_control_response();
 };
