@@ -172,6 +172,7 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
+    audio_stream.wait_write_completed(-1);
 }
 
 size_t modem::receive(std::vector<packet_type>& packets)

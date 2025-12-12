@@ -170,7 +170,7 @@ file(DOWNLOAD https://raw.githubusercontent.com/iontodirel/libaprstrack/refs/hea
 
 add_executable(tests "tests.cpp" "../audio_stream.cpp" "../modulator.cpp" "../modem.cpp" "../bitstream.h" "../bitstream.cpp" "../io.cpp")
 target_include_directories(tests PRIVATE "../" )
-target_link_libraries(tests GTest::gtest_main gtest gtest_main nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct)
+target_link_libraries(tests PRIVATE GTest::gtest_main gtest gtest_main nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct)
 target_compile_definitions(tests PRIVATE ATEST_EXE_PATH="${ATEST_EXE_PATH}"  PYTHON_EXE_PATH="${Python3_EXECUTABLE}" LIBMODEM_PACKET_NAMESPACE_REFERENCE=aprs::router:: APRS_ROUTER_ENABLE_PACKET_SUPPORT=true)
 set_property(TARGET tests PROPERTY CXX_STANDARD 20)
 
@@ -178,6 +178,10 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FI${CMAKE_SOURCE_DIR}/external/aprsroute.hpp")
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${CMAKE_SOURCE_DIR}/external/aprsroute.hpp")
+endif()
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(tests PRIVATE asound)
 endif()
 
 if(MSVC)

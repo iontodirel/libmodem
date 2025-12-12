@@ -47,6 +47,12 @@
 
 #endif // WIN32
 
+#ifdef __linux__
+
+#include <alsa/asoundlib.h>
+
+#endif // __linux__
+
 #include <boost/asio.hpp>
 #include <nlohmann/json.hpp>
 
@@ -72,6 +78,8 @@ struct audio_stream_base
 
     virtual size_t write(const double* samples, size_t count) = 0;
     virtual size_t read(double* samples, size_t count) = 0;
+
+    virtual bool wait_write_completed(int timeout_ms) = 0;
 };
 
 // **************************************************************** //
@@ -99,6 +107,8 @@ public:
 
     size_t write(const double* samples, size_t count);
     size_t read(double* samples, size_t count);
+
+    bool wait_write_completed(int timeout_ms);
 
     explicit operator bool() const;
 
@@ -154,7 +164,11 @@ friend std::vector<audio_device> get_audio_devices();
 
 #if WIN32
     audio_device(IMMDevice* device);
-#endif
+#endif // WIN32
+
+#if __linux__
+    audio_device(int card_id, int device_id, audio_device_type type);
+#endif // __linux__
 
     audio_device& operator=(const audio_device& other);
 	audio_device(const audio_device&);
@@ -167,13 +181,20 @@ friend std::vector<audio_device> get_audio_devices();
     std::string description;
     audio_device_type type = audio_device_type::unknown;
     audio_device_state state = audio_device_state::active;
+#if WIN32
 	std::string container_id;
+#endif // WIN32
 
 private:
 
 #if WIN32
 	IMMDevice* device_ = nullptr;
-#endif
+#endif // WIN32
+
+#if __linux__
+    int card_id;
+    int device_id;
+#endif // __linux__
 };
 
 // **************************************************************** //
@@ -190,12 +211,32 @@ std::vector<audio_device> get_audio_devices(audio_device_type type, audio_device
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// try_get_audio_device_by_name                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bool try_get_audio_device_by_name(const std::string& name, audio_device& device, audio_device_type type, audio_device_state state);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // try_get_audio_device_by_description                              //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 bool try_get_audio_device_by_description(const std::string& description, audio_device& device, audio_device_type type, audio_device_state state);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_default_audio_device                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bool try_get_default_audio_device(audio_device& device);
 
 // **************************************************************** //
 //                                                                  //
@@ -241,6 +282,53 @@ private:
 };
 
 #endif // WIN32
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// alsa_audio_stream                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if __linux__
+
+struct alsa_audio_stream : public audio_stream_base
+{
+    alsa_audio_stream();
+    alsa_audio_stream(int card_id, int device_id, audio_device_type type);
+	alsa_audio_stream(const alsa_audio_stream&);
+	alsa_audio_stream& operator=(const alsa_audio_stream&);
+    virtual ~alsa_audio_stream();
+
+    std::string name();
+
+    void mute(bool);
+    bool mute();
+
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    size_t write(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    bool wait_write_completed(int timeout_ms);
+
+    void start();
+	void stop();
+
+private:
+    int card_id;
+    int device_id;
+    snd_pcm_t* pcm_handle_ = nullptr;
+    int sample_rate_ = 48000;
+    unsigned int num_channels_ = 1;
+    audio_device_type type;
+    snd_pcm_format_t format_;
+    std::vector<float> buffer;
+    std::vector<int16_t> s16_buffer;
+};
+
+#endif // __linux__
 
 // **************************************************************** //
 //                                                                  //

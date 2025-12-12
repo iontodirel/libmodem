@@ -2571,9 +2571,12 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
 TEST(modem, transmit_hardware_demo)
 {
-	// Note: This test requires a Digirig device connected to COM16 and the audio device named "Speakers (2- USB Audio Device)".
+	// Note: This test requires a Digirig device connected to the system
+    // Note: Windows: port COM16 is used and the audio device is named "Speakers (2- USB Audio Device)".
+    // Note: Linux: the audio device is named "USB Audio" and is connected to a serial port ex: /dev/ttyUSB0
+    // Note: the port and audio device name will vary, update accordingly
 	// The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.
-	// The radio should be set to transmit when the RTS line is asserted on the Digirig's serial port.
+	// The radio will be set to transmit when the RTS line is asserted on the Digirig's serial port.
 	// The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
 	// Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
 	// This test is disabled by default.
@@ -2581,20 +2584,42 @@ TEST(modem, transmit_hardware_demo)
 
     // Get the Digirig render audio device
     audio_device device;
+#if WIN32
     if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
     {
         return;
     }
+#endif // WIN32
+#if __linux__
+    if (!try_get_audio_device_by_name("USB Audio", device, audio_device_type::render, audio_device_state::active))
+    {
+        return;
+    }
+#endif // __linux__
 
     aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1*", "WIDE2-1*" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Connecting to a Digirig serial port, which uses the RTS line for the PTT
     serial_port port;
-    port.open("COM16", 9600);
+#if WIN32
+    if (!port.open("COM16", 9600))
+    {
+        return;
+    }
+#endif // WIN32
+#if __linux__
+    if (!port.open("/dev/ttyUSB0", 9600))
+    {
+        return;
+    }
+    // Turns out opening the port asserts the RTS line to on
+    // Disable it, if we do it fast it will never be asserted high
+    port.rts(false);
+#endif // __linux__
 
     audio_stream stream = device.stream();
-    dds_afsk_modulator_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    fx25_bitstream_converter_adapter bitstream_converter;
+    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
 
     modem m;
     m.baud_rate(1200);
