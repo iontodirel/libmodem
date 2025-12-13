@@ -228,7 +228,7 @@ bool serial_port::cts()
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         return (status & MS_CTS_ON) != 0;
 #endif // WIN32
-#ifdef __linux_
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CTS) != 0;
