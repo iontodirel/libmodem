@@ -204,7 +204,19 @@ std::vector<fft_bin> compute_fft(const std::string& wav_file)
         throw std::runtime_error("FFT script not found: " + script_path.string());
     }
 
-    run_process(PYTHON_EXE_PATH, output, script_path.string(), wav_file);
+    std::string python_exe_path = PYTHON_EXE_PATH;
+
+    if (python_exe_path.empty())
+    {
+        throw std::runtime_error("Python executable path is not set. Please set PYTHON_EXE_PATH macro.");
+    }
+
+    if (!std::filesystem::exists(python_exe_path))
+    {
+        throw std::runtime_error("Python executable not found: " + python_exe_path);
+    }
+
+    run_process(python_exe_path, output, script_path.string(), wav_file);
 
     if (output.empty())
     {

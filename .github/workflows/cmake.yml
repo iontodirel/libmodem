@@ -32,6 +32,10 @@ jobs:
         chmod +x ${{github.workspace}}/tests/install_dependencies.sh
         sudo ${{github.workspace}}/tests/install_dependencies.sh
 
+    - name: Install Python dependencies
+      if: runner.os == 'Windows'
+      run: pip install numpy scipy
+
     - name: Configure
       working-directory: ${{github.workspace}}/tests
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
