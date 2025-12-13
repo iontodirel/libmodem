@@ -32,6 +32,12 @@ jobs:
         chmod +x ${{github.workspace}}/tests/install_dependencies.sh
         sudo ${{github.workspace}}/tests/install_dependencies.sh
 
+    - name: Set up Python
+      if: runner.os == 'Windows'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
     - name: Install Python dependencies
       if: runner.os == 'Windows'
       run: python3 -m pip install numpy scipy
