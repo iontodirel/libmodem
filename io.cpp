@@ -99,7 +99,7 @@ void serial_port::rts(bool enable)
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         if (enable)
         {
             ::EscapeCommFunction(serial_port_.native_handle(), SETRTS);
@@ -108,7 +108,8 @@ void serial_port::rts(bool enable)
         {
             ::EscapeCommFunction(serial_port_.native_handle(), CLRRTS);
         }
-#else
+#endif // WIN32
+#if __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         if (enable)
@@ -120,7 +121,7 @@ void serial_port::rts(bool enable)
             status &= ~TIOCM_RTS;
         }
         ::ioctl(serial_port_.native_handle(), TIOCMSET, &status);
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -133,18 +134,19 @@ bool serial_port::rts()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         DWORD status;
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return RTS state directly
         // RTS is an output signal we control, not an input we read
         // You might need to track this state separately if needed
         return false; // Or maintain internal state
-#else
+#endif // WIN32
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_RTS) != 0;
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -158,7 +160,7 @@ void serial_port::dtr(bool enable)
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         if (enable)
         {
             ::EscapeCommFunction(serial_port_.native_handle(), SETDTR);
@@ -167,7 +169,8 @@ void serial_port::dtr(bool enable)
         {
             ::EscapeCommFunction(serial_port_.native_handle(), CLRDTR);
         }
-#else
+#endif // WIN32
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         if (enable)
@@ -179,7 +182,7 @@ void serial_port::dtr(bool enable)
             status &= ~TIOCM_DTR;
         }
         ::ioctl(serial_port_.native_handle(), TIOCMSET, &status);
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -192,18 +195,19 @@ bool serial_port::dtr()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         DWORD status;
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return DTR state directly
         // DTR is an output signal we control, not an input we read
         // You might need to track this state separately if needed
         return false; // Or maintain internal state
-#else
+#endif // WIN32
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DTR) != 0;
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -217,15 +221,16 @@ bool serial_port::cts()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         DWORD status;
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         return (status & MS_CTS_ON) != 0;
-#else
+#endif // WIN32
+#ifdef __linux_
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CTS) != 0;
-#endif
+#endif // __linux_
     }
     catch (...)
     {
@@ -239,15 +244,16 @@ bool serial_port::dsr()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         DWORD status;
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         return (status & MS_DSR_ON) != 0;
-#else
+#endif // WIN32
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DSR) != 0;
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -261,15 +267,16 @@ bool serial_port::dcd()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         DWORD status;
         ::GetCommModemStatus(serial_port_.native_handle(), &status);
         return (status & MS_RLSD_ON) != 0;
-#else
+#endif // WIN32
+#ifdef __linux__
         int status;
         ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CAR) != 0;
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -373,7 +380,7 @@ std::size_t serial_port::bytes_available()
 
     try
     {
-#ifdef _WIN32
+#ifdef WIN32
         COMSTAT comstat;
         DWORD errors;
         if (::ClearCommError(serial_port_.native_handle(), &errors, &comstat))
@@ -381,11 +388,12 @@ std::size_t serial_port::bytes_available()
             return comstat.cbInQue;
         }
         return 0;
-#else
+#endif // WIN32
+#ifdef __linux__
         int bytes_available = 0;
         ::ioctl(serial_port_.native_handle(), FIONREAD, &bytes_available);
         return bytes_available;
-#endif
+#endif // __linux__
     }
     catch (...)
     {
@@ -397,18 +405,19 @@ void serial_port::flush()
 {
     if (!is_open_) return;
 
-#ifdef _WIN32
+#ifdef WIN32
     ::FlushFileBuffers(serial_port_.native_handle());
-#else
+#endif // WIN32
+#ifdef __linux__
     ::tcflush(serial_port_.native_handle(), TCIOFLUSH);
-#endif
+#endif // __linux__
 }
 
 void serial_port::timeout(unsigned int milliseconds)
 {
     if (!is_open_) return;
 
-#ifdef _WIN32
+#ifdef WIN32
     COMMTIMEOUTS timeouts = { 0 };
     timeouts.ReadIntervalTimeout = milliseconds;
     timeouts.ReadTotalTimeoutConstant = milliseconds;
@@ -416,11 +425,12 @@ void serial_port::timeout(unsigned int milliseconds)
     timeouts.WriteTotalTimeoutConstant = milliseconds;
     timeouts.WriteTotalTimeoutMultiplier = 0;
     ::SetCommTimeouts(serial_port_.native_handle(), &timeouts);
-#else
+#endif // WIN32
+#ifdef __linux__
     struct termios tty;
     ::tcgetattr(serial_port_.native_handle(), &tty);
     tty.c_cc[VTIME] = milliseconds / 100;  // Convert to deciseconds
     tty.c_cc[VMIN] = 0;
     ::tcsetattr(serial_port_.native_handle(), TCSANOW, &tty);
-#endif
+#endif // __linux__
 }

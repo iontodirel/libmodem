@@ -32,7 +32,6 @@
 #include "modulator.h"
 
 #include <cassert>
-#include <iostream>
 
 // **************************************************************** //
 //                                                                  //
@@ -159,10 +158,7 @@ int16_t modulator_base::modulate_int(uint8_t bit)
 //                                                                  //
 // **************************************************************** //
 
-dds_afsk_modulator_f64_adapter::dds_afsk_modulator_f64_adapter(double f_mark, double f_space,
-    int bitrate, int sample_rate,
-    double alpha)
-    : dds_mod(f_mark, f_space, bitrate, sample_rate, alpha)
+dds_afsk_modulator_f64_adapter::dds_afsk_modulator_f64_adapter(double f_mark, double f_space, int bitrate, int sample_rate, double alpha) : dds_mod(f_mark, f_space, bitrate, sample_rate, alpha)
 {
 }
 

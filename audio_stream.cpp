@@ -36,8 +36,6 @@
 #include <cstring>
 #include <vector>
 
-#include <iostream>
-
 #if WIN32
 
 #include <Functiondiscoverykeys_devpkey.h>
@@ -159,7 +157,10 @@ bool audio_stream::wait_write_completed(int timeout_ms)
     return stream_->wait_write_completed(timeout_ms);
 }
 
-audio_stream::operator bool() const { return stream_ != nullptr; }
+audio_stream::operator bool() const
+{
+    return stream_ != nullptr;
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -180,8 +181,6 @@ audio_device::audio_device(const audio_device& other)
     description = other.description;
     type = other.type;
     state = other.state;
-    card_id = other.card_id;
-    device_id = other.device_id;
     type = other.type;
 
 #if WIN32
@@ -192,7 +191,12 @@ audio_device::audio_device(const audio_device& other)
     {
         device_->AddRef();
     }
-#endif
+#endif // WIN32
+
+#if __linux__
+    card_id = other.card_id;
+    device_id = other.device_id;
+#endif // __linux__
 }
 
 #if WIN32
@@ -330,6 +334,12 @@ audio_device& audio_device::operator=(const audio_device& other)
 {
     if (this != &other)
     {
+        id = other.id;
+        name = other.name;
+        description = other.description;
+        type = other.type;
+        state = other.state;
+
 #if WIN32
         if (device_)
         {
@@ -344,15 +354,12 @@ audio_device& audio_device::operator=(const audio_device& other)
         {
             device_->AddRef();
         }
-#endif
+#endif // WIN32
 
-        id = other.id;
-        name = other.name;
-        description = other.description;
-        type = other.type;
-        state = other.state;
+#if __linux__       
         card_id = other.card_id;
         device_id = other.device_id;
+#endif // __linux__
     }
     return *this;
 }
@@ -360,10 +367,11 @@ audio_device& audio_device::operator=(const audio_device& other)
 std::unique_ptr<audio_stream_base> audio_device::stream()
 {
 #if WIN32
-    auto stream = std::make_unique<wasapi_audio_stream>(device_);
+    auto stream = std::make_unique<wasapi_audio_output_stream>(device_);
     stream->start();
     return stream;
 #endif // WIN32
+
 #if __linux__
     return std::make_unique<alsa_audio_stream>(card_id, device_id, type);
 #endif // __linux__
@@ -577,14 +585,14 @@ bool try_get_default_audio_device(audio_device& device)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wasapi_audio_stream                                              //
+// wasapi_audio_output_stream                                       //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 #if WIN32
 
-wasapi_audio_stream::wasapi_audio_stream(IMMDevice* device)
+wasapi_audio_output_stream::wasapi_audio_output_stream(IMMDevice* device)
 {
 	device_ = device;
 
@@ -594,7 +602,7 @@ wasapi_audio_stream::wasapi_audio_stream(IMMDevice* device)
 	}
 }
 
-wasapi_audio_stream::wasapi_audio_stream(const wasapi_audio_stream& other)
+wasapi_audio_output_stream::wasapi_audio_output_stream(const wasapi_audio_output_stream& other)
 {
     device_ = other.device_;
     audio_client_ = other.audio_client_;
@@ -625,7 +633,7 @@ wasapi_audio_stream::wasapi_audio_stream(const wasapi_audio_stream& other)
     }
 }
 
-wasapi_audio_stream& wasapi_audio_stream::operator=(const wasapi_audio_stream& other)
+wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(const wasapi_audio_output_stream& other)
 {
     if (this != &other)
     {
@@ -680,7 +688,7 @@ wasapi_audio_stream& wasapi_audio_stream::operator=(const wasapi_audio_stream& o
     return *this;
 }
 
-void wasapi_audio_stream::start()
+void wasapi_audio_output_stream::start()
 {
     HRESULT hr;
 
@@ -734,7 +742,15 @@ void wasapi_audio_stream::start()
     }
 }
 
-wasapi_audio_stream::wasapi_audio_stream()
+void wasapi_audio_output_stream::stop()
+{
+    if (audio_client_)
+    {
+        audio_client_->Stop();
+    }
+}
+
+wasapi_audio_output_stream::wasapi_audio_output_stream()
 {
     HRESULT hr;
 
@@ -759,7 +775,7 @@ wasapi_audio_stream::wasapi_audio_stream()
     }
 }
 
-wasapi_audio_stream::~wasapi_audio_stream()
+wasapi_audio_output_stream::~wasapi_audio_output_stream()
 {
     if (endpoint_volume_)
     {
@@ -786,7 +802,7 @@ wasapi_audio_stream::~wasapi_audio_stream()
     }
 }
 
-std::string wasapi_audio_stream::name()
+std::string wasapi_audio_output_stream::name()
 {
     IPropertyStore* props = nullptr;
     PROPVARIANT variant;
@@ -814,7 +830,7 @@ std::string wasapi_audio_stream::name()
     return name;
 }
 
-void wasapi_audio_stream::volume(int percent)
+void wasapi_audio_output_stream::volume(int percent)
 {
     percent = std::clamp(percent, 0, 100);
 
@@ -827,7 +843,7 @@ void wasapi_audio_stream::volume(int percent)
     }
 }
 
-int wasapi_audio_stream::volume()
+int wasapi_audio_output_stream::volume()
 {
     float volume_scalar;
 
@@ -840,12 +856,12 @@ int wasapi_audio_stream::volume()
     return static_cast<int>(volume_scalar * 100.0f + 0.5f);
 }
 
-int wasapi_audio_stream::sample_rate()
+int wasapi_audio_output_stream::sample_rate()
 {
     return sample_rate_;
 }
 
-size_t wasapi_audio_stream::write(const double* samples, size_t count)
+size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
 {
     HRESULT hr;
 
@@ -864,7 +880,7 @@ size_t wasapi_audio_stream::write(const double* samples, size_t count)
             continue;
         }
 
-        UINT32 frames_to_write = (std::min)(available_frames, static_cast<UINT32>(count));
+        UINT32 frames_to_write = (std::min)(available_frames, static_cast<UINT32>(count - samples_written));
 
         BYTE* buffer;
         if (FAILED(hr = render_client_->GetBuffer(frames_to_write, &buffer)))
@@ -876,7 +892,7 @@ size_t wasapi_audio_stream::write(const double* samples, size_t count)
 
         for (UINT32 i = 0; i < frames_to_write; i++)
         {
-            float sample = static_cast<float>(samples[i]);
+            float sample = static_cast<float>(samples[samples_written + i]);
 
             for (int channel = 0; channel < num_channels_; channel++)
             {
@@ -892,12 +908,10 @@ size_t wasapi_audio_stream::write(const double* samples, size_t count)
         samples_written += frames_to_write;
     }
 
-	wait_write_completed(-1);
-
     return samples_written;
 }
 
-bool wasapi_audio_stream::wait_write_completed(int timeout_ms)
+bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 {
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
@@ -933,12 +947,15 @@ bool wasapi_audio_stream::wait_write_completed(int timeout_ms)
 	return true;
 }
 
-size_t wasapi_audio_stream::read(double* samples, size_t count)
+size_t wasapi_audio_output_stream::read(double* samples, size_t count)
 {
+	// Not implemented for output stream
+	(void)samples;
+	(void)count;
     return 0;
 }
 
-void wasapi_audio_stream::mute(bool mute)
+void wasapi_audio_output_stream::mute(bool mute)
 {	
 	BOOL mute_state = mute ? TRUE : FALSE;
     HRESULT hr = endpoint_volume_->SetMute(mute_state, nullptr);
@@ -948,7 +965,7 @@ void wasapi_audio_stream::mute(bool mute)
     }
 }
 
-bool wasapi_audio_stream::mute()
+bool wasapi_audio_output_stream::mute()
 {
     BOOL muted;
     HRESULT hr = endpoint_volume_->GetMute(&muted);
@@ -1527,7 +1544,15 @@ int alsa_audio_stream::sample_rate()
 
 #endif // __linux__
 
-input_wav_audio_stream::input_wav_audio_stream(const std::string& filename) : sf_file_(nullptr), filename_(filename)
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wav_audio_input_stream                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : sf_file_(nullptr), filename_(filename)
 {
     SF_INFO sfinfo = {};
 
@@ -1542,7 +1567,7 @@ input_wav_audio_stream::input_wav_audio_stream(const std::string& filename) : sf
     channels_ = sfinfo.channels;
 }
 
-input_wav_audio_stream::~input_wav_audio_stream()
+wav_audio_input_stream::~wav_audio_input_stream()
 {
     if (sf_file_)
     {
@@ -1551,38 +1576,38 @@ input_wav_audio_stream::~input_wav_audio_stream()
     }
 }
 
-std::string input_wav_audio_stream::name()
+std::string wav_audio_input_stream::name()
 {
     return filename_;
 }
 
-void input_wav_audio_stream::volume(int percent)
+void wav_audio_input_stream::volume(int percent)
 {
     (void)percent;
 }
 
-int input_wav_audio_stream::volume()
+int wav_audio_input_stream::volume()
 {
     return 100;
 }
 
-int input_wav_audio_stream::sample_rate()
+int wav_audio_input_stream::sample_rate()
 {
     return sample_rate_;
 }
 
-size_t input_wav_audio_stream::write(const double* samples, size_t count)
+size_t wav_audio_input_stream::write(const double* samples, size_t count)
 {
     return 0;
 }
 
-bool input_wav_audio_stream::wait_write_completed(int timeout_ms)
+bool wav_audio_input_stream::wait_write_completed(int timeout_ms)
 {
     (void)timeout_ms;
     return true;
 }
 
-size_t input_wav_audio_stream::read(double* samples, size_t count)
+size_t wav_audio_input_stream::read(double* samples, size_t count)
 {
     if (!sf_file_)
         return 0;
@@ -1611,7 +1636,7 @@ size_t input_wav_audio_stream::read(double* samples, size_t count)
     return total_read;
 }
 
-void input_wav_audio_stream::flush()
+void wav_audio_input_stream::flush()
 {
     if (sf_file_)
     {
@@ -1619,7 +1644,7 @@ void input_wav_audio_stream::flush()
     }
 }
 
-void input_wav_audio_stream::close()
+void wav_audio_input_stream::close()
 {
     if (sf_file_)
     {
@@ -1631,15 +1656,12 @@ void input_wav_audio_stream::close()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// output_wav_audio_stream                                          //
+// wav_audio_output_stream                                          //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-output_wav_audio_stream::output_wav_audio_stream(const std::string& filename, int sample_rate)
-    : sf_file_(nullptr)
-    , sample_rate_(sample_rate)
-    , filename_(filename)
+wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, int sample_rate) : sf_file_(nullptr), sample_rate_(sample_rate), filename_(filename)
 {
     SF_INFO sfinfo = {};
 
@@ -1655,7 +1677,7 @@ output_wav_audio_stream::output_wav_audio_stream(const std::string& filename, in
     }
 }
 
-output_wav_audio_stream::~output_wav_audio_stream()
+wav_audio_output_stream::~wav_audio_output_stream()
 {
     if (sf_file_)
     {
@@ -1664,27 +1686,27 @@ output_wav_audio_stream::~output_wav_audio_stream()
     }
 }
 
-std::string output_wav_audio_stream::name()
+std::string wav_audio_output_stream::name()
 {
     return filename_;
 }
 
-void output_wav_audio_stream::volume(int percent)
+void wav_audio_output_stream::volume(int percent)
 {
     (void)percent;
 }
 
-int output_wav_audio_stream::volume()
+int wav_audio_output_stream::volume()
 {
     return 100;
 }
 
-int output_wav_audio_stream::sample_rate()
+int wav_audio_output_stream::sample_rate()
 {
     return sample_rate_;
 }
 
-size_t output_wav_audio_stream::write(const double* samples, size_t count)
+size_t wav_audio_output_stream::write(const double* samples, size_t count)
 {
     if (!sf_file_)
         return 0;
@@ -1698,18 +1720,18 @@ size_t output_wav_audio_stream::write(const double* samples, size_t count)
     return count;
 }
 
-bool output_wav_audio_stream::wait_write_completed(int timeout_ms)
+bool wav_audio_output_stream::wait_write_completed(int timeout_ms)
 {
     (void)timeout_ms;
     return true;
 }
 
-size_t output_wav_audio_stream::read(double* samples, size_t count)
+size_t wav_audio_output_stream::read(double* samples, size_t count)
 {
     return 0;
 }
 
-void output_wav_audio_stream::flush()
+void wav_audio_output_stream::flush()
 {
     if (sf_file_)
     {
@@ -1717,7 +1739,7 @@ void output_wav_audio_stream::flush()
     }
 }
 
-void output_wav_audio_stream::close()
+void wav_audio_output_stream::close()
 {
     if (sf_file_)
     {

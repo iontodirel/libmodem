@@ -31,6 +31,12 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+#include <memory>
+#include <cstdint>
+#include <numeric>
+
 #if WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -54,8 +60,6 @@
 #endif // __linux__
 
 #include <boost/asio.hpp>
-#include <nlohmann/json.hpp>
-
 #include <sndfile.h>
 
 // **************************************************************** //
@@ -65,6 +69,7 @@
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
 struct audio_stream_base
 {
     virtual ~audio_stream_base() = default;
@@ -181,6 +186,7 @@ friend std::vector<audio_device> get_audio_devices();
     std::string description;
     audio_device_type type = audio_device_type::unknown;
     audio_device_state state = audio_device_state::active;
+
 #if WIN32
 	std::string container_id;
 #endif // WIN32
@@ -241,20 +247,20 @@ bool try_get_default_audio_device(audio_device& device);
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wasapi_audio_stream                                              //
+// wasapi_audio_output_stream                                              //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 #if WIN32
 
-struct wasapi_audio_stream : public audio_stream_base
+struct wasapi_audio_output_stream : public audio_stream_base
 {
-    wasapi_audio_stream();
-    wasapi_audio_stream(IMMDevice* device);
-	wasapi_audio_stream(const wasapi_audio_stream&);
-	wasapi_audio_stream& operator=(const wasapi_audio_stream&);
-    virtual ~wasapi_audio_stream();
+    wasapi_audio_output_stream();
+    wasapi_audio_output_stream(IMMDevice* device);
+	wasapi_audio_output_stream(const wasapi_audio_output_stream&);
+	wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&);
+    virtual ~wasapi_audio_output_stream();
 
     std::string name();
 
@@ -333,16 +339,16 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// input_wav_audio_stream                                           //
+// wav_audio_input_stream                                           //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct input_wav_audio_stream : audio_stream_base
+struct wav_audio_input_stream : audio_stream_base
 {
 public:
-    input_wav_audio_stream(const std::string& filename);
-    virtual ~input_wav_audio_stream();
+    wav_audio_input_stream(const std::string& filename);
+    virtual ~wav_audio_input_stream();
 
     std::string name();
 
@@ -366,16 +372,16 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// output_wav_audio_stream                                          //
+// wav_audio_output_stream                                          //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct output_wav_audio_stream : audio_stream_base
+struct wav_audio_output_stream : audio_stream_base
 {
 public:
-    output_wav_audio_stream(const std::string& filename, int sample_rate = 48000);
-    virtual ~output_wav_audio_stream();
+    wav_audio_output_stream(const std::string& filename, int sample_rate = 48000);
+    virtual ~wav_audio_output_stream();
 
     std::string name();
 

@@ -33,8 +33,7 @@
 
 #include <string>
 #include <vector>
-#include <queue>
-#include <map>
+#include <cstdint>
 
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>

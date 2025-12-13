@@ -2016,17 +2016,8 @@ LIBMODEM_AX25_USING_NAMESPACE
 			packet_str = replace_crlf(packet_str); // replace newlines for printing
             
 			fmt::print("packet: ");
-            std::cout.write(packet_str.data(), packet_str.size()); // write packet string instead of data
+            std::cout.write(packet_str.data(), packet_str.size());
 			fmt::print("\n\n");
-
-            //try
-            //{
-            //    fmt::println("packet: {}\n", to_string(p)); // packet to string
-            //}
-            //catch (const std::exception& e)
-            //{
-            //    fmt::println("Error converting frame to packet: {}\n", e.what());
-            //}
         }
     }
 }
@@ -2361,7 +2352,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
     {
         dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
         basic_bitstream_converter_adapter bitstream_converter;
-        output_wav_audio_stream wav_stream("test.wav", 48000);        
+        wav_audio_output_stream wav_stream("test.wav", 48000);        
 
         modem m;
         m.baud_rate(1200);
@@ -2395,7 +2386,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
         {
             dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, rate);
             basic_bitstream_converter_adapter bitstream_converter;
-            output_wav_audio_stream wav_stream("test.wav", rate);
+            wav_audio_output_stream wav_stream("test.wav", rate);
 
             modem m;
             m.baud_rate(1200);
@@ -2446,7 +2437,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     {
         {
             dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
-            output_wav_audio_stream wav_stream("test.wav", 48000);
+            wav_audio_output_stream wav_stream("test.wav", 48000);
 
             modem m;
             m.baud_rate(1200);
@@ -2509,7 +2500,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
 
         apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
 
-        output_wav_audio_stream wav_stream("test.wav", 48000);
+        wav_audio_output_stream wav_stream("test.wav", 48000);
 
         wav_stream.write(audio_buffer.data(), audio_buffer.size());
 
@@ -2541,7 +2532,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
 	aprs::router::packet packet = packet_string;
 
-    output_wav_audio_stream wav_stream("test.wav", 48000);
+    wav_audio_output_stream wav_stream("test.wav", 48000);
     dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
     basic_bitstream_converter_adapter bitstream_converter;
 
@@ -2566,6 +2557,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     EXPECT_TRUE(full_output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
+
+#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
 #ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
@@ -2727,7 +2720,7 @@ TEST(dds_afsk_modulator, samples_per_bit)
 
         apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
 
-        output_wav_audio_stream wav_stream("test.wav", 48000);
+        wav_audio_output_stream wav_stream("test.wav", 48000);
 
         wav_stream.write(audio_buffer.data(), audio_buffer.size());
 
@@ -2760,7 +2753,7 @@ TEST(dds_afsk_modulator, afsk_1200_frequency_accuracy)
 
         apply_gain(audio_buffer.begin(), audio_buffer.end(), 0.3);
 
-        output_wav_audio_stream wav_stream("test.wav", 48000);
+        wav_audio_output_stream wav_stream("test.wav", 48000);
 
         wav_stream.write(audio_buffer.data(), audio_buffer.size());
 
@@ -2886,6 +2879,70 @@ TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
     EXPECT_NEAR(max_sample, 1.0, 0.01);
     EXPECT_NEAR(min_sample, -1.0, 0.01);
 }
+
+#undef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
+#ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
+#if WIN32
+
+TEST(audio_stream, wasapi_audio_output_stream)
+{
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    EXPECT_TRUE(!device.id.empty());
+    EXPECT_TRUE(!device.name.empty());
+    EXPECT_TRUE(!device.description.empty());
+	EXPECT_TRUE(device.type == audio_device_type::render);
+	EXPECT_TRUE(device.state == audio_device_state::active);
+
+    audio_stream stream = device.stream();
+
+	EXPECT_TRUE((bool)stream);
+
+	stream.volume(50);
+	EXPECT_TRUE(stream.volume() == 50);
+	stream.volume(100);
+	EXPECT_TRUE(stream.volume() == 100);
+	stream.volume(25);
+	EXPECT_TRUE(stream.volume() == 25);
+
+    // Write a 440Hz tone for 10 seconds, in chunks
+    {
+        constexpr double frequency = 440.0;
+        constexpr double amplitude = 0.3;
+        constexpr int duration_seconds = 10;
+        constexpr double pi = 3.14159265358979323846;
+        constexpr size_t chunk_size = 4096;
+
+        const double sample_rate = static_cast<double>(stream.sample_rate());
+        const int total_samples = static_cast<int>(sample_rate * duration_seconds);
+
+        std::vector<double> chunk(chunk_size);
+        int n = 0;
+
+        while (n < total_samples)
+        {
+            size_t samples_to_write = (std::min)(chunk_size, static_cast<size_t>(total_samples - n));
+
+            for (size_t i = 0; i < samples_to_write; ++i)
+            {
+                chunk[i] = amplitude * std::sin(2.0 * pi * frequency * (n + i) / sample_rate);
+            }
+
+            stream.write(chunk.data(), samples_to_write);
+
+            n += static_cast<int>(samples_to_write);
+        }
+
+        stream.wait_write_completed(-1);
+    }
+}
+
+#endif // WIN32
+
+#endif // ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
 int main(int argc, char** argv)
 {

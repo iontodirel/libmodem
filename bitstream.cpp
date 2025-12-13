@@ -32,11 +32,7 @@
 #include "bitstream.h"
 
 #include <array>
-#include <sstream>
-#include <iomanip>
-#include <iostream>
 #include <string>
-#include <optional>
 #include <cassert>
 
 extern "C" {
