@@ -37,6 +37,8 @@
 
 #include <memory>
 
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -254,3 +256,5 @@ int modem::baud_rate() const
 {
     return baud_rate_;
 }
+
+LIBMODEM_NAMESPACE_END

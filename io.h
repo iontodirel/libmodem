@@ -38,6 +38,18 @@
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -85,3 +97,5 @@ private:
     boost::asio::serial_port serial_port_;
     bool is_open_;
 };
+
+LIBMODEM_NAMESPACE_END

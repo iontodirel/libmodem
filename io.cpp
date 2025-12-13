@@ -38,6 +38,8 @@
 #include <termios.h>
 #endif
 
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -434,3 +436,5 @@ void serial_port::timeout(unsigned int milliseconds)
     ::tcsetattr(serial_port_.native_handle(), TCSANOW, &tty);
 #endif // __linux__
 }
+
+LIBMODEM_NAMESPACE_END

@@ -45,13 +45,39 @@
 
 typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 
+#ifndef LIBMODEM_AX25_NAMESPACE_BEGIN
 #define LIBMODEM_AX25_NAMESPACE_BEGIN namespace ax25 {
+#endif
+#ifndef LIBMODEM_AX25_NAMESPACE_END
 #define LIBMODEM_AX25_NAMESPACE_END }
+#endif
+#ifndef LIBMODEM_AX25_USING_NAMESPACE
 #define LIBMODEM_AX25_USING_NAMESPACE using namespace ax25;
+#endif
+#ifndef LIBMODEM_AX25_NAMESPACE_REFERENCE
 #define LIBMODEM_AX25_NAMESPACE_REFERENCE ax25 :: 
+#endif
+#ifndef LIBMODEM_FX25_NAMESPACE_BEGIN
 #define LIBMODEM_FX25_NAMESPACE_BEGIN namespace fx25 {
+#endif
+#ifndef LIBMODEM_FX25_NAMESPACE_END
 #define LIBMODEM_FX25_NAMESPACE_END }
+#endif
+#ifndef LIBMODEM_FX25_USING_NAMESPACE
 #define LIBMODEM_FX25_USING_NAMESPACE using namespace fx25;
+#endif
+
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
 
 // **************************************************************** //
 //                                                                  //
@@ -899,3 +925,5 @@ LIBMODEM_AX25_USING_NAMESPACE
 std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
 
 LIBMODEM_FX25_NAMESPACE_END
+
+LIBMODEM_NAMESPACE_END

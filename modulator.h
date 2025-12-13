@@ -34,6 +34,18 @@
 #include <cstdint>
 #include <cmath>
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -98,3 +110,5 @@ struct dds_afsk_modulator_f64_adapter : public modulator_base
 private:
     dds_afsk_modulator_f64 dds_mod;
 };
+
+LIBMODEM_NAMESPACE_END

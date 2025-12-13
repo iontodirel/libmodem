@@ -49,6 +49,8 @@
 
 #endif // __linux__
 
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -120,6 +122,16 @@ std::string get_guid_property(IPropertyStore* props, const PROPERTYKEY& key)
 
 audio_stream::audio_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::move(s))
 {
+}
+
+audio_stream::~audio_stream()
+{
+	stream_.reset();
+}
+
+void audio_stream::close()
+{
+	stream_.reset();
 }
 
 std::string audio_stream::name()
@@ -438,7 +450,7 @@ std::vector<audio_device> get_audio_devices()
             continue;
         }
 
-        audio_device device(dev.Detach());
+        audio_device device(dev.p);
 
         devices.push_back(device);
     }
@@ -557,24 +569,22 @@ bool try_get_default_audio_device(audio_device& device)
         return false;
     }
 
-    IMMDeviceEnumerator* enumerator = nullptr;
+    CComPtr<IMMDeviceEnumerator> enumerator = nullptr;
     if (FAILED(hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator)))
     {
         return false;
     }
 
-    IMMDevice* device_ = nullptr;
+    CComPtr<IMMDevice> device_ = nullptr;
 
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
-
-    enumerator->Release();
 
     if (FAILED(hr))
     {
         return false;
     }
 
-    device = audio_device(device_);
+    device = audio_device(device_.p);
 
     return true;
 #endif // WIN32
@@ -777,6 +787,13 @@ wasapi_audio_output_stream::wasapi_audio_output_stream()
 
 wasapi_audio_output_stream::~wasapi_audio_output_stream()
 {
+    close();
+}
+
+void wasapi_audio_output_stream::close()
+{
+    stop();
+
     if (endpoint_volume_)
     {
         endpoint_volume_->Release();
@@ -1117,9 +1134,7 @@ alsa_audio_stream::alsa_audio_stream(int card_id, int device_id, audio_device_ty
     }
 }
 
-alsa_audio_stream::alsa_audio_stream(const alsa_audio_stream& other) 
-    : card_id(other.card_id), device_id(other.device_id), pcm_handle_(nullptr), 
-      sample_rate_(other.sample_rate_), num_channels_(other.num_channels_), type(other.type)
+alsa_audio_stream::alsa_audio_stream(const alsa_audio_stream& other) : card_id(other.card_id), device_id(other.device_id), pcm_handle_(nullptr), sample_rate_(other.sample_rate_), num_channels_(other.num_channels_), type(other.type)
 {
     if (other.pcm_handle_)
     {
@@ -1153,6 +1168,11 @@ alsa_audio_stream& alsa_audio_stream::operator=(const alsa_audio_stream& other)
 }
 
 alsa_audio_stream::~alsa_audio_stream()
+{
+	close();
+}
+
+void alsa_audio_stream::close()
 {
     if (pcm_handle_)
     {
@@ -1747,3 +1767,5 @@ void wav_audio_output_stream::close()
         sf_file_ = nullptr;
     }
 }
+
+LIBMODEM_NAMESPACE_END

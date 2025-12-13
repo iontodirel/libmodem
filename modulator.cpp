@@ -33,6 +33,8 @@
 
 #include <cassert>
 
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -176,3 +178,5 @@ int dds_afsk_modulator_f64_adapter::next_samples_per_bit()
 {
     return dds_mod.next_samples_per_bit();
 }
+
+LIBMODEM_NAMESPACE_END

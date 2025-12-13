@@ -45,6 +45,18 @@ typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 #include "modulator.h"
 #include "bitstream.h"
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -162,3 +174,5 @@ inline void apply_preemphasis(It first, It last, int sample_rate, double tau = 7
         *it = y;
     }
 }
+
+LIBMODEM_NAMESPACE_END

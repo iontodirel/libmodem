@@ -62,6 +62,18 @@
 #include <boost/asio.hpp>
 #include <sndfile.h>
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -85,6 +97,8 @@ struct audio_stream_base
     virtual size_t read(double* samples, size_t count) = 0;
 
     virtual bool wait_write_completed(int timeout_ms) = 0;
+
+    virtual void close() = 0;
 };
 
 // **************************************************************** //
@@ -104,6 +118,9 @@ public:
     audio_stream& operator=(audio_stream&&) = default;
     audio_stream(const audio_stream&) = delete;
     audio_stream& operator=(const audio_stream&) = delete;
+	~audio_stream();
+
+    void close();
 
     std::string name();
     void volume(int percent);
@@ -247,7 +264,7 @@ bool try_get_default_audio_device(audio_device& device);
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wasapi_audio_output_stream                                              //
+// wasapi_audio_output_stream                                       //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -261,6 +278,8 @@ struct wasapi_audio_output_stream : public audio_stream_base
 	wasapi_audio_output_stream(const wasapi_audio_output_stream&);
 	wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&);
     virtual ~wasapi_audio_output_stream();
+
+    void close();
 
     std::string name();
 
@@ -306,6 +325,8 @@ struct alsa_audio_stream : public audio_stream_base
 	alsa_audio_stream(const alsa_audio_stream&);
 	alsa_audio_stream& operator=(const alsa_audio_stream&);
     virtual ~alsa_audio_stream();
+
+    void close();
 
     std::string name();
 
@@ -401,3 +422,5 @@ private:
     int sample_rate_;
     int channels_ = 1;
 };
+
+LIBMODEM_NAMESPACE_END

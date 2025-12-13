@@ -39,6 +39,8 @@ extern "C" {
 #include <correct.h>
 }
 
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -1186,3 +1188,5 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes,
 }
 
 LIBMODEM_FX25_NAMESPACE_END
+
+LIBMODEM_NAMESPACE_END
