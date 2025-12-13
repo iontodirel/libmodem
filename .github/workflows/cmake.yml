@@ -34,7 +34,7 @@ jobs:
 
     - name: Install Python dependencies
       if: runner.os == 'Windows'
-      run: pip install numpy scipy
+      run: python3 -m pip install numpy scipy
 
     - name: Configure
       working-directory: ${{github.workspace}}/tests
