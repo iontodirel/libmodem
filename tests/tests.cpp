@@ -149,7 +149,7 @@ std::string replace_non_printable(const std::string& s)
 }
 
 template<typename... Args>
-int run_process(const std::string& exe_path, std::string& output, Args&&... args)
+int run_process(const std::string& exe_path, std::string& output, std::string& error, Args&&... args)
 {
 namespace bp = boost::process;
 
@@ -180,6 +180,7 @@ namespace bp = boost::process;
     process.wait();
 
     output = output_stream.str();
+    error = error_stream.str();
 
     return process.exit_code();
 }
@@ -216,7 +217,14 @@ std::vector<fft_bin> compute_fft(const std::string& wav_file)
         throw std::runtime_error("Python executable not found: " + python_exe_path);
     }
 
-    run_process(python_exe_path, output, script_path.string(), wav_file);
+    std::string error;
+
+    run_process(python_exe_path, output, error, script_path.string(), wav_file);
+
+    if (!error.empty())
+    {
+        printf("Error: %s\n", error.c_str());
+    }
 
     if (output.empty())
     {
@@ -2380,13 +2388,14 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
         wav_stream.close();
     }
 
-    std::string full_output;
+    std::string output;
+    std::string error;
 
     // Run Direwolf's ATEST with -B 1200
-    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "test.wav");
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
 
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
 }
 
 TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
@@ -2414,13 +2423,14 @@ TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
             wav_stream.close();
         }
 
-        std::string full_output;
+        std::string output;
+        std::string error;
 
         // Run Direwolf's ATEST with -B 1200
-        run_process(ATEST_EXE_PATH, full_output, "-B 1200", "test.wav");
+        run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
 
         // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-        EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+        EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
     }
 }
 
@@ -2465,18 +2475,19 @@ LIBMODEM_FX25_USING_NAMESPACE
             wav_stream.close();
         }
 
-        std::string full_output;
+        std::string output;
+		std::string error;
 
         // Run Direwolf's ATEST with -B 1200 -d x
-        run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+        run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test.wav");
 
         // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-        EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+        EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
         // Expect FX.25  0 (indicating successful FX.25 decoding)
-        EXPECT_TRUE(full_output.find("FX.25  0") != std::string::npos);
+        EXPECT_TRUE(output.find("FX.25  0") != std::string::npos);
         // Expect "Expecting 239 data & 16 check bytes"
         std::string expected_string = fmt::format("Expecting {} data & {} check bytes", data_lengths[i], check_lengths[i]);
-        EXPECT_TRUE(full_output.find(expected_string) != std::string::npos);
+        EXPECT_TRUE(output.find(expected_string) != std::string::npos);
 
         i++;
     }
@@ -2521,17 +2532,18 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
         wav_stream.close();
     }
 
-    std::string full_output;
+    std::string output;
+    std::string error;
 
     // Run Direwolf's ATEST with -B 1200 -d x
-    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test.wav");
 
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    EXPECT_TRUE(full_output.find("[0] " + to_string(p)) != std::string::npos);
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
     // Expect FX.25  8 (indicating bit errors during FX.25 decoding)
-    EXPECT_TRUE(full_output.find("FX.25  8") != std::string::npos);
+    EXPECT_TRUE(output.find("FX.25  8") != std::string::npos);
     // Expect FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9
-    EXPECT_TRUE(full_output.find("FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9") != std::string::npos);
+    EXPECT_TRUE(output.find("FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9") != std::string::npos);
 }
 
 TEST(modem, transmit_demo)
@@ -2563,14 +2575,17 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
     wav_stream.close();
 
-    std::string full_output;
+    std::string output;
+    std::string error;
 
     // Run Direwolf's ATEST with -B 1200 -d x
-    run_process(ATEST_EXE_PATH, full_output, "-B 1200", "-d x", "test.wav");
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test.wav");
 
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    EXPECT_TRUE(full_output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+    EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
+
+#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
 #ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
