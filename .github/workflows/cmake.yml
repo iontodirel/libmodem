@@ -29,8 +29,8 @@ jobs:
     - name: Install dependencies
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
-        chmod +x ${{github.workspace}}/install_dependencies.sh
-        sudo ${{github.workspace}}/install_dependencies.sh
+        chmod +x ${{github.workspace}}/tests/install_dependencies.sh
+        sudo ${{github.workspace}}/tests/install_dependencies.sh
 
     - name: Configure
       working-directory: ${{github.workspace}}/tests
