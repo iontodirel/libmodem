@@ -92,6 +92,7 @@ struct audio_stream_base
     virtual int volume() = 0;
 
     virtual int sample_rate() = 0;
+    virtual int channels() = 0;
 
     virtual size_t write(const double* samples, size_t count) = 0;
     virtual size_t read(double* samples, size_t count) = 0;
@@ -126,6 +127,7 @@ public:
     void volume(int percent);
     int volume();
     int sample_rate();
+    int channels();
 
     size_t write(const double* samples, size_t count);
     size_t read(double* samples, size_t count);
@@ -289,6 +291,7 @@ struct wasapi_audio_output_stream : public audio_stream_base
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
+    int channels() override;
     size_t write(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
@@ -303,7 +306,7 @@ private:
     IAudioEndpointVolume* endpoint_volume_ = nullptr;
     UINT32 buffer_size_ = 0;
     int sample_rate_ = 0;
-    WORD num_channels_ = 1;
+    WORD channels_ = 1;
 };
 
 #endif // WIN32
@@ -336,6 +339,7 @@ struct wasapi_audio_input_stream : public audio_stream_base
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
+    int channels() override;
     size_t write(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
@@ -350,7 +354,7 @@ private:
     IAudioEndpointVolume* endpoint_volume_ = nullptr;
     UINT32 buffer_size_ = 0;
     int sample_rate_ = 0;
-    WORD num_channels_ = 1;
+    WORD channels_ = 1;
 };
 
 #endif // WIN32
@@ -383,6 +387,7 @@ struct alsa_audio_stream : public audio_stream_base
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
+    int channels() override;
     size_t write(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
@@ -423,6 +428,7 @@ public:
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
+    int channels() override;
     size_t write(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
@@ -456,6 +462,7 @@ public:
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
+    int channels() override;
     size_t write(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);

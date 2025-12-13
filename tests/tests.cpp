@@ -2912,6 +2912,9 @@ TEST(audio_stream, wasapi_audio_output_stream)
 
     // Write a 440Hz tone for 10 seconds, in chunks
     {
+        // For audio testing purposes
+        wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
+
         constexpr double frequency = 440.0;
         constexpr double amplitude = 0.3;
         constexpr int duration_seconds = 10;
@@ -2936,10 +2939,14 @@ TEST(audio_stream, wasapi_audio_output_stream)
 
             stream.write(chunk.data(), samples_to_write);
 
+            wav_stream.write(chunk.data(), samples_to_write);
+
             n += static_cast<int>(samples_to_write);
         }
 
         stream.wait_write_completed(-1);
+
+        wav_stream.close();
     }
 
     // Using start and stop

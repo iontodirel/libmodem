@@ -155,6 +155,11 @@ int audio_stream::sample_rate()
     return stream_->sample_rate(); 
 }
 
+int audio_stream::channels()
+{
+    return stream_->channels();
+}
+
 size_t audio_stream::write(const double* samples, size_t count)
 {
     return stream_->write(samples, count);
@@ -653,7 +658,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(const wasapi_audio_output
     endpoint_volume_ = other.endpoint_volume_;
     buffer_size_ = other.buffer_size_;
     sample_rate_ = other.sample_rate_;
-    num_channels_ = other.num_channels_;
+    channels_ = other.channels_;
 
     if (device_)
     {
@@ -706,7 +711,7 @@ wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(const wasapi_a
         endpoint_volume_ = other.endpoint_volume_;
         buffer_size_ = other.buffer_size_;
         sample_rate_ = other.sample_rate_;
-        num_channels_ = other.num_channels_;
+        channels_ = other.channels_;
 
         if (device_)
         {
@@ -845,6 +850,11 @@ int wasapi_audio_output_stream::sample_rate()
     return sample_rate_;
 }
 
+int wasapi_audio_output_stream::channels()
+{
+    return channels_;
+}
+
 size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
 {
     HRESULT hr;
@@ -878,9 +888,9 @@ size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
         {
             float sample = static_cast<float>(samples[samples_written + i]);
 
-            for (int channel = 0; channel < num_channels_; channel++)
+            for (int channel = 0; channel < channels_; channel++)
             {
-                float_buffer[i * num_channels_ + channel] = sample;
+                float_buffer[i * channels_ + channel] = sample;
             }
         }
 
@@ -960,7 +970,7 @@ void wasapi_audio_output_stream::start()
     }
 
     sample_rate_ = device_format->nSamplesPerSec;
-    num_channels_ = device_format->nChannels;
+    channels_ = device_format->nChannels;
 
     hr = audio_client_->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
@@ -1054,7 +1064,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(const wasapi_audio_input_st
     endpoint_volume_ = other.endpoint_volume_;
     buffer_size_ = other.buffer_size_;
     sample_rate_ = other.sample_rate_;
-    num_channels_ = other.num_channels_;
+    channels_ = other.channels_;
 
     if (device_)
     {
@@ -1107,7 +1117,7 @@ wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(const wasapi_aud
         endpoint_volume_ = other.endpoint_volume_;
         buffer_size_ = other.buffer_size_;
         sample_rate_ = other.sample_rate_;
-        num_channels_ = other.num_channels_;
+        channels_ = other.channels_;
 
         if (device_)
         {
@@ -1196,7 +1206,7 @@ void wasapi_audio_input_stream::start()
     }
 
     sample_rate_ = device_format->nSamplesPerSec;
-    num_channels_ = device_format->nChannels;
+    channels_ = device_format->nChannels;
 
     hr = audio_client_->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
@@ -1317,6 +1327,11 @@ int wasapi_audio_input_stream::sample_rate()
     return sample_rate_;
 }
 
+int wasapi_audio_input_stream::channels()
+{
+    return channels_;
+}
+
 size_t wasapi_audio_input_stream::write(const double* samples, size_t count)
 {
     (void)samples;
@@ -1370,11 +1385,11 @@ size_t wasapi_audio_input_stream::read(double* samples, size_t count)
             {
                 // Average all channels to mono
                 double sum = 0.0;
-                for (WORD ch = 0; ch < num_channels_; ch++)
+                for (WORD ch = 0; ch < channels_; ch++)
                 {
-                    sum += float_data[i * num_channels_ + ch];
+                    sum += float_data[i * channels_ + ch];
                 }
-                samples[samples_read + i] = sum / num_channels_;
+                samples[samples_read + i] = sum / channels_;
             }
         }
 
@@ -1964,6 +1979,11 @@ int alsa_audio_stream::sample_rate()
     return sample_rate_;
 }
 
+int alsa_audio_stream::channels()
+{
+    return static_cast<int>(num_channels_);
+}
+
 #endif // __linux__
 
 // **************************************************************** //
@@ -2016,6 +2036,11 @@ int wav_audio_input_stream::volume()
 int wav_audio_input_stream::sample_rate()
 {
     return sample_rate_;
+}
+
+int wav_audio_input_stream::channels()
+{
+    return channels_;
 }
 
 size_t wav_audio_input_stream::write(const double* samples, size_t count)
@@ -2126,6 +2151,11 @@ int wav_audio_output_stream::volume()
 int wav_audio_output_stream::sample_rate()
 {
     return sample_rate_;
+}
+
+int wav_audio_output_stream::channels()
+{
+    return channels_;
 }
 
 size_t wav_audio_output_stream::write(const double* samples, size_t count)
