@@ -311,6 +311,53 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// wasapi_audio_input_stream                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if WIN32
+
+struct wasapi_audio_input_stream : public audio_stream_base
+{
+    wasapi_audio_input_stream();
+    wasapi_audio_input_stream(IMMDevice* device);
+    wasapi_audio_input_stream(const wasapi_audio_input_stream&);
+    wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&);
+    virtual ~wasapi_audio_input_stream();
+
+    void close();
+
+    std::string name();
+
+    void mute(bool);
+    bool mute();
+
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    size_t write(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    bool wait_write_completed(int timeout_ms);
+
+    void start();
+    void stop();
+
+private:
+    IMMDevice* device_ = nullptr;
+    IAudioClient* audio_client_ = nullptr;
+    IAudioCaptureClient* capture_client_ = nullptr;
+    IAudioEndpointVolume* endpoint_volume_ = nullptr;
+    UINT32 buffer_size_ = 0;
+    int sample_rate_ = 0;
+    WORD num_channels_ = 1;
+};
+
+#endif // WIN32
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // alsa_audio_stream                                                //
 //                                                                  //
 //                                                                  //

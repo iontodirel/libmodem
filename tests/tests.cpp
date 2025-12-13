@@ -2915,11 +2915,12 @@ TEST(audio_stream, wasapi_audio_output_stream)
         constexpr double frequency = 440.0;
         constexpr double amplitude = 0.3;
         constexpr int duration_seconds = 10;
-        constexpr double pi = 3.14159265358979323846;
-        constexpr size_t chunk_size = 4096;
+        constexpr double pi = 3.14159265358979323846;       
 
         const double sample_rate = static_cast<double>(stream.sample_rate());
         const int total_samples = static_cast<int>(sample_rate * duration_seconds);
+
+        size_t chunk_size = static_cast<size_t>(sample_rate / 10);  // 100ms
 
         std::vector<double> chunk(chunk_size);
         int n = 0;
@@ -2973,8 +2974,60 @@ TEST(audio_stream, wasapi_audio_output_stream)
         wasapi_stream->write(audio_buffer.data(), audio_buffer.size());
 
         wasapi_stream->wait_write_completed(-1);
+
+        wasapi_stream->mute(true);
+
+        EXPECT_TRUE(wasapi_stream->mute() == true);
+
+        wasapi_stream->mute(false);
+
+        EXPECT_TRUE(wasapi_stream->mute() == false);
+
+    }
+}
+
+TEST(audio_stream, wasapi_audio_input_stream)
+{
+    std::vector<audio_device> devices = get_audio_devices(audio_device_type::capture, audio_device_state::active);
+
+    EXPECT_TRUE(!devices.empty());
+
+    audio_device device = devices[0];
+
+    EXPECT_TRUE(!device.id.empty());
+    EXPECT_TRUE(!device.name.empty());
+    EXPECT_TRUE(!device.description.empty());
+    EXPECT_TRUE(device.type == audio_device_type::capture);
+    EXPECT_TRUE(device.state == audio_device_state::active);
+
+    audio_stream stream = device.stream();
+
+    EXPECT_TRUE((bool)stream);
+
+    EXPECT_TRUE(stream.sample_rate() > 0);
+
+    wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
+
+    constexpr int duration_seconds = 5;
+
+    const size_t chunk_size = stream.sample_rate() / 10;  // 100ms
+    const size_t total_samples = stream.sample_rate() * duration_seconds;
+    
+    std::vector<double> buffer(chunk_size);
+    
+    size_t samples_read = 0;
+    
+    while (samples_read < total_samples)
+    {
+        size_t n = stream.read(buffer.data(), chunk_size);
+        if (n > 0)
+        {
+            wav_stream.write(buffer.data(), n);
+            samples_read += n;
+        }
     }
 
+    wav_stream.close();
 }
 
 #endif // WIN32
