@@ -2560,8 +2560,6 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     EXPECT_TRUE(full_output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
 
-#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
-
 #ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
 TEST(modem, transmit_hardware_demo)
