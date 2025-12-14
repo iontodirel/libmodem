@@ -34,6 +34,7 @@
 #include <array>
 #include <string>
 #include <cassert>
+#include <tuple>
 
 extern "C" {
 #include <correct.h>
