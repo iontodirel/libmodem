@@ -149,25 +149,25 @@ struct bitstream_state
 {
     void reset();
 
-	bool searching = true;    // Searching for preamble
-	bool in_preamble = false; // Currently in preamble
-	bool in_frame = false;    // Currently in frame
-	bool complete = false;    // Frame complete
+    bool searching = true;    // Searching for preamble
+    bool in_preamble = false; // Currently in preamble
+    bool in_frame = false;    // Currently in frame
+    bool complete = false;    // Frame complete
     uint8_t last_nrzi_level = 0;
-	size_t frame_start_index = 0; // Index in bitstream where current frame starts
+    size_t frame_start_index = 0; // Index in bitstream where current frame starts
 
     // Accumulated bitstream with NRZI decoded bits and without preamble/postamble
-	// Partial during decoding, and invalidated when frame decode is complete, do not use directly
-	std::vector<uint8_t> bitstream; 
+    // Partial during decoding, and invalidated when frame decode is complete, do not use directly
+    std::vector<uint8_t> bitstream; 
     
-	// Fully decoded frame
+    // Fully decoded frame
     struct frame frame;
-	
-	bool enable_diagnostics = false; // Enable diagnostic frame capture
+    
+    bool enable_diagnostics = false; // Enable diagnostic frame capture
 
-	size_t frame_start = 0;       // Global count of bits until the current frame start, 1-based index
-	size_t frame_end = 0;         // Global count of bits until the current frame end, 1-based index
-	uint8_t frame_nrzi_level = 0; // Initial NRZI level at the start of the frame
+    size_t frame_start = 0;       // Global count of bits until the current frame start, 1-based index
+    size_t frame_end = 0;         // Global count of bits until the current frame end, 1-based index
+    uint8_t frame_nrzi_level = 0; // Initial NRZI level at the start of the frame
     size_t frame_size_bits = 0;   // Size of the last decoded frame in bits
 
     size_t global_bit_count = 0;       // Total bits processed
@@ -225,7 +225,7 @@ struct bitstream_converter_base
     virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) = 0;
     virtual bool try_decode(uint8_t bit, packet_type& p) = 0;
     virtual void reset() = 0;
-	virtual ~bitstream_converter_base();
+    virtual ~bitstream_converter_base();
 };
 
 // **************************************************************** //
@@ -260,7 +260,7 @@ struct fx25_bitstream_converter_adapter : public bitstream_converter_base
     std::vector<uint8_t> encode(const packet_type& p, int preamble_flags = 45, int postamble_flags = 5) const override;
     bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) override;
     bool try_decode(uint8_t bit, packet_type& p) override;
-	void reset() override;
+    void reset() override;
 
 private:
     fx25_bitstream_converter converter;
@@ -580,7 +580,7 @@ inline uint8_t nrzi_decode(It first, It last, uint8_t initial_value)
         prev = curr;
     }
 
-	return curr; // Return last level for chaining
+    return curr; // Return last level for chaining
 }
 
 template<typename OutputIt>
@@ -682,7 +682,7 @@ inline bool try_parse_address(InputIt first, InputIt last, std::string& address_
         return false; // Missing byte 7
     }
 
-	ssid = (static_cast<uint8_t>(*first) >> 1) & 0b00001111; // 0xF masks for bits 1-4
+    ssid = (static_cast<uint8_t>(*first) >> 1) & 0b00001111; // 0xF masks for bits 1-4
 
     mark = (static_cast<uint8_t>(*first) & 0b10000000) != 0; // 0x80 masks for the H bit in the last byte
 
@@ -749,12 +749,12 @@ std::vector<uint8_t> encode_frame(const struct frame& frame);
 template <typename InputIt>
 inline std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last)
 {
-	// Encodes an AX.25 frame
+    // Encodes an AX.25 frame
     //
-	//  - Build header (from, to, path)
-	//  - Add control and PID fields, typically 0x03 0xF0
-	//  - Append payload
-	//  - Compute 16 bits CRC and append at the end
+    //  - Build header (from, to, path)
+    //  - Add control and PID fields, typically 0x03 0xF0
+    //  - Append payload
+    //  - Compute 16 bits CRC and append at the end
 
     std::vector<uint8_t> frame;
 
@@ -783,10 +783,10 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& fra
 template<class InputIt>
 inline bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p)
 {
-	// Decode an APRS packet from an NRZI bitstream
-	// The frame inside the bitstream is set between frame_it_first and frame_it_last
-	// There should be no HDLC flags in the frame bitstream
-	// The bitstream is assumed to be NRZI decoded already
+    // Decode an APRS packet from an NRZI bitstream
+    // The frame inside the bitstream is set between frame_it_first and frame_it_last
+    // There should be no HDLC flags in the frame bitstream
+    // The bitstream is assumed to be NRZI decoded already
 
     std::vector<uint8_t> unstuffed_bits;
 
@@ -825,16 +825,16 @@ std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, i
 template<typename InputIt>
 inline std::vector<uint8_t> encode_basic_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags)
 {
-	// Encode an AX.25 frame into a complete bitstream ready for modulation
+    // Encode an AX.25 frame into a complete bitstream ready for modulation
     //
-	// Steps:
+    // Steps:
     // 
-	//  - Convert frame bytes to bits LSB-first
-	//  - Bit-stuff the bits
-	//  - Add HDLC flags (0x7E) at start
-	//  - Add the stuffed bits
-	//  - Add HDLC flags (0x7E) at end
-	//  - NRZI encode the entire bitstream
+    //  - Convert frame bytes to bits LSB-first
+    //  - Bit-stuff the bits
+    //  - Add HDLC flags (0x7E) at start
+    //  - Add the stuffed bits
+    //  - Add HDLC flags (0x7E) at end
+    //  - NRZI encode the entire bitstream
 
     std::vector<uint8_t> frame_bits;
 
@@ -886,7 +886,7 @@ bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t of
 template<typename InputIt>
 inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
 {
-	size_t frame_size = std::distance(frame_it_first, frame_it_last);
+    size_t frame_size = std::distance(frame_it_first, frame_it_last);
 
     if (frame_size < 18)
     {
@@ -991,17 +991,17 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     // Encode FX.25 frame
     // 
-	//  - Convert AX.25 frame to bits LSB-first
+    //  - Convert AX.25 frame to bits LSB-first
     //  - Bit-stuff the bits
-	//  - Add HDLC flags (0x7E) at start
-	//  - Add the stuffed bits
-	//  - Add HDLC flags (0x7E) at end
-	//  - Create FX.25 frame from stuffed bits containing the HDLC flags
-	//  - Convert FX.25 frame to bits LSB-first
     //  - Add HDLC flags (0x7E) at start
-	//  - Add the FX.25 frame bits
-	//  - Add HDLC flags (0x7E) at end
-	//  - NRZI encode the entire bitstream
+    //  - Add the stuffed bits
+    //  - Add HDLC flags (0x7E) at end
+    //  - Create FX.25 frame from stuffed bits containing the HDLC flags
+    //  - Convert FX.25 frame to bits LSB-first
+    //  - Add HDLC flags (0x7E) at start
+    //  - Add the FX.25 frame bits
+    //  - Add HDLC flags (0x7E) at end
+    //  - NRZI encode the entire bitstream
         
     std::vector<uint8_t> frame_bits;
 

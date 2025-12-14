@@ -143,11 +143,11 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
 
     for (uint8_t bit : bitstream)
     {
-		int samples_per_bit = modulator.next_samples_per_bit();
+        int samples_per_bit = modulator.next_samples_per_bit();
 
         for (int i = 0; i < samples_per_bit; ++i)
         {
-			audio_buffer.push_back(modulator.modulate_double(bit));
+            audio_buffer.push_back(modulator.modulate_double(bit));
         }
     }
 

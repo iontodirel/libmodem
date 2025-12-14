@@ -52,12 +52,12 @@ dds_afsk_modulator_f64::dds_afsk_modulator_f64(double f_mark = 1200.0, double f_
 
     freq_smooth = f_mark;
     samples_per_bit_ = static_cast<double>(sample_rate) / bitrate;
-	samples_per_bit_error_ = 0.0;
+    samples_per_bit_error_ = 0.0;
 }
 
 double dds_afsk_modulator_f64::modulate(uint8_t bit)
 {
-	assert(bit == 0 || bit == 1);
+    assert(bit == 0 || bit == 1);
 
     // DDS (Direct Digital Synthesis) AFSK modulator - processes one sample at a time
     // This function implements the core modulation algorithm:
@@ -113,9 +113,9 @@ void dds_afsk_modulator_f64::reset()
 int dds_afsk_modulator_f64::next_samples_per_bit()
 {
     // WARNING: Call only once per bit period
-	// Calculate samples per bit with fractional error accumulation
-	// This allows for non-integer samples per bit rates (e.g., 44100/1200 = 36.75)
-	// While maintaining accurate timing over long transmissions
+    // Calculate samples per bit with fractional error accumulation
+    // This allows for non-integer samples per bit rates (e.g., 44100/1200 = 36.75)
+    // While maintaining accurate timing over long transmissions
 
     double v = samples_per_bit_ + samples_per_bit_error_;
 
@@ -136,19 +136,19 @@ int dds_afsk_modulator_f64::next_samples_per_bit()
 
 double modulator_base::modulate_double(uint8_t bit)
 {
-	(void)bit;
+    (void)bit;
     return 0.0;
 }
 
 float modulator_base::modulate_float(uint8_t bit)
 {
-	(void)bit;
+    (void)bit;
     return 0.0f;
 }
 
 int16_t modulator_base::modulate_int(uint8_t bit)
 {
-	(void)bit;
+    (void)bit;
     return 0;
 }
 

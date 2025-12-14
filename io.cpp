@@ -61,8 +61,8 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
 {
     if (is_open_)
     {
-		return false; // Already open
-	}
+        return false; // Already open
+    }
 
     try
     {
