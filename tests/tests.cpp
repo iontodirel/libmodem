@@ -688,7 +688,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        parse_address(std::string_view("\x9C\x60\x86\x82\x98\x98\x74", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\x9C\x60\x86\x82\x98\x98\x74", 7), address, ssid, mark);
         EXPECT_EQ(address, "N0CALL");
         EXPECT_EQ(ssid, 10);
         EXPECT_FALSE(mark);
@@ -698,7 +698,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x40\xE4", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x40\xE4", 7), address, ssid, mark);
         EXPECT_EQ(address, "WIDE2");
         EXPECT_EQ(ssid, 2);
         EXPECT_TRUE(mark);
@@ -708,7 +708,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        parse_address(std::string_view("\x82\xA0\xB4\x60\x60\x62\x61", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\x82\xA0\xB4\x60\x60\x62\x61", 7), address, ssid, mark);
         EXPECT_EQ(address, "APZ001");
         EXPECT_EQ(ssid, 0);
         EXPECT_FALSE(mark);
@@ -718,7 +718,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        parse_address(std::string_view("\xAE\x92\x88\x8A\x62\x40\x63", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x62\x40\x63", 7), address, ssid, mark);
         EXPECT_EQ(address, "WIDE1");
         EXPECT_EQ(ssid, 1);
         EXPECT_FALSE(mark);
@@ -728,7 +728,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x5A\xE5", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x5A\xE5", 7), address, ssid, mark);
         EXPECT_EQ(address, "WIDE2-");
         EXPECT_EQ(ssid, 2);
         EXPECT_TRUE(mark);
@@ -794,7 +794,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         std::array<uint8_t, 7> address_bytes = { 0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, ssids[i] };
         struct address address;
-        parse_address(std::string_view(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size()), address);
+        LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(std::string_view(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size()), address);
         
         if (i == 0)
         {
@@ -2585,6 +2585,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
 
+#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
 #ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
 
 TEST(modem, transmit_hardware_demo)
@@ -3076,3 +3078,9 @@ int main(int argc, char** argv)
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+
+// test address with "-10"
+// long packet to rrest the 8000 check, preamble but no postamble
+// ax25 with empty addresses with no last flang on source
+/*if (!(frame_bytes[13] & 0x01) && addresses_end_position == addresses_start)
+    return false;*/

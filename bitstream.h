@@ -86,6 +86,9 @@ typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 #ifndef LIBMODEM_NAMESPACE_BEGIN
 #define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
 #endif
+#ifndef LIBMODEM_NAMESPACE_REFERENCE
+#define LIBMODEM_NAMESPACE_REFERENCE libmodem :: 
+#endif
 #ifndef LIBMODEM_NAMESPACE_END
 #define LIBMODEM_NAMESPACE_END }
 #endif
@@ -863,9 +866,9 @@ inline std::vector<uint8_t> encode_basic_bitstream(InputIt frame_it_first, Input
     return bitstream;
 }
 
-void parse_address(std::string_view data, std::string& address, int& ssid, bool& mark);
+bool try_parse_address(std::string_view data, std::string& address, int& ssid, bool& mark);
 
-void parse_address(std::string_view data, struct address& address);
+bool try_parse_address(std::string_view data, struct address& address);
 
 void parse_addresses(std::string_view data, std::vector<address>& addresses);
 
@@ -903,8 +906,8 @@ inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, addr
         return false;
     }
 
-    parse_address({ reinterpret_cast<const char*>(&(*frame_it_first)), 7 }, to);
-    parse_address({ reinterpret_cast<const char*>(&(*(frame_it_first + 7))), 7 }, from);
+    LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address({ reinterpret_cast<const char*>(&(*frame_it_first)), 7 }, to);
+    LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address({ reinterpret_cast<const char*>(&(*(frame_it_first + 7))), 7 }, from);
 
     // C-bit in source/destination has different meaning than H-bit in digipeaters; ignore it
     to.mark = false;

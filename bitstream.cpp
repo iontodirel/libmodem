@@ -295,7 +295,7 @@ bool try_parse_address(std::string_view address_string, struct address& address)
 
     // Separator found, check if we have exactly one digit on both sides of the separator, ex WIDE1-1
     // If the address does not match the n-N format, we will treat it as a regular address ex address with SSID
-    if (sep_position != std::string::npos &&
+    if (sep_position != std::string::npos && sep_position > 0 &&
         std::isdigit(static_cast<unsigned char>(address_text[sep_position - 1])) &&
         (sep_position + 1) < address_text.size() && std::isdigit(static_cast<unsigned char>(address_text[sep_position + 1])) &&
         (sep_position + 2 == address_text.size()))
@@ -601,16 +601,16 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
 std::vector<uint8_t> encode_frame(const packet_type& p)
 {
     address to_address;
-    try_parse_address(p.to, to_address);
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, to_address);
 
     address from_address;
-    try_parse_address(p.from, from_address);
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, from_address);
 
     std::vector<address> path;
     for (const auto& address_string : p.path)
     {
         address path_address;
-        try_parse_address(address_string, path_address);
+        LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, path_address);
         path.push_back(path_address);
     }
 
@@ -637,17 +637,14 @@ std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, i
     return encode_basic_bitstream(frame.begin(), frame.end(), preamble_flags, postamble_flags);
 }
 
-void parse_address(std::string_view data, std::string& address_text, int& ssid, bool& mark)
+bool try_parse_address(std::string_view data, std::string& address_text, int& ssid, bool& mark)
 {
-    try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
+    return try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
 }
 
-void parse_address(std::string_view data, struct address& address) // try_parse_address
+bool try_parse_address(std::string_view data, struct address& address)
 {
-    bool result = try_parse_address(data.begin(), data.end(), address);
-    (void)result;
-    // Ignore result, assume data is valid
-    // Not critical if address parsing fails here
+    return try_parse_address(data.begin(), data.end(), address);
 }
 
 void parse_addresses(std::string_view data, std::vector<address>& addresses)
@@ -656,7 +653,7 @@ void parse_addresses(std::string_view data, std::vector<address>& addresses)
     for (size_t i = 0; i < data.size(); i += 7)
     {
         struct address address;
-        parse_address(data.substr(i, 7), address);
+        LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(data.substr(i, 7), address);
         addresses.push_back(address);
     }
 }
