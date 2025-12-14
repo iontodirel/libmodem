@@ -2476,7 +2476,7 @@ LIBMODEM_FX25_USING_NAMESPACE
         }
 
         std::string output;
-		std::string error;
+        std::string error;
 
         // Run Direwolf's ATEST with -B 1200 -d x
         run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test.wav");
@@ -2936,6 +2936,7 @@ TEST(audio_stream, wasapi_audio_output_stream)
     // Write a 440Hz tone for 10 seconds, in chunks
     {
         // For audio testing purposes
+        // Can be used to inspect the audio output
         wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
 
         constexpr double frequency = 440.0;
@@ -2946,10 +2947,14 @@ TEST(audio_stream, wasapi_audio_output_stream)
         const double sample_rate = static_cast<double>(stream.sample_rate());
         const int total_samples = static_cast<int>(sample_rate * duration_seconds);
 
-        size_t chunk_size = static_cast<size_t>(sample_rate / 10);  // 100ms
+        size_t chunk_size = static_cast<size_t>(sample_rate / 500);  // 5ms
 
         std::vector<double> chunk(chunk_size);
         int n = 0;
+
+        // After 5-8 seconds on playback, you might hear small increments in volume
+        // This is likely due to the audio device's internal volume leveling or AGC kicking in
+        // There is no control over this behavior in WASAPI, on in Windows
 
         while (n < total_samples)
         {
@@ -3018,6 +3023,8 @@ TEST(audio_stream, wasapi_audio_output_stream)
 
 TEST(audio_stream, wasapi_audio_input_stream)
 {
+    // Read from the default capture device for 5 seconds and write to a WAV file
+
     std::vector<audio_device> devices = get_audio_devices(audio_device_type::capture, audio_device_state::active);
 
     EXPECT_TRUE(!devices.empty());

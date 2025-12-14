@@ -269,12 +269,12 @@ bool try_parse_address(std::string_view address_string, struct address& address)
         address.text = address_text; // set the text to the address without the *
     }
 
-    auto sep_position = address_text.find("-");
+    auto sep_position = address_text.find('-');
 
     // No separator found
     if (sep_position == std::string::npos)
     {
-        if (!address_text.empty() && isdigit(address_text.back()))
+        if (!address_text.empty() && isdigit(static_cast<unsigned char>(address_text.back())))
         {
             address.n = address_text.back() - '0'; // get the last character as a number
             address_text.remove_suffix(1); // remove the digit from the address text
@@ -296,8 +296,8 @@ bool try_parse_address(std::string_view address_string, struct address& address)
     // Separator found, check if we have exactly one digit on both sides of the separator, ex WIDE1-1
     // If the address does not match the n-N format, we will treat it as a regular address ex address with SSID
     if (sep_position != std::string::npos &&
-        std::isdigit(static_cast<int>(address_text[sep_position - 1])) &&
-        (sep_position + 1) < address_text.size() && std::isdigit(static_cast<int>(address_text[sep_position + 1])) &&
+        std::isdigit(static_cast<unsigned char>(address_text[sep_position - 1])) &&
+        (sep_position + 1) < address_text.size() && std::isdigit(static_cast<unsigned char>(address_text[sep_position + 1])) &&
         (sep_position + 2 == address_text.size()))
     {
         address.n = address_text[sep_position - 1] - '0';
@@ -318,17 +318,17 @@ bool try_parse_address(std::string_view address_string, struct address& address)
 
     // Handle SSID parsing
     // Expecting the separator to be followed by a digit, ex: CALL-1
-    if ((sep_position + 1) < address_text.size() && std::isdigit(static_cast<int>(address_text[sep_position + 1])))
+    if ((sep_position + 1) < address_text.size() && std::isdigit(static_cast<unsigned char>(address_text[sep_position + 1])))
     {
         std::string ssid_str = std::string(address_text.substr(sep_position + 1));
 
         // Check for a single digit or two digits, ex: CALL-1 or CALL-12
-        if (ssid_str.size() == 1 || (ssid_str.size() == 2 && std::isdigit(static_cast<int>(ssid_str[1]))))
+        if (ssid_str.size() == 1 || (ssid_str.size() == 2 && std::isdigit(static_cast<unsigned char>(ssid_str[1]))))
         {
             int ssid;
             try
             {
-                ssid = std::atoi(ssid_str.c_str());
+                ssid = std::stoi(ssid_str);
             }
             catch (const std::invalid_argument&)
             {
@@ -528,7 +528,7 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
             // Shift each character left by 1 bit
             // Example: 'W' (0x57 = 01010111) << 1 = 0xAE (10101110)
             // AX.25 uses 7-bit encoding, leaving the LSB for other purposes
-            data[i] = static_cast<uint8_t>(address[i] << 1); // shift left by 1 bit
+            data[i] = static_cast<uint8_t>(static_cast<unsigned char>(address[i]) << 1); // shift left by 1 bit
         }
         else
         {
@@ -632,7 +632,7 @@ std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_f
     return encode_basic_bitstream(encode_frame(p), preamble_flags, postamble_flags);
 }
 
-std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t> frame, int preamble_flags, int postamble_flags)
+std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(frame.begin(), frame.end(), preamble_flags, postamble_flags);
 }
@@ -642,27 +642,12 @@ void parse_address(std::string_view data, std::string& address_text, int& ssid, 
 	try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
 }
 
-void parse_address(std::string_view data, struct address& address)
+void parse_address(std::string_view data, struct address& address) // try_parse_address
 {
-    std::string text;
-    int ssid = 0;
-    bool mark = false;
-
-    parse_address(data, text, ssid, mark);
-
-    std::string address_string = text;
-
-    if (ssid > 0)
-    {
-        address_string += "-" + std::to_string(ssid);
-    }
-
-    if (mark)
-    {
-        address_string += "*";
-    }
-
-    try_parse_address(address_string, address);
+    bool result = try_parse_address(data.begin(), data.end(), address);
+    (void)result;
+	// Ignore result, assume data is valid
+	// Not critical if address parsing fails here
 }
 
 void parse_addresses(std::string_view data, std::vector<address>& addresses)
@@ -716,84 +701,7 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, ad
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
 {
-    if (frame_bytes.size() < 18)
-    {
-        return false;
-    }
-
-    std::array<uint8_t, 2> computed_crc = compute_crc_using_lut(frame_bytes.begin(), frame_bytes.end() - 2);
-    std::array<uint8_t, 2> received_crc = { frame_bytes[frame_bytes.size() - 2], frame_bytes[frame_bytes.size() - 1] };
-
-    crc = received_crc;
-
-    if (computed_crc != received_crc)
-    {
-        return false;
-    }
-
-    parse_address({ reinterpret_cast<const char*>(&(*frame_bytes.begin())), 7 }, to);
-    parse_address({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + 7))), 7 }, from);
-
-    // C-bit in source/destination has different meaning than H-bit in digipeaters; ignore it
-    to.mark = false;
-    from.mark = false;
-
-    size_t addresses_start = 14;
-	size_t addresses_end_position = addresses_start;
-
-    // Find the end of the addresses list by looking for the last address with extension bit set
-	// If there are no addresses, the source address is expected to be marked as last (extension bit set)
-    if (!(frame_bytes[13] & 0x01))
-    {
-		// Start from the source address
-		// And loop through each address (7 bytes each)
-        for (size_t i = 14; i + 7 <= frame_bytes.size() - 2; i += 7)
-        {
-			// Check if the extension bit (bit 0 of byte 6) is set
-            if (frame_bytes[i + 6] & 0x01)
-            {
-                addresses_end_position = i + 7;
-                break;
-            }
-        }
-    }
-
-    size_t addresses_length = addresses_end_position - addresses_start;
-
-	// Ensure that the addresses length is a multiple of 7
-    if (addresses_length % 7 != 0)
-    {
-        return false;
-    }
-
-    parse_addresses({ reinterpret_cast<const char*>(&(*(frame_bytes.begin() + addresses_start))), addresses_length }, path);
-
-    size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
-    
-	// Check bounds before calculating length so that we do not underflow
-    if (info_field_start > frame_bytes.size() - 2)
-    {
-        return false;
-    }
-
-    size_t info_field_length = (frame_bytes.size() - 2) - info_field_start; // subtract CRC bytes
-
-	// Ensure that the info field does not exceed frame bounds
-    if ((info_field_start + info_field_length) > (frame_bytes.size() - 2))
-    {
-        return false;
-    }
-
-    if (info_field_length > 0)
-    {
-        data = std::vector<uint8_t>(frame_bytes.begin() + info_field_start, frame_bytes.begin() + info_field_start + info_field_length);
-    }
-    else
-    {
-		data.clear();
-    }
-
-    return true;
+    return try_decode_frame(frame_bytes.begin(), frame_bytes.end(), from, to, path, data, crc);
 }
 
 bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
@@ -924,6 +832,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
                 state.frame_start_index = state.bitstream.size(); // = 8 (position after the flag)
                 state.in_preamble = true; // Ready for next frame
 				state.in_frame = false;
+				// If we found a valid frame, set complete flag regardless whether the packet was decoded successfully
                 state.complete = true;
 
 				state.frame_size_bits = frame_bits.size();

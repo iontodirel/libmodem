@@ -39,6 +39,19 @@
 #include <string_view>
 #include <array>
 
+// Typedef for the packet type and packet type customization
+// A packet type has to be supplied externally, and it allows sharing of the type across various projects
+// 
+// The packet type has the following interface:
+//
+// struct packet
+// {
+//     std::string from;
+//     std::string to;
+//     std::vector<std::string> path;
+//     std::string data;
+// };
+
 #ifndef LIBMODEM_PACKET_NAMESPACE_REFERENCE
 #define LIBMODEM_PACKET_NAMESPACE_REFERENCE
 #endif
@@ -678,6 +691,33 @@ inline bool try_parse_address(InputIt first, InputIt last, std::string& address_
     return true;
 }
 
+template <typename InputIt>
+inline bool try_parse_address(InputIt first, InputIt last, struct address& address)
+{
+    std::string text;
+    int ssid = 0;
+    bool mark = false;
+
+    if (!try_parse_address(first, last, text, ssid, mark))
+    {
+        return false;
+    }
+
+    std::string address_string = text;
+
+    if (ssid > 0)
+    {
+        address_string += "-" + std::to_string(ssid);
+    }
+
+    if (mark)
+    {
+        address_string += "*";
+    }
+
+    return try_parse_address(address_string, address);
+}
+
 LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
@@ -780,7 +820,7 @@ inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, stru
 
 std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags);
 
-std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t> frame, int preamble_flags, int postamble_flags);
+std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags);
 
 template<typename InputIt>
 inline std::vector<uint8_t> encode_basic_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags)
@@ -842,6 +882,91 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state);
 bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state);
 
 bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
+
+template<typename InputIt>
+inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
+{
+	size_t frame_size = std::distance(frame_it_first, frame_it_last);
+
+    if (frame_size < 18)
+    {
+        return false;
+    }
+
+    std::array<uint8_t, 2> computed_crc = compute_crc_using_lut(frame_it_first, frame_it_last - 2);
+    std::array<uint8_t, 2> received_crc = { *(frame_it_last - 2), *(frame_it_last - 1) };
+
+    crc = received_crc;
+
+    if (computed_crc != received_crc)
+    {
+        return false;
+    }
+
+    parse_address({ reinterpret_cast<const char*>(&(*frame_it_first)), 7 }, to);
+    parse_address({ reinterpret_cast<const char*>(&(*(frame_it_first + 7))), 7 }, from);
+
+    // C-bit in source/destination has different meaning than H-bit in digipeaters; ignore it
+    to.mark = false;
+    from.mark = false;
+
+    size_t addresses_start = 14;
+    size_t addresses_end_position = addresses_start;
+
+    // Find the end of the addresses list by looking for the last address with extension bit set
+    // If there are no addresses, the source address is expected to be marked as last (extension bit set)
+    if (!(*(frame_it_first + 13) & 0x01))
+    {
+        // Start from the source address
+        // And loop through each address (7 bytes each)
+        for (size_t i = 14; i + 7 <= frame_size - 2; i += 7)
+        {
+            // Check if the extension bit (bit 0 of byte 6) is set
+            if (*(frame_it_first + i + 6) & 0x01)
+            {
+                addresses_end_position = i + 7;
+                break;
+            }
+        }
+    }
+
+    size_t addresses_length = addresses_end_position - addresses_start;
+
+    // Ensure that the addresses length is a multiple of 7
+    if (addresses_length % 7 != 0)
+    {
+        return false;
+    }
+
+    parse_addresses({ reinterpret_cast<const char*>(&(*(frame_it_first + addresses_start))), addresses_length }, path);
+
+    size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
+
+    // Check bounds before calculating length so that we do not underflow
+    if (info_field_start > frame_size - 2)
+    {
+        return false;
+    }
+
+    size_t info_field_length = (frame_size - 2) - info_field_start; // subtract CRC bytes
+
+    // Ensure that the info field does not exceed frame bounds
+    if ((info_field_start + info_field_length) > (frame_size - 2))
+    {
+        return false;
+    }
+
+    if (info_field_length > 0)
+    {
+        data = std::vector<uint8_t>(frame_it_first + info_field_start, frame_it_first + info_field_start + info_field_length);
+    }
+    else
+    {
+        data.clear();
+    }
+
+    return true;
+}
 
 LIBMODEM_AX25_NAMESPACE_END
 

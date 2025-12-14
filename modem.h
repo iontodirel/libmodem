@@ -31,10 +31,22 @@
 
 #pragma once
 
+// Typedef for the packet type and packet type customization
+// A packet type has to be supplied externally, and it allows sharing of the type across various projects
+// 
+// The packet type has the following interface:
+//
+// struct packet
+// {
+//     std::string from;
+//     std::string to;
+//     std::vector<std::string> path;
+//     std::string data;
+// };
+
 #ifndef LIBMODEM_PACKET_NAMESPACE_REFERENCE
 #define LIBMODEM_PACKET_NAMESPACE_REFERENCE
 #endif
-
 typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 
 #include <cmath>

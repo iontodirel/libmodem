@@ -174,6 +174,26 @@ target_link_libraries(tests PRIVATE GTest::gtest_main gtest gtest_main nlohmann_
 target_compile_definitions(tests PRIVATE ATEST_EXE_PATH="${ATEST_EXE_PATH}"  PYTHON_EXE_PATH="${Python3_EXECUTABLE}" LIBMODEM_PACKET_NAMESPACE_REFERENCE=aprs::router:: APRS_ROUTER_ENABLE_PACKET_SUPPORT=true)
 set_property(TARGET tests PROPERTY CXX_STANDARD 20)
 
+# Packet type customization
+# A packet type has to be supplied externally, and it allows sharing of the type across various projects
+# 
+# The packet type has the following interface:
+#
+# struct packet
+# {
+#     std::string from;
+#     std::string to;
+#     std::vector<std::string> path;
+#     std::string data;
+# };
+#
+# The packet is defined in aprsroute.hpp
+# APRS_ROUTER_ENABLE_PACKET_SUPPORT=true enables packet export from aprsroute.hpp
+# LIBMODEM_PACKET_NAMESPACE_REFERENCE=aprs::router:: defines the namespace the type is expected to be found in
+#
+# We include aprsroute.hpp in all TUs using CMAKE_CXX_FLAGS
+# And use target_compile_definitions to set APRS_ROUTER_ENABLE_PACKET_SUPPORT and LIBMODEM_PACKET_NAMESPACE_REFERENCE macros
+
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FI${CMAKE_SOURCE_DIR}/external/aprsroute.hpp")
 else()
