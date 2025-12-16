@@ -357,32 +357,35 @@ struct wasapi_audio_output_stream_impl
     wasapi_audio_output_stream_impl& operator=(wasapi_audio_output_stream_impl&& other);
     ~wasapi_audio_output_stream_impl() = default;
 
+#if WIN32
     CComPtr<IMMDevice> device_;
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioRenderClient> render_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
     com_init com_init_;
+#endif // WIN32
 };
 
 wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&& other)
 {
+#if WIN32
     device_.Attach(other.device_.Detach());
     audio_client_.Attach(other.audio_client_.Detach());
     render_client_.Attach(other.render_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
     com_init_ = std::move(other.com_init_);
+#endif // WIN32
 }
 
 wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
 {
-    if (this != &other)
-    {
-        device_.Attach(other.device_.Detach());
-        audio_client_.Attach(other.audio_client_.Detach());
-        render_client_.Attach(other.render_client_.Detach());
-        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-        com_init_ = std::move(other.com_init_);
-    }
+#if WIN32
+    device_.Attach(other.device_.Detach());
+    audio_client_.Attach(other.audio_client_.Detach());
+    render_client_.Attach(other.render_client_.Detach());
+    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    com_init_ = std::move(other.com_init_);
+#endif // WIN32
     return *this;
 }
 
@@ -393,6 +396,8 @@ wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasa
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+#if WIN32
 
 struct wasapi_audio_input_stream_impl
 {
@@ -421,16 +426,15 @@ wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_inpu
 
 wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi_audio_input_stream_impl&& other)
 {
-    if (this != &other)
-    {
-        device_.Attach(other.device_.Detach());
-        audio_client_.Attach(other.audio_client_.Detach());
-        capture_client_.Attach(other.capture_client_.Detach());
-        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-        com_init_ = std::move(other.com_init_);
-    }
+    device_.Attach(other.device_.Detach());
+    audio_client_.Attach(other.audio_client_.Detach());
+    capture_client_.Attach(other.capture_client_.Detach());
+    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    com_init_ = std::move(other.com_init_);
     return *this;
 }
+
+#endif // WIN32
 
 // **************************************************************** //
 //                                                                  //

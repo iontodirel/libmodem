@@ -36,6 +36,7 @@
 #include "audio_stream.h"
 
 #include <memory>
+#include <thread>
 
 LIBMODEM_NAMESPACE_BEGIN
 
