@@ -3329,9 +3329,3 @@ int main(int argc, char** argv)
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
-
-// test address with "-10"
-// long packet to rrest the 8000 check, preamble but no postamble
-// ax25 with empty addresses with no last flang on source
-/*if (!(frame_bytes[13] & 0x01) && addresses_end_position == addresses_start)
-    return false;*/

@@ -151,6 +151,10 @@ void audio_stream::close()
 
 std::string audio_stream::name()
 {
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
     return stream_->name(); 
 }
 
@@ -210,22 +214,90 @@ size_t audio_stream::read(double* samples, size_t count)
 
 bool audio_stream::wait_write_completed(int timeout_ms)
 {
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
     return stream_->wait_write_completed(timeout_ms);
 }
 
 audio_stream::operator bool() const
 {
-    if (!stream_)
-    {
-        throw std::runtime_error("Stream not initialized");
-    }
     return stream_ != nullptr;
 }
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// audio_device_impl                                                 //
+// com_init                                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if WIN32
+
+class com_init
+{
+public:
+    com_init();
+    ~com_init();
+
+    com_init(const com_init&) = delete;
+    com_init& operator=(const com_init&) = delete;
+
+    com_init(com_init&& other) noexcept;
+    com_init& operator=(com_init&& other) noexcept;
+
+    operator bool() const noexcept;
+
+private:
+    bool initialized_ = false;
+};
+
+com_init::com_init()
+{
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    initialized_ = SUCCEEDED(hr) || hr == S_FALSE;
+}
+
+com_init::~com_init()
+{
+    if (initialized_)
+    {
+        CoUninitialize();
+    }
+}
+
+com_init::com_init(com_init&& other) noexcept : initialized_(other.initialized_)
+{
+    other.initialized_ = false;
+}
+
+com_init& com_init::operator=(com_init&& other) noexcept
+{
+    if (this != &other)
+    {
+        if (initialized_)
+        {
+            CoUninitialize();
+        }
+        initialized_ = other.initialized_;
+        other.initialized_ = false;
+    }
+    return *this;
+}
+
+com_init::operator bool() const noexcept
+{
+    return initialized_;
+}
+
+#endif // WIN32
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_device_impl                                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -241,6 +313,7 @@ struct audio_device_impl
 
 #if WIN32
     CComPtr<IMMDevice> device_;
+    com_init com_init_;
 #endif // WIN32
 };
 
@@ -250,6 +323,7 @@ audio_device_impl::audio_device_impl(audio_device_impl&& other)
     {
 #if WIN32
         device_.Attach(other.device_.Detach()); // Release old, take new
+        com_init_ = std::move(other.com_init_);
 #endif // WIN32
     }
 }
@@ -260,6 +334,7 @@ audio_device_impl& audio_device_impl::operator=(audio_device_impl&& other)
     {
 #if WIN32
         device_.Attach(other.device_.Detach());  // Release old, take new
+        com_init_ = std::move(other.com_init_);
 #endif // WIN32
     }
     return *this;
@@ -286,6 +361,7 @@ struct wasapi_audio_output_stream_impl
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioRenderClient> render_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
+    com_init com_init_;
 };
 
 wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&& other)
@@ -294,6 +370,7 @@ wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_ou
     audio_client_.Attach(other.audio_client_.Detach());
     render_client_.Attach(other.render_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    com_init_ = std::move(other.com_init_);
 }
 
 wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
@@ -304,6 +381,7 @@ wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasa
         audio_client_.Attach(other.audio_client_.Detach());
         render_client_.Attach(other.render_client_.Detach());
         endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+        com_init_ = std::move(other.com_init_);
     }
     return *this;
 }
@@ -329,6 +407,7 @@ struct wasapi_audio_input_stream_impl
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioCaptureClient> capture_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
+    com_init com_init_;
 };
 
 wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_input_stream_impl&& other)
@@ -337,6 +416,7 @@ wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_inpu
     audio_client_.Attach(other.audio_client_.Detach());
     capture_client_.Attach(other.capture_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    com_init_ = std::move(other.com_init_);
 }
 
 wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi_audio_input_stream_impl&& other)
@@ -347,6 +427,7 @@ wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi
         audio_client_.Attach(other.audio_client_.Detach());
         capture_client_.Attach(other.capture_client_.Detach());
         endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+        com_init_ = std::move(other.com_init_);
     }
     return *this;
 }
@@ -490,14 +571,13 @@ audio_device::audio_device(int card_id, int device_id, audio_device_type type)
 
 #endif // __linux__
 
-audio_device::audio_device(audio_device&& other)
+audio_device::audio_device(audio_device&& other) noexcept
 {
     id = std::move(other.id);
     name = std::move(other.name);
     description = std::move(other.description);
     type = other.type;
     state = other.state;
-    type = other.type;
     impl_ = std::move(other.impl_);
 
 #if WIN32
@@ -510,7 +590,7 @@ audio_device::audio_device(audio_device&& other)
 #endif // __linux__
 }
 
-audio_device& audio_device::operator=(audio_device&& other)
+audio_device& audio_device::operator=(audio_device&& other) noexcept
 {
     if (this != &other)
     {
@@ -584,8 +664,8 @@ std::vector<audio_device> get_audio_devices()
 #if WIN32
     HRESULT hr;
 
-    hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (FAILED(hr))
+    com_init com_init_;
+    if (!com_init_)
     {
         throw std::runtime_error("COM init failed");
     }
@@ -733,9 +813,10 @@ bool try_get_default_audio_device(audio_device& device)
 #if WIN32
     HRESULT hr;
 
-    if (FAILED(hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
+    com_init com_init_;
+    if (!com_init_)
     {
-        return false;
+        throw std::runtime_error("COM init failed");
     }
 
     CComPtr<IMMDeviceEnumerator> enumerator = nullptr;
@@ -784,18 +865,15 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_strea
     impl_->device_ = impl->device_;
 }
 
-wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other)
+wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept
 {
-    if (this != &other)
-    {
-        impl_ = std::move(other.impl_);
-        buffer_size_ = other.buffer_size_;
-        sample_rate_ = other.sample_rate_;
-        channels_ = other.channels_;
-    }
+    impl_ = std::move(other.impl_);
+    buffer_size_ = other.buffer_size_;
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
 }
 
-wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_output_stream&& other)
+wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_output_stream&& other) noexcept
 {
     if (this != &other)
     {
@@ -1028,8 +1106,6 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 
         SwitchToThread();
     }
-
-    return true;
 }
 
 void wasapi_audio_output_stream::start()
@@ -1093,7 +1169,7 @@ void wasapi_audio_output_stream::start()
 
 void wasapi_audio_output_stream::stop()
 {
-    if (impl_)
+    if (impl_ && impl_->audio_client_)
     {
         impl_->audio_client_->Stop();
 
@@ -1131,7 +1207,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream_i
     channel_ = channel;
 }
 
-wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other)
+wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other) noexcept
 {
     impl_ = std::move(other.impl_);
     buffer_size_ = other.buffer_size_;
@@ -1140,18 +1216,16 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&&
     channel_ = other.channel_;
 }
 
-wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(wasapi_audio_input_stream&& other)
+wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(wasapi_audio_input_stream&& other) noexcept
 {
-    if (this != &other)
-    {
-        impl_ = std::move(other.impl_);
-        buffer_size_ = other.buffer_size_;
-        sample_rate_ = other.sample_rate_;
-        channels_ = other.channels_;
-        channel_ = other.channel_;
-    }
+    impl_ = std::move(other.impl_);
+    buffer_size_ = other.buffer_size_;
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
+    channel_ = other.channel_;
     return *this;
 }
+
 wasapi_audio_input_stream::~wasapi_audio_input_stream()
 {
     close();
@@ -1159,6 +1233,7 @@ wasapi_audio_input_stream::~wasapi_audio_input_stream()
 
 void wasapi_audio_input_stream::close()
 {
+    stop();
     impl_.reset();
 }
 
@@ -1233,9 +1308,13 @@ void wasapi_audio_input_stream::start()
 
 void wasapi_audio_input_stream::stop()
 {
-    if (impl_)
+    if (impl_ && impl_->audio_client_)
     {
         impl_->audio_client_->Stop();
+
+        impl_->audio_client_ = nullptr;
+        impl_->capture_client_ = nullptr;
+        impl_->endpoint_volume_ = nullptr;
     }
 }
 
@@ -1346,7 +1425,6 @@ int wasapi_audio_input_stream::sample_rate()
 
 int wasapi_audio_input_stream::channels()
 {
-    // Always return 1 channel (mono)
     return static_cast<int>(channels_);
 }
 
@@ -2111,15 +2189,11 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
 
 void wav_audio_input_stream::flush()
 {
-    if (impl_->sf_file_)
-    {
-        sf_write_sync(impl_->sf_file_);
-    }
 }
 
 void wav_audio_input_stream::close()
 {
-    if (impl_->sf_file_)
+    if (impl_)
     {
         sf_close(impl_->sf_file_);
         impl_.reset();

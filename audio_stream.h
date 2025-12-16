@@ -182,8 +182,8 @@ friend std::vector<audio_device> get_audio_devices();
 
     audio_device(const audio_device&) = delete;
     audio_device& operator=(const audio_device& other) = delete;
-    audio_device(audio_device&&);
-    audio_device& operator=(audio_device&& other);
+    audio_device(audio_device&&) noexcept;
+    audio_device& operator=(audio_device&& other) noexcept;
     ~audio_device();
 
     std::unique_ptr<audio_stream_base> stream();
@@ -267,8 +267,8 @@ struct wasapi_audio_output_stream : public audio_stream_base
     wasapi_audio_output_stream(wasapi_audio_output_stream_impl* impl);
     wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
-    wasapi_audio_output_stream(wasapi_audio_output_stream&&);
-    wasapi_audio_output_stream& operator=(wasapi_audio_output_stream&&);
+    wasapi_audio_output_stream(wasapi_audio_output_stream&&) noexcept;
+    wasapi_audio_output_stream& operator=(wasapi_audio_output_stream&&) noexcept;
     virtual ~wasapi_audio_output_stream();
 
     void close();
@@ -317,8 +317,8 @@ struct wasapi_audio_input_stream : public audio_stream_base
     wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl, int channel = 0);
     wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&) = delete;
-    wasapi_audio_input_stream(wasapi_audio_input_stream&&);
-    wasapi_audio_input_stream& operator=(wasapi_audio_input_stream&&);
+    wasapi_audio_input_stream(wasapi_audio_input_stream&&) noexcept;
+    wasapi_audio_input_stream& operator=(wasapi_audio_input_stream&&) noexcept;
     virtual ~wasapi_audio_input_stream();
 
     void close();
