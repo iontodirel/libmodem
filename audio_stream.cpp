@@ -1139,7 +1139,7 @@ void wasapi_audio_output_stream::start()
     hr = impl_->audio_client_->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         0,
-        50000000,  // 5 second buffer
+        2000000,  // 200ms buffer
         0,
         device_format,
         nullptr);
@@ -1172,7 +1172,6 @@ void wasapi_audio_output_stream::stop()
     if (impl_ && impl_->audio_client_)
     {
         impl_->audio_client_->Stop();
-
         impl_->audio_client_ = nullptr;
         impl_->render_client_ = nullptr;
         impl_->endpoint_volume_ = nullptr;
@@ -1278,7 +1277,7 @@ void wasapi_audio_input_stream::start()
     hr = impl_->audio_client_->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         0,
-        10000000,  // 1 second buffer
+        2000000,  // 200ms buffer
         0,
         device_format,
         nullptr);
@@ -1311,7 +1310,6 @@ void wasapi_audio_input_stream::stop()
     if (impl_ && impl_->audio_client_)
     {
         impl_->audio_client_->Stop();
-
         impl_->audio_client_ = nullptr;
         impl_->capture_client_ = nullptr;
         impl_->endpoint_volume_ = nullptr;
