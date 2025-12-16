@@ -38,6 +38,7 @@
 #include <string>
 #include <string_view>
 #include <array>
+#include <span>
 
 // Typedef for the packet type and packet type customization
 // A packet type has to be supplied externally, and it allows sharing of the type across various projects
@@ -91,6 +92,10 @@ typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 #endif
 #ifndef LIBMODEM_NAMESPACE_END
 #define LIBMODEM_NAMESPACE_END }
+#endif
+
+#ifndef LIBMODEM_INLINE
+#define LIBMODEM_INLINE inline
 #endif
 
 LIBMODEM_NAMESPACE_BEGIN
@@ -277,7 +282,7 @@ private:
 //                                                                  //
 // **************************************************************** //
 
-std::string trim(const std::string& str);
+std::string_view trim(std::string_view str);
 
 // **************************************************************** //
 //                                                                  //
@@ -328,7 +333,7 @@ template<typename It>
 It find_first_hdlc_flag(It first, It last);
 
 template<typename InputIt, typename OutputIt>
-inline void bytes_to_bits(InputIt first, InputIt last, OutputIt out)
+LIBMODEM_INLINE void bytes_to_bits(InputIt first, InputIt last, OutputIt out)
 {
     // Converts bytes to individual bits (LSB-first per byte)
     // 
@@ -345,7 +350,7 @@ inline void bytes_to_bits(InputIt first, InputIt last, OutputIt out)
 }
 
 template<typename InputIt, typename OutputIt>
-inline void bits_to_bytes(InputIt first, InputIt last, OutputIt out)
+LIBMODEM_INLINE void bits_to_bytes(InputIt first, InputIt last, OutputIt out)
 {
     // Converts individual bits back to bytes (LSB-first per byte)
     // 
@@ -366,7 +371,7 @@ inline void bits_to_bytes(InputIt first, InputIt last, OutputIt out)
 }
 
 template<typename InputIt>
-inline std::array<uint8_t, 2> compute_crc(InputIt first, InputIt last)
+LIBMODEM_INLINE std::array<uint8_t, 2> compute_crc(InputIt first, InputIt last)
 {
     // Computes CRC-16-CCITT checksum for error detection in AX.25 frames
     // Uses reversed polynomial 0x8408 and processes bits LSB-first
@@ -398,7 +403,7 @@ inline std::array<uint8_t, 2> compute_crc(InputIt first, InputIt last)
 }
 
 template<typename InputIt>
-inline std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, InputIt last)
+LIBMODEM_INLINE std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, InputIt last)
 {
     // Hardcoded CRC-16-CCITT lookup table for polynomial 0x8408 (reversed)
     // 
@@ -472,7 +477,7 @@ inline std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, InputIt last)
 }
 
 template<typename InputIt, typename OutputIt>
-inline void bit_stuff(InputIt first, InputIt last, OutputIt out)
+LIBMODEM_INLINE void bit_stuff(InputIt first, InputIt last, OutputIt out)
 {
     // Inserts a 0-bit after five consecutive 1-bits to prevent false flag detection
     // Prevents data from accidentally looking like the HDLC flag byte (0x7E = 01111110)
@@ -507,7 +512,7 @@ inline void bit_stuff(InputIt first, InputIt last, OutputIt out)
 }
 
 template<typename InputIt, typename OutputIt>
-inline void bit_unstuff(InputIt first, InputIt last, OutputIt out)
+LIBMODEM_INLINE void bit_unstuff(InputIt first, InputIt last, OutputIt out)
 {
     // Removes stuffed 0-bits that were inserted after five consecutive 1-bits
     // This is the inverse operation of bit_stuff
@@ -544,7 +549,7 @@ inline void bit_unstuff(InputIt first, InputIt last, OutputIt out)
 }
 
 template<typename It>
-inline void nrzi_encode(It first, It last)
+LIBMODEM_INLINE void nrzi_encode(It first, It last)
 {
     // Encodes bitstream in-place to ensure signal transitions for clock recovery
     // NRZI: 0-bit = toggle level, 1-bit = keep level
@@ -567,7 +572,7 @@ inline void nrzi_encode(It first, It last)
 }
 
 template<typename It>
-inline uint8_t nrzi_decode(It first, It last, uint8_t initial_value)
+LIBMODEM_INLINE uint8_t nrzi_decode(It first, It last, uint8_t initial_value)
 {
     if (first == last) return initial_value;
 
@@ -587,7 +592,7 @@ inline uint8_t nrzi_decode(It first, It last, uint8_t initial_value)
 }
 
 template<typename OutputIt>
-inline void add_hdlc_flags(OutputIt out, int count)
+LIBMODEM_INLINE void add_hdlc_flags(OutputIt out, int count)
 {
     constexpr uint8_t HDLC_FLAG = 0x7E;  // 01111110
 
@@ -601,7 +606,7 @@ inline void add_hdlc_flags(OutputIt out, int count)
 }
 
 template<typename It>
-inline It find_last_consecutive_hdlc_flag(It first, It last)
+LIBMODEM_INLINE It find_last_consecutive_hdlc_flag(It first, It last)
 {
     // Finds the last flag in a sequence of consecutive HDLC flags
     // Returns iterator to the start of the last flag, or last if not found
@@ -643,7 +648,7 @@ inline It find_last_consecutive_hdlc_flag(It first, It last)
 }
 
 template<typename It>
-inline It find_first_hdlc_flag(It first, It last)
+LIBMODEM_INLINE It find_first_hdlc_flag(It first, It last)
 {
     // Finds the first HDLC flag in the bitstream
     // Returns iterator to the start of the flag, or last if not found
@@ -655,8 +660,8 @@ inline It find_first_hdlc_flag(It first, It last)
 
 bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream);
 
-template <typename InputIt>
-inline bool try_parse_address(InputIt first, InputIt last, std::string& address_text, int& ssid, bool& mark)
+template <typename InputIt, typename OutputIt>
+LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, OutputIt out, int& ssid, bool& mark)
 {
     // Parse an AX.25 address
     //
@@ -669,7 +674,7 @@ inline bool try_parse_address(InputIt first, InputIt last, std::string& address_
     //    - Bit 0: Last address marker
     //    - Bit 7: H-bit (used/marked)
 
-    address_text = std::string(6, '\0'); // addresses are 6 characters long
+    char address_text[7] = { '\0' }; // addresses are 6 characters long
 
     for (size_t i = 0; i < 6; i++)
     {
@@ -689,13 +694,26 @@ inline bool try_parse_address(InputIt first, InputIt last, std::string& address_
 
     mark = (static_cast<uint8_t>(*first) & 0b10000000) != 0; // 0x80 masks for the H bit in the last byte
 
-    address_text = trim(address_text);
+    std::string_view address_text_trimmed = trim(address_text);
+
+    for (char c : address_text_trimmed)
+    {
+        *out++ = c;
+    }
 
     return true;
 }
 
 template <typename InputIt>
-inline bool try_parse_address(InputIt first, InputIt last, struct address& address)
+LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, std::string& address_text, int& ssid, bool& mark)
+{
+    address_text.clear();
+
+    return try_parse_address(first, last, std::back_inserter(address_text), ssid, mark);
+}
+
+template <typename InputIt>
+LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, struct address& address)
 {
     std::string text;
     int ssid = 0;
@@ -718,7 +736,7 @@ inline bool try_parse_address(InputIt first, InputIt last, struct address& addre
         address_string += "*";
     }
 
-    return try_parse_address(address_string, address);
+    return LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, address);
 }
 
 LIBMODEM_AX25_NAMESPACE_END
@@ -750,7 +768,7 @@ std::vector<uint8_t> encode_frame(const packet_type& p);
 std::vector<uint8_t> encode_frame(const struct frame& frame);
 
 template <typename InputIt>
-inline std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last)
+LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last) // iterator
 {
     // Encodes an AX.25 frame
     //
@@ -784,7 +802,7 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 
 template<class InputIt>
-inline bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p)
+LIBMODEM_INLINE bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p)
 {
     // Decode an APRS packet from an NRZI bitstream
     // The frame inside the bitstream is set between frame_it_first and frame_it_last
@@ -803,7 +821,7 @@ inline bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, pac
 }
 
 template<class InputIt>
-inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct frame& frame)
+LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct frame& frame)
 {
     // Decode an AX.25 frame from an NRZI bitstream
     // The frame inside the bitstream is set between frame_it_first and frame_it_last
@@ -826,7 +844,7 @@ std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_f
 std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags);
 
 template<typename InputIt>
-inline std::vector<uint8_t> encode_basic_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags)
+LIBMODEM_INLINE std::vector<uint8_t> encode_basic_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags)
 {
     // Encode an AX.25 frame into a complete bitstream ready for modulation
     //
@@ -887,7 +905,7 @@ bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_stat
 bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
 
 template<typename InputIt>
-inline bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
+LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc) // iterator
 {
     size_t frame_size = std::distance(frame_it_first, frame_it_last);
 
@@ -985,10 +1003,18 @@ LIBMODEM_AX25_NAMESPACE_END
 
 LIBMODEM_FX25_NAMESPACE_BEGIN
 
-std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& frame, size_t min_check_bytes = 0);
+std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& frame_bytes, size_t min_check_bytes = 0);
+
+std::vector<uint8_t> encode_fx25_frame(std::span<const uint8_t> frame_bytes, size_t min_check_bytes);
 
 template<typename InputIt>
-inline std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0)
+LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_frame(InputIt frame_it_first, InputIt frame_it_last, size_t min_check_bytes)
+{
+    return encode_fx25_frame(std::span<const uint8_t>{ frame_it_first, frame_it_last }, min_check_bytes);
+}
+
+template<typename InputIt>
+LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 

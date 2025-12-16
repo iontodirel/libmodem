@@ -432,12 +432,12 @@ LIBMODEM_AX25_NAMESPACE_END
 //                                                                  //
 // **************************************************************** //
 
-std::string trim(const std::string& str)
+std::string_view trim(std::string_view str)
 {
     size_t first = str.find_first_not_of(' ');
-    if (first == std::string::npos)
+    if (first == std::string_view::npos)
     {
-        return "";
+        return {};
     }
     size_t last = str.find_last_not_of(' ');
     return str.substr(first, last - first + 1);
@@ -921,7 +921,12 @@ LIBMODEM_AX25_USING_NAMESPACE
     return encode_fx25_bitstream(ax25_frame.begin(), ax25_frame.end(), preamble_flags, postamble_flags, min_check_bytes);
 }
 
-std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes, size_t min_check_bytes)
+std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& frame_bytes, size_t min_check_bytes)
+{
+    return encode_fx25_frame(std::span<const uint8_t>(frame_bytes.data(), frame_bytes.size()), min_check_bytes);
+}
+
+std::vector<uint8_t> encode_fx25_frame(std::span<const uint8_t> frame_bytes, size_t min_check_bytes)
 {
     // FX.25 frame encoding function
     //
@@ -953,10 +958,10 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes,
     uint64_t tag = 0;
     int total = 0, data_size = 0, check_size = 0;
     int mode_index = -1;
-    for (int i = 0; i < 11; i++)
+    for (int i = 0; i < std::size(modes); i++)
     {
         auto [t, tot, d, c] = modes[i];
-        if (packet_bytes.size() <= d && c >= min_check_bytes)
+        if (frame_bytes.size() <= d && c >= min_check_bytes)
         {
             tag = t;
             total = tot;         // Total bytes transmitted (data + check)
@@ -1007,15 +1012,15 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& packet_bytes,
 
     // Copy the complete AX.25 packet(with flags, bit - stuffing, everything)
     // This is placed at the beginning of the data block exactly as-is
-    // packet_bytes contains: [0x7E] [AX.25 frame with bit stuffing] [0x7E]
+    // frame_bytes contains: [0x7E] [AX.25 frame with bit stuffing] [0x7E]
 
-    std::copy(packet_bytes.begin(), packet_bytes.end(), rs_data_block.begin());
+    std::copy(frame_bytes.begin(), frame_bytes.end(), rs_data_block.begin());
 
     // Pad the rest with 0x7E (HDLC flag pattern)
     // This padding allows the RS encoder to work with fixed block sizes
     // 0x7E is chosen because AX.25 receivers will see it as idle flags
 
-    for (size_t i = packet_bytes.size(); i < data_size; i++)
+    for (size_t i = frame_bytes.size(); i < data_size; i++)
     {
         rs_data_block[i] = 0x7E;
     }

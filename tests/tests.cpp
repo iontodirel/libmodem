@@ -680,7 +680,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 }
 
-TEST(ax25, parse_address)
+TEST(ax25, try_parse_address_string_view)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -728,6 +728,8 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
+        // Intentially using an invalid byte 6 to represent non alphanumeric character
+        // This address is not valid
         try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x5A\xE5", 7), address, ssid, mark);
         EXPECT_EQ(address, "WIDE2-");
         EXPECT_EQ(ssid, 2);
@@ -735,7 +737,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 }
 
-TEST(ax25, try_parse_address)
+TEST(ax25, try_parse_address_iterator)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -754,10 +756,37 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string address;
         int ssid;
         bool mark;
-        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x76 };
         try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, mark);
         EXPECT_EQ(address, "N0CALL");
+        EXPECT_EQ(ssid, 11);
+        EXPECT_FALSE(mark);
+    }
+}
+
+TEST(ax25, try_parse_address_output_iterator)
+{
+    LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        std::string address;
+        int ssid;
+        bool mark;
+        std::vector<uint8_t> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        try_parse_address(address_bytes.begin(), address_bytes.end(), std::back_inserter(address), ssid, mark);
+        EXPECT_EQ(address, "N0CALL");
         EXPECT_EQ(ssid, 10);
+        EXPECT_FALSE(mark);
+    }
+
+    {
+        std::string address;
+        int ssid;
+        bool mark;
+        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x76 };
+        try_parse_address(address_bytes.begin(), address_bytes.end(), std::back_inserter(address), ssid, mark);
+        EXPECT_EQ(address, "N0CALL");
+        EXPECT_EQ(ssid, 11);
         EXPECT_FALSE(mark);
     }
 }
@@ -908,6 +937,165 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
     }
+}
+
+TEST(fx25, encode_fx25_frame_iterator)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_FX25_USING_NAMESPACE
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Using encode_fx25_frame with iterators
+
+    std::vector<uint8_t> frame_bytes = encode_frame(p);
+
+    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes.begin(), frame_bytes.end(), 0);
+
+    EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
+        // FX.25 Correlation Tag
+        // Tag_03: RS(80,64)
+        // { 0xC7DC0508F3D9B09EULL,  80,  64, 16 }
+        0x9E, 0xB0, 0xD9, 0xF3, 0x08, 0x05, 0xDC, 0xC7,
+        // AX.25 frame start
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C,
+        // AX.25 frame end
+        // Padding with 6 bytes to fit within 64 bytes block
+        // Frame size is 58 bytes
+        0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E,
+        // RS Check Bytes, 16 bytes
+        0x02, 0xFC, 0xED, 0x9F, 0x4B, 0x8E, 0x6A, 0x33,
+        0xA6, 0x03, 0x4B, 0x67, 0x45, 0x3B, 0xAB, 0x7E
+    }));
+}
+
+TEST(fx25, encode_fx25_frame_container)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_FX25_USING_NAMESPACE
+
+    // aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Using encode_fx25_frame with a container
+
+    std::vector<uint8_t> frame_bytes = {
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C,
+    };
+
+    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes, 0);
+
+    EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
+        // FX.25 Correlation Tag
+        // Tag_03: RS(80,64)
+        // { 0xC7DC0508F3D9B09EULL,  80,  64, 16 }
+        0x9E, 0xB0, 0xD9, 0xF3, 0x08, 0x05, 0xDC, 0xC7,
+        // AX.25 frame start
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C,
+        // AX.25 frame end
+        // Padding with 6 bytes to fit within 64 bytes block
+        // Frame size is 58 bytes
+        0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E,
+        // RS Check Bytes, 16 bytes
+        0x02, 0xFC, 0xED, 0x9F, 0x4B, 0x8E, 0x6A, 0x33,
+        0xA6, 0x03, 0x4B, 0x67, 0x45, 0x3B, 0xAB, 0x7E
+    }));
+}
+
+TEST(fx25, encode_fx25_frame_span)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_FX25_USING_NAMESPACE
+
+    // aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Using encode_fx25_frame with a span
+
+    uint8_t frame_bytes[] = {
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C,
+    };
+
+    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes, 0);
+
+    EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
+        // FX.25 Correlation Tag
+        // Tag_03: RS(80,64)
+        // { 0xC7DC0508F3D9B09EULL,  80,  64, 16 }
+        0x9E, 0xB0, 0xD9, 0xF3, 0x08, 0x05, 0xDC, 0xC7,
+        // AX.25 frame start
+        // Destination: T7SVVQ
+        0xA8, 0x6E, 0xA6, 0xAC, 0xAC, 0xA2, 0x60,
+        // Source: W7ION-5
+        0xAE, 0x6E, 0x92, 0x9E, 0x9C, 0x40, 0x6A,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-1 (last addr)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x63,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: `2(al"|[/>"3u}hello world^)
+        0x60, 0x32, 0x28, 0x61, 0x6C, 0x22, 0x7C, 0x5B, 0x2F, 0x3E, 0x22, 0x33, 0x75, 0x7D, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x5E,
+        // FCS
+        0x99, 0x3C,
+        // AX.25 frame end
+        // Padding with 6 bytes to fit within 64 bytes block
+        // Frame size is 58 bytes
+        0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E,
+        // RS Check Bytes, 16 bytes
+        0x02, 0xFC, 0xED, 0x9F, 0x4B, 0x8E, 0x6A, 0x33,
+        0xA6, 0x03, 0x4B, 0x67, 0x45, 0x3B, 0xAB, 0x7E
+    }));
 }
 
 TEST(bitstream, nrzi_encode)
@@ -2585,7 +2773,9 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
 
-#ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+//#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+
+#ifdef ENABLE_HARDWARE_TESTS_1
 
 TEST(modem, transmit_hardware_demo)
 {
@@ -2615,7 +2805,7 @@ TEST(modem, transmit_hardware_demo)
     }
 #endif // __linux__
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1*", "WIDE2-1*" }, R"(`2(al"|[/>"3u}hello world^)" };
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Connecting to a Digirig serial port, which uses the RTS line for the PTT
     serial_port port;
@@ -2662,7 +2852,7 @@ TEST(modem, transmit_hardware_demo)
     port.rts(false);
 }
 
-#endif // ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+#endif // ENABLE_HARDWARE_TESTS_1
 
 TEST(dds_afsk_modulator, samples_per_bit)
 {
@@ -2905,7 +3095,7 @@ TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
     EXPECT_NEAR(min_sample, -1.0, 0.01);
 }
 
-#ifdef ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+#ifdef ENABLE_HARDWARE_TESTS_2
 
 #if WIN32
 
@@ -3069,7 +3259,7 @@ TEST(audio_stream, wasapi_audio_input_stream)
 
 #endif // WIN32
 
-#endif // ENABLE_HARDWARE_IN_THE_LOOP_TESTS
+#endif // ENABLE_HARDWARE_TESTS_2
 
 int main(int argc, char** argv)
 {

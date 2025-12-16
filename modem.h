@@ -69,6 +69,9 @@ typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 #ifndef LIBMODEM_NAMESPACE_END
 #define LIBMODEM_NAMESPACE_END }
 #endif
+#ifndef LIBMODEM_INLINE
+#define LIBMODEM_INLINE inline
+#endif
 
 LIBMODEM_NAMESPACE_BEGIN
 
@@ -134,7 +137,7 @@ private:
 // **************************************************************** //
 
 template<typename OutputIt>
-inline void insert_silence(OutputIt out, int sample_rate, double duration_seconds = 0.1)
+LIBMODEM_INLINE void insert_silence(OutputIt out, int sample_rate, double duration_seconds = 0.1)
 {
     int silence_samples = static_cast<int>(duration_seconds * sample_rate);
 
@@ -145,7 +148,7 @@ inline void insert_silence(OutputIt out, int sample_rate, double duration_second
 }
 
 template<typename It>
-inline void apply_gain(It first, It last, double gain)
+LIBMODEM_INLINE void apply_gain(It first, It last, double gain)
 {
     for (auto it = first; it != last; ++it)
     {
@@ -154,7 +157,7 @@ inline void apply_gain(It first, It last, double gain)
 }
 
 template<typename It>
-inline void apply_preemphasis(It first, It last, int sample_rate, double tau = 75e-6)
+LIBMODEM_INLINE void apply_preemphasis(It first, It last, int sample_rate, double tau = 75e-6)
 {
     if (first == last) return;
 
