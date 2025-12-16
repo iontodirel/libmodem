@@ -768,7 +768,7 @@ std::vector<uint8_t> encode_frame(const packet_type& p);
 std::vector<uint8_t> encode_frame(const struct frame& frame);
 
 template <typename InputIt>
-LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last) // iterator
+LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last)
 {
     // Encodes an AX.25 frame
     //
@@ -905,7 +905,7 @@ bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_stat
 bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
 
 template<typename InputIt>
-LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc) // iterator
+LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
 {
     size_t frame_size = std::distance(frame_it_first, frame_it_last);
 

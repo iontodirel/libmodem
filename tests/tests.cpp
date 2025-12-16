@@ -2836,7 +2836,6 @@ TEST(modem, transmit_hardware_demo)
     m.start_silence(0.1);
     m.end_silence(0.1);
     m.gain(0.3);
-    m.preemphasis(true);
     m.initialize(stream, modulator, bitstream_converter);
 
     // Turn the transmitter on
@@ -3099,8 +3098,13 @@ TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
 
 #if WIN32
 
-TEST(audio_stream, wasapi_audio_output_stream)
+TEST(audio_stream, wasapi_audio_output_stream_10s)
 {
+    // Windows audio hardware render tests
+    // As you are running these tests you will hear sound in your speaker
+    // 
+    // Write a 440Hz tone to the default render device for 10 seconds
+
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
@@ -3124,91 +3128,150 @@ TEST(audio_stream, wasapi_audio_output_stream)
     EXPECT_TRUE(stream.volume() == 25);
 
     // Write a 440Hz tone for 10 seconds, in chunks
+
+    // For audio testing purposes
+    // Can be used to inspect the audio output
+    wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
+
+    constexpr double frequency = 440.0;
+    constexpr double amplitude = 0.3;
+    constexpr int duration_seconds = 10;
+    constexpr double pi = 3.14159265358979323846;
+
+    const double sample_rate = static_cast<double>(stream.sample_rate());
+    const int total_samples = static_cast<int>(sample_rate * duration_seconds);
+
+    size_t chunk_size = static_cast<size_t>(sample_rate / 500);  // 5ms
+
+    std::vector<double> chunk(chunk_size);
+    int n = 0;
+
+    // After 5-8 seconds on playback, you might hear small increments in volume
+    // This is likely due to the audio device's internal volume leveling or AGC kicking in
+    // There is no control over this behavior in WASAPI, on in Windows
+
+    while (n < total_samples)
     {
-        // For audio testing purposes
-        // Can be used to inspect the audio output
-        wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
+        size_t samples_to_write = (std::min)(chunk_size, static_cast<size_t>(total_samples - n));
 
-        constexpr double frequency = 440.0;
-        constexpr double amplitude = 0.3;
-        constexpr int duration_seconds = 10;
-        constexpr double pi = 3.14159265358979323846;       
-
-        const double sample_rate = static_cast<double>(stream.sample_rate());
-        const int total_samples = static_cast<int>(sample_rate * duration_seconds);
-
-        size_t chunk_size = static_cast<size_t>(sample_rate / 500);  // 5ms
-
-        std::vector<double> chunk(chunk_size);
-        int n = 0;
-
-        // After 5-8 seconds on playback, you might hear small increments in volume
-        // This is likely due to the audio device's internal volume leveling or AGC kicking in
-        // There is no control over this behavior in WASAPI, on in Windows
-
-        while (n < total_samples)
+        for (size_t i = 0; i < samples_to_write; ++i)
         {
-            size_t samples_to_write = (std::min)(chunk_size, static_cast<size_t>(total_samples - n));
-
-            for (size_t i = 0; i < samples_to_write; ++i)
-            {
-                chunk[i] = amplitude * std::sin(2.0 * pi * frequency * (n + i) / sample_rate);
-            }
-
-            stream.write(chunk.data(), samples_to_write);
-
-            wav_stream.write(chunk.data(), samples_to_write);
-
-            n += static_cast<int>(samples_to_write);
+            chunk[i] = amplitude * std::sin(2.0 * pi * frequency * (n + i) / sample_rate);
         }
 
-        stream.wait_write_completed(-1);
+        stream.write(chunk.data(), samples_to_write);
 
-        wav_stream.close();
+        wav_stream.write(chunk.data(), samples_to_write);
+
+        n += static_cast<int>(samples_to_write);
     }
 
-    // Using start and stop
+    stream.wait_write_completed(-1);
+
+    wav_stream.close();
+}
+
+TEST(audio_stream, wasapi_audio_output_stream_start_stop_2s)
+{
+    // Windows audio hardware render tests
+    // As you are running these tests you will hear sound in your speaker
+    // 
+    // Reset the stream
+    // Then write another 2 seconds using start and stop
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    EXPECT_TRUE(!device.id.empty());
+    EXPECT_TRUE(!device.name.empty());
+    EXPECT_TRUE(!device.description.empty());
+    EXPECT_TRUE(device.type == audio_device_type::render);
+    EXPECT_TRUE(device.state == audio_device_state::active);
+
+    audio_stream stream = device.stream();
+
+    EXPECT_TRUE((bool)stream);
+
+    EXPECT_TRUE(stream.sample_rate() > 0);
+
+    stream.volume(50);
+    EXPECT_TRUE(stream.volume() == 50);
+    stream.volume(100);
+    EXPECT_TRUE(stream.volume() == 100);
+    stream.volume(25);
+    EXPECT_TRUE(stream.volume() == 25);
+
+    // Generate 2s of 440Hz tone
+
+    constexpr double frequency = 440.0;
+    constexpr double amplitude = 0.3;
+    constexpr int duration_seconds = 2;
+    constexpr double pi = 3.14159265358979323846;
+    constexpr size_t total_samples = static_cast<size_t>(48000 * duration_seconds);
+
+    std::vector<double> audio_buffer(total_samples);
+
+    for (size_t n = 0; n < total_samples; ++n)
     {
-        // Generate 2s of 440Hz tone
-
-        constexpr double frequency = 440.0;
-        constexpr double amplitude = 0.3;
-        constexpr int duration_seconds = 2;
-        constexpr double pi = 3.14159265358979323846;
-        constexpr size_t total_samples = static_cast<size_t>(48000 * duration_seconds);
-
-        std::vector<double> audio_buffer(total_samples);
-        
-        for (size_t n = 0; n < total_samples; ++n)
-        {
-            audio_buffer[n] = amplitude * std::sin(2.0 * pi * frequency * n / 48000.0);
-        }
-
-        stream.close(); // Explicitly destroy the previous stream
-
-        std::unique_ptr<audio_stream_base> new_stream = device.stream(); // Recreate the stream
-
-        wasapi_audio_output_stream* wasapi_stream = dynamic_cast<wasapi_audio_output_stream*>(new_stream.get());
-
-        EXPECT_TRUE(wasapi_stream != nullptr);
-
-        wasapi_stream->stop();
-
-        wasapi_stream->start();
-
-        wasapi_stream->write(audio_buffer.data(), audio_buffer.size());
-
-        wasapi_stream->wait_write_completed(-1);
-
-        wasapi_stream->mute(true);
-
-        EXPECT_TRUE(wasapi_stream->mute() == true);
-
-        wasapi_stream->mute(false);
-
-        EXPECT_TRUE(wasapi_stream->mute() == false);
-
+        audio_buffer[n] = amplitude * std::sin(2.0 * pi * frequency * n / 48000.0);
     }
+
+    stream.close(); // Explicitly destroy the previous stream
+
+    std::unique_ptr<audio_stream_base> new_stream = device.stream(); // Recreate the stream
+
+    wasapi_audio_output_stream* wasapi_stream = dynamic_cast<wasapi_audio_output_stream*>(new_stream.get());
+
+    EXPECT_TRUE(wasapi_stream != nullptr);
+
+    wasapi_stream->stop();
+
+    wasapi_stream->start();
+
+    wasapi_stream->write(audio_buffer.data(), audio_buffer.size());
+
+    wasapi_stream->wait_write_completed(-1);
+
+    wasapi_stream->mute(true);
+
+    EXPECT_TRUE(wasapi_stream->mute() == true);
+
+    wasapi_stream->mute(false);
+
+    EXPECT_TRUE(wasapi_stream->mute() == false);
+}
+
+TEST(audio_stream, wasapi_audio_output_stream_modem_transmit_1200)
+{
+    // Test similar to the modem-transmit_demo test
+    // But instead of transmitting to a radio, it renders the packet to the default audio device
+    // If you use the aprs.fi app on iOS you can decode this packet over the air using the iPhone's microphone
+    // Select the aprs.fi Software Modem (1200 bps)
+    // I've put the bottom of my iPhone directly on the grid of the speaker of my Razer Blade
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Set audio stream volume to 30%
+    stream.volume(30);
+
+    // Send the modulated packet to the audio device
+    m.transmit(p);
 }
 
 TEST(audio_stream, wasapi_audio_input_stream)
@@ -3219,7 +3282,7 @@ TEST(audio_stream, wasapi_audio_input_stream)
 
     EXPECT_TRUE(!devices.empty());
 
-    audio_device device = devices[0];
+    audio_device device = std::move(devices[0]);
 
     EXPECT_TRUE(!device.id.empty());
     EXPECT_TRUE(!device.name.empty());

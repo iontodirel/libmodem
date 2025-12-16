@@ -37,36 +37,20 @@
 #include <cstdint>
 #include <numeric>
 
-#if WIN32
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-
-#include <Windows.h>
-#include <mmdeviceapi.h>
-#include <audioclient.h>
-#include <endpointvolume.h>
-#include <comdef.h>
-
-#pragma comment(lib, "ole32.lib")
-
-#endif // WIN32
-
 #ifdef __linux__
 
 #include <alsa/asoundlib.h>
 
 #endif // __linux__
 
-#include <boost/asio.hpp>
-#include <sndfile.h>
-
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
 #endif
 #ifndef LIBMODEM_NAMESPACE_BEGIN
 #define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_REFERENCE
+#define LIBMODEM_NAMESPACE_REFERENCE libmodem :: 
 #endif
 #ifndef LIBMODEM_NAMESPACE_END
 #define LIBMODEM_NAMESPACE_END }
@@ -119,7 +103,7 @@ public:
     audio_stream& operator=(audio_stream&&) = default;
     audio_stream(const audio_stream&) = delete;
     audio_stream& operator=(const audio_stream&) = delete;
-	~audio_stream();
+    ~audio_stream();
 
     void close();
 
@@ -180,6 +164,8 @@ enum class audio_device_state
 //                                                                  //
 // **************************************************************** //
 
+struct audio_device_impl;
+
 struct audio_device
 {
 friend std::vector<audio_device> get_audio_devices();
@@ -187,18 +173,20 @@ friend std::vector<audio_device> get_audio_devices();
     audio_device();
 
 #if WIN32
-    audio_device(IMMDevice* device);
+    audio_device(audio_device_impl* impl);
 #endif // WIN32
 
 #if __linux__
     audio_device(int card_id, int device_id, audio_device_type type);
 #endif // __linux__
 
-    audio_device& operator=(const audio_device& other);
-	audio_device(const audio_device&);
+    audio_device(const audio_device&) = delete;
+    audio_device& operator=(const audio_device& other) = delete;
+    audio_device(audio_device&&);
+    audio_device& operator=(audio_device&& other);
     ~audio_device();
 
-	std::unique_ptr<audio_stream_base> stream();
+    std::unique_ptr<audio_stream_base> stream();
 
     std::string id;
     std::string name;
@@ -207,19 +195,17 @@ friend std::vector<audio_device> get_audio_devices();
     audio_device_state state = audio_device_state::active;
 
 #if WIN32
-	std::string container_id;
+    std::string container_id;
 #endif // WIN32
 
 private:
-
-#if WIN32
-	IMMDevice* device_ = nullptr;
-#endif // WIN32
 
 #if __linux__
     int card_id;
     int device_id;
 #endif // __linux__
+
+    std::unique_ptr<audio_device_impl> impl_;
 };
 
 // **************************************************************** //
@@ -273,12 +259,16 @@ bool try_get_default_audio_device(audio_device& device);
 
 #if WIN32
 
+struct wasapi_audio_output_stream_impl;
+
 struct wasapi_audio_output_stream : public audio_stream_base
 {
     wasapi_audio_output_stream();
-    wasapi_audio_output_stream(IMMDevice* device);
-	wasapi_audio_output_stream(const wasapi_audio_output_stream&);
-	wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&);
+    wasapi_audio_output_stream(wasapi_audio_output_stream_impl* impl);
+    wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
+    wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
+    wasapi_audio_output_stream(wasapi_audio_output_stream&&);
+    wasapi_audio_output_stream& operator=(wasapi_audio_output_stream&&);
     virtual ~wasapi_audio_output_stream();
 
     void close();
@@ -297,16 +287,13 @@ struct wasapi_audio_output_stream : public audio_stream_base
     bool wait_write_completed(int timeout_ms);
 
     void start();
-	void stop();
+    void stop();
 
 private:
-    IMMDevice* device_ = nullptr;
-    IAudioClient* audio_client_ = nullptr;
-    IAudioRenderClient* render_client_ = nullptr;
-    IAudioEndpointVolume* endpoint_volume_ = nullptr;
-    UINT32 buffer_size_ = 0;
+    int buffer_size_ = 0;
     int sample_rate_ = 0;
-    WORD channels_ = 1;
+    int channels_ = 1;
+    std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
 };
 
 #endif // WIN32
@@ -314,19 +301,24 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wasapi_audio_input_stream                                       //
+// wasapi_audio_input_stream                                        //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 #if WIN32
 
+struct wasapi_audio_input_stream_impl;
+
 struct wasapi_audio_input_stream : public audio_stream_base
 {
     wasapi_audio_input_stream();
-    wasapi_audio_input_stream(IMMDevice* device);
-    wasapi_audio_input_stream(const wasapi_audio_input_stream&);
-    wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&);
+    wasapi_audio_input_stream(int channel = 0);
+    wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl, int channel = 0);
+    wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
+    wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&) = delete;
+    wasapi_audio_input_stream(wasapi_audio_input_stream&&);
+    wasapi_audio_input_stream& operator=(wasapi_audio_input_stream&&);
     virtual ~wasapi_audio_input_stream();
 
     void close();
@@ -348,13 +340,11 @@ struct wasapi_audio_input_stream : public audio_stream_base
     void stop();
 
 private:
-    IMMDevice* device_ = nullptr;
-    IAudioClient* audio_client_ = nullptr;
-    IAudioCaptureClient* capture_client_ = nullptr;
-    IAudioEndpointVolume* endpoint_volume_ = nullptr;
-    UINT32 buffer_size_ = 0;
+    int buffer_size_ = 0;
     int sample_rate_ = 0;
-    WORD channels_ = 1;
+    int channels_ = 1;
+    int channel_ = 0;
+    std::unique_ptr<wasapi_audio_input_stream_impl> impl_;
 };
 
 #endif // WIN32
@@ -373,8 +363,8 @@ struct alsa_audio_stream : public audio_stream_base
 {
     alsa_audio_stream();
     alsa_audio_stream(int card_id, int device_id, audio_device_type type);
-	alsa_audio_stream(const alsa_audio_stream&);
-	alsa_audio_stream& operator=(const alsa_audio_stream&);
+    alsa_audio_stream(const alsa_audio_stream&);
+    alsa_audio_stream& operator=(const alsa_audio_stream&);
     virtual ~alsa_audio_stream();
 
     void close();
@@ -393,7 +383,7 @@ struct alsa_audio_stream : public audio_stream_base
     bool wait_write_completed(int timeout_ms);
 
     void start();
-	void stop();
+    void stop();
 
 private:
     int card_id;
@@ -409,6 +399,7 @@ private:
 
 #endif // __linux__
 
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -416,6 +407,8 @@ private:
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+struct wav_audio_impl;
 
 struct wav_audio_input_stream : audio_stream_base
 {
@@ -437,7 +430,7 @@ public:
     void close();
 
 private:
-    SNDFILE* sf_file_ = nullptr;
+    std::unique_ptr<wav_audio_impl> impl_;
     std::string filename_;
     int sample_rate_;
     int channels_ = 1;
@@ -450,6 +443,8 @@ private:
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+struct wav_audio_impl;
 
 struct wav_audio_output_stream : audio_stream_base
 {
@@ -471,7 +466,7 @@ public:
     void close();
 
 private:
-    SNDFILE* sf_file_ = nullptr;
+    std::unique_ptr<wav_audio_impl> impl_;
     std::string filename_;
     int sample_rate_;
     int channels_ = 1;
