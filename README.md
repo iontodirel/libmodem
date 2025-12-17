@@ -23,14 +23,38 @@ On the data side, the modem can expose multiple interfaces concurrently, includi
 Transmit control is equally flexible. PTT can be driven over serial using RTS or DTR with configurable polarity, via GPIO on platforms like Raspberry Pi with optional pre and post delays, or through a plugin library so you can integrate with custom keying hardware. Modulator parameters such as mark and space frequencies, TX delay and tail, gain, preemphasis, and leading and trailing silence are all configurable, and the same base modulator can be cloned and specialized via inheritance for variants like a WAV only renderer or a multi output transmitter.
 
 ### Features
-- Support for both AFSK and FSK modulation: 300, 1200, 2400, and 9600 bps
+- Modulator
+  - Support for both AFSK and FSK modulation
+  - Support all bauds: 300, 1200, 2400, and 9600 bps
+  - Coherent modulation
+  - Modulator interface for swappable modulators and extensibility
 - Audio interface support for WASAPI, ALSA, and Core Audio
-  - Sound over TCP/IP is also supported
-- PTT over Serial Ports or external plugin library interface
+  - Sound over TCP/IP is supported for both capture/render with separate audio and control ports
+    - Control port can be used to control the volume over a TCP interface 
+  - WAV input and output streams for repeatable testing and offline analysis
+  - Null and synthetic audio sources for demos, validation, and stress testing
+  - Modem can automatically control volume level
+  - New audio stream interfaces can easily be integrated into the modem
+- PTT
+  - Serial PTT via RTS or DTR with configurable polarity
+  - GPIO PTT support with configurable pin numbering and optional pre and post delays on Raspberry Pi platforms
+  - External plugin library PTT interface for custom keying hardware
+    - Enables hamlib or PTT control over CAT
+  - TCP PTT control
+- Bitstream
+  - Supports AX.25 and FX.25 encoding and decoding
 - Pluggable pipeline design where bitstream encoders, audio interfaces, modulators, and demodulators can be swapped independently
-- Data stream types including multi client TCP servers, serial KISS, stdin and stdout, rotating log streams, JSON file streams, and an external dynamic library interface for custom integrations
-  - Multiple data formats per stream including KISS, TNC2 text, JSON, AX.25 hex, AX.25 binary, raw bitstream, and telemetry augmented variants where supported
-- Configurable modulator parameters including mark and space frequencies, TX delay and tail, gain, preemphasis, and leading and trailing silence
+- Data stream support for multiple concurrent interfaces
+  - Multi client TCP servers with arbitrary number of clients
+  - Serial interface
+  - stdin and stdout data streams
+  - Rotating log streams and rotating JSON file streams with size and flush policies
+  - External dynamic library data stream interface for custom integrations
+- Multiple selectable data formats per stream
+  - KISS, TNC2 text, APRS text, APRS JSON, AX.25 hex, AX.25 binary, raw bitstream, telemetry streams
+  - Telemetry augmented variants for supported formats
+- Configurable from a single JSON configuration file
+  - JSON file support comments, and inheritance of configurations
 - Cross platform support with native Windows, Linux, and macOS builds
 
 ### Goals
