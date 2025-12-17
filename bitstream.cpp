@@ -455,6 +455,99 @@ std::string_view trim(std::string_view str)
 
 LIBMODEM_AX25_NAMESPACE_BEGIN
 
+bool try_parse_address(std::string_view data, std::string& address_text, int& ssid, bool& mark)
+{
+    return try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
+}
+
+bool try_parse_address(std::string_view data, struct address& address)
+{
+    return try_parse_address(data.begin(), data.end(), address);
+}
+
+void parse_addresses(std::string_view data, std::vector<address>& addresses)
+{
+    addresses.clear();
+    for (size_t i = 0; i < data.size(); i += 7)
+    {
+        struct address address;
+        LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(data.substr(i, 7), address);
+        addresses.push_back(address);
+    }
+}
+
+std::vector<uint8_t> encode_frame(const packet_type& p)
+{
+    address to_address;
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, to_address);
+
+    address from_address;
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, from_address);
+
+    std::vector<address> path;
+    for (const auto& address_string : p.path)
+    {
+        address path_address;
+        LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, path_address);
+        path.push_back(path_address);
+    }
+
+    return encode_frame(from_address, to_address, path, p.data.begin(), p.data.end());
+}
+
+std::vector<uint8_t> encode_frame(const struct frame& frame)
+{
+    return encode_frame(frame.from, frame.to, frame.path, frame.data.begin(), frame.data.end());
+}
+
+std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, std::string_view data)
+{
+    return encode_frame(from, to, path, data.begin(), data.end());
+}
+
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p)
+{
+    address from;
+    address to;
+    std::vector<address> path;
+    std::vector<uint8_t> data;
+
+    if (try_decode_frame(frame_bytes, from, to, path, data))
+    {
+        p.from = to_string(from);
+        p.to = to_string(to);
+
+        p.path.clear();
+
+        for (const auto& path_address : path)
+        {
+            p.path.push_back(to_string(path_address));
+        }
+
+        p.data = std::string(data.begin(), data.end());
+
+        return true;
+    }
+
+    return false;
+}
+
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
+{
+    return try_decode_frame(frame_bytes, frame.from, frame.to, frame.path, frame.data, frame.crc);
+}
+
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
+{
+    std::array<uint8_t, 2> crc;
+    return try_decode_frame(frame_bytes, from, to, path, data, crc);
+}
+
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
+{
+    return try_decode_frame(frame_bytes.begin(), frame_bytes.end(), from, to, path, data, crc);
+}
+
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path)
 {
     std::vector<uint8_t> header;
@@ -599,35 +692,6 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
     return data;
 }
 
-std::vector<uint8_t> encode_frame(const packet_type& p)
-{
-    address to_address;
-    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, to_address);
-
-    address from_address;
-    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, from_address);
-
-    std::vector<address> path;
-    for (const auto& address_string : p.path)
-    {
-        address path_address;
-        LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, path_address);
-        path.push_back(path_address);
-    }
-
-    return encode_frame(from_address, to_address, path, p.data.begin(), p.data.end());
-}
-
-std::vector<uint8_t> encode_frame(const struct frame& frame)
-{
-    return encode_frame(frame.from, frame.to, frame.path, frame.data.begin(), frame.data.end());
-}
-
-std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, std::string_view data)
-{
-    return encode_frame(from, to, path, data.begin(), data.end());
-}
-
 std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(encode_frame(p), preamble_flags, postamble_flags);
@@ -636,70 +700,6 @@ std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_f
 std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(frame.begin(), frame.end(), preamble_flags, postamble_flags);
-}
-
-bool try_parse_address(std::string_view data, std::string& address_text, int& ssid, bool& mark)
-{
-    return try_parse_address(data.begin(), data.end(), address_text, ssid, mark);
-}
-
-bool try_parse_address(std::string_view data, struct address& address)
-{
-    return try_parse_address(data.begin(), data.end(), address);
-}
-
-void parse_addresses(std::string_view data, std::vector<address>& addresses)
-{
-    addresses.clear();
-    for (size_t i = 0; i < data.size(); i += 7)
-    {
-        struct address address;
-        LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(data.substr(i, 7), address);
-        addresses.push_back(address);
-    }
-}
-
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p)
-{
-    address from;
-    address to;
-    std::vector<address> path;
-    std::vector<uint8_t> data;
-
-    if (try_decode_frame(frame_bytes, from, to, path, data))
-    {
-        p.from = to_string(from);
-        p.to = to_string(to);
-
-        p.path.clear();
-
-        for (const auto& path_address : path)
-        {
-            p.path.push_back(to_string(path_address));
-        }
-
-        p.data = std::string(data.begin(), data.end());
-
-        return true;
-    }
-
-    return false;
-}
-
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
-{
-    return try_decode_frame(frame_bytes, frame.from, frame.to, frame.path, frame.data, frame.crc);
-}
-
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
-{
-    std::array<uint8_t, 2> crc;
-    return try_decode_frame(frame_bytes, from, to, path, data, crc);
-}
-
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
-{
-    return try_decode_frame(frame_bytes.begin(), frame_bytes.end(), from, to, path, data, crc);
 }
 
 bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
