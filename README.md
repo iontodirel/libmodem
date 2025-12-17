@@ -23,5 +23,17 @@ On the data side, the modem can expose multiple interfaces concurrently, includi
 Transmit control is equally flexible. PTT can be driven over serial using RTS or DTR with configurable polarity, via GPIO on platforms like Raspberry Pi with optional pre and post delays, or through a plugin library so you can integrate with custom keying hardware. Modulator parameters such as mark and space frequencies, TX delay and tail, gain, preemphasis, and leading and trailing silence are all configurable, and the same base modulator can be cloned and specialized via inheritance for variants like a WAV only renderer or a multi output transmitter.
 
 ### Features
-- Support for both AFSK and FSK modulation
-- High-quality audio output
+- Support for both AFSK and FSK modulation: 300, 1200, 2400, and 9600 bps
+- Audio interface support for WASAPI, ALSA, and Core Audio
+  - Sound over TCP/IP is also supported
+- PTT over Serial Ports or external plugin library interface
+- Pluggable pipeline design where bitstream encoders, audio interfaces, modulators, and demodulators can be swapped independently
+- Data stream types including multi client TCP servers, serial KISS, stdin and stdout, rotating log streams, JSON file streams, and an external dynamic library interface for custom integrations
+  - Multiple data formats per stream including KISS, TNC2 text, JSON, AX.25 hex, AX.25 binary, raw bitstream, and telemetry augmented variants where supported
+- Configurable modulator parameters including mark and space frequencies, TX delay and tail, gain, preemphasis, and leading and trailing silence
+- Cross platform support with native Windows, Linux, and macOS builds
+
+### Goals
+- Modular, library first design for experimenting with AFSK and FSK modulation and demodulation and for building and evaluating new demodulators
+- Core building blocks for a complete software modem, including AX.25 and FX.25 bitstream encode and decode
+- Full testability with test suite with 50 plus tests, including FFT based frequency checks and Direwolf and WA8LMF test vector based validation
