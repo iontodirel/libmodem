@@ -34,9 +34,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-
-#include <boost/asio.hpp>
-#include <boost/asio/serial_port.hpp>
+#include <memory>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -61,18 +59,45 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 // **************************************************************** //
 
+enum class parity
+{
+    none,
+    odd,
+    even
+};
+
+enum class stop_bits
+{
+    one,
+    onepointfive,
+    two
+};
+
+enum class flow_control
+{
+    none,
+    software,
+    hardware
+};
+
+struct serial_port_impl;
+
 class serial_port
 {
 public:
     serial_port();
+    serial_port(const serial_port&) = delete;
+    serial_port& operator=(const serial_port&) = delete;
+    serial_port(serial_port&&) noexcept;
+    serial_port& operator=(serial_port&&) noexcept;
     ~serial_port();
 
     bool open(const std::string& port_name,
         unsigned int baud_rate = 9600,
         unsigned int data_bits = 8,
-        boost::asio::serial_port_base::parity::type parity = boost::asio::serial_port_base::parity::none,
-        boost::asio::serial_port_base::stop_bits::type stop_bits = boost::asio::serial_port_base::stop_bits::one,
-        boost::asio::serial_port_base::flow_control::type flow_control = boost::asio::serial_port_base::flow_control::none);
+        parity parity = parity::none,
+        stop_bits stop_bits = stop_bits::one,
+        flow_control flow_control = flow_control::none);
 
     void close();
 
@@ -96,8 +121,7 @@ public:
     void timeout(unsigned int milliseconds);
 
 private:
-    boost::asio::io_context io_context_;
-    boost::asio::serial_port serial_port_;
+    std::unique_ptr<serial_port_impl> impl_;
     bool is_open_;
 };
 

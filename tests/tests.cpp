@@ -39,7 +39,6 @@
 #include <audio_stream.h>
 #include <modem.h>
 #include <modulator.h>
-#include <io.h>
 
 #include <random>
 #include <fstream>
@@ -49,11 +48,18 @@
 #include <filesystem>
 
 #ifdef WIN32
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include <corecrt_io.h> 
 #include <fcntl.h>
 #include <windows.h>
+
 #endif
 
+#include <io.h>
 #include <boost/process.hpp>
 #include <gtest/gtest.h>
 

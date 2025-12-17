@@ -31,14 +31,39 @@
 
 #include "io.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/ioctl.h>
-#include <termios.h>
+#ifdef WIN32
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
 #endif
 
+#include <windows.h>
+
+#endif // WIN32
+
+#if __linux__
+#include <sys/ioctl.h>
+#include <termios.h>
+#endif // __linux__
+
+#include <boost/asio.hpp>
+#include <boost/asio/serial_port.hpp>
+
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// serial_port_impl                                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct serial_port_impl
+{
+    boost::asio::io_context io_context;
+    boost::asio::serial_port serial_port{ io_context };
+};
 
 // **************************************************************** //
 //                                                                  //
@@ -48,16 +73,19 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 // **************************************************************** //
 
-serial_port::serial_port() : io_context_(), serial_port_(io_context_), is_open_(false)
+serial_port::serial_port() : impl_(std::make_unique<serial_port_impl>()), is_open_(false)
 {
 }
+
+serial_port::serial_port(serial_port&&) noexcept = default;
+serial_port& serial_port::operator=(serial_port&&) noexcept = default;
 
 serial_port::~serial_port()
 {
     close();
 }
 
-bool serial_port::open(const std::string& port_name, unsigned int baud_rate, unsigned int data_bits, boost::asio::serial_port_base::parity::type parity, boost::asio::serial_port_base::stop_bits::type stop_bits, boost::asio::serial_port_base::flow_control::type flow_control)
+bool serial_port::open(const std::string& port_name, unsigned int baud_rate, unsigned int data_bits, parity parity, stop_bits stop_bits, flow_control flow_control)
 {
     if (is_open_)
     {
@@ -67,14 +95,41 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
     try
     {
         // Open the serial port
-        serial_port_.open(port_name);
+        impl_->serial_port.open(port_name);
 
         // Configure serial port options
-        serial_port_.set_option(boost::asio::serial_port_base::baud_rate(baud_rate));
-        serial_port_.set_option(boost::asio::serial_port_base::character_size(data_bits));
-        serial_port_.set_option(boost::asio::serial_port_base::parity(parity));
-        serial_port_.set_option(boost::asio::serial_port_base::stop_bits(stop_bits));
-        serial_port_.set_option(boost::asio::serial_port_base::flow_control(flow_control));
+        impl_->serial_port.set_option(boost::asio::serial_port_base::baud_rate(baud_rate));
+        impl_->serial_port.set_option(boost::asio::serial_port_base::character_size(data_bits));
+
+        // Convert parity enum
+        boost::asio::serial_port_base::parity::type asio_parity;
+        switch (parity)
+        {
+            case parity::none: asio_parity = boost::asio::serial_port_base::parity::none; break;
+            case parity::odd:  asio_parity = boost::asio::serial_port_base::parity::odd; break;
+            case parity::even: asio_parity = boost::asio::serial_port_base::parity::even; break;
+        }
+        impl_->serial_port.set_option(boost::asio::serial_port_base::parity(asio_parity));
+
+        // Convert stop_bits enum
+        boost::asio::serial_port_base::stop_bits::type asio_stop_bits;
+        switch (stop_bits)
+        {
+            case stop_bits::one:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::one; break;
+            case stop_bits::onepointfive: asio_stop_bits = boost::asio::serial_port_base::stop_bits::onepointfive; break;
+            case stop_bits::two:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::two; break;
+        }
+        impl_->serial_port.set_option(boost::asio::serial_port_base::stop_bits(asio_stop_bits));
+
+        // Convert flow_control enum
+        boost::asio::serial_port_base::flow_control::type asio_flow_control;
+        switch (flow_control)
+        {
+            case flow_control::none:     asio_flow_control = boost::asio::serial_port_base::flow_control::none; break;
+            case flow_control::software: asio_flow_control = boost::asio::serial_port_base::flow_control::software; break;
+            case flow_control::hardware: asio_flow_control = boost::asio::serial_port_base::flow_control::hardware; break;
+        }
+        impl_->serial_port.set_option(boost::asio::serial_port_base::flow_control(asio_flow_control));
 
         is_open_ = true;
         return true;
@@ -88,10 +143,10 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
 
 void serial_port::close()
 {
-    if (is_open_)
+    if (is_open_ && impl_)
     {
         is_open_ = false;
-        serial_port_.close();
+        impl_->serial_port.close();
     }
 }
 
@@ -104,16 +159,16 @@ void serial_port::rts(bool enable)
 #ifdef WIN32
         if (enable)
         {
-            ::EscapeCommFunction(serial_port_.native_handle(), SETRTS);
+            ::EscapeCommFunction(impl_->serial_port.native_handle(), SETRTS);
         }
         else
         {
-            ::EscapeCommFunction(serial_port_.native_handle(), CLRRTS);
+            ::EscapeCommFunction(impl_->serial_port.native_handle(), CLRRTS);
         }
 #endif // WIN32
 #if __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         if (enable)
         {
             status |= TIOCM_RTS;
@@ -122,7 +177,7 @@ void serial_port::rts(bool enable)
         {
             status &= ~TIOCM_RTS;
         }
-        ::ioctl(serial_port_.native_handle(), TIOCMSET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMSET, &status);
 #endif // __linux__
     }
     catch (...)
@@ -138,7 +193,7 @@ bool serial_port::rts()
     {
 #ifdef WIN32
         DWORD status;
-        ::GetCommModemStatus(serial_port_.native_handle(), &status);
+        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return RTS state directly
         // RTS is an output signal we control, not an input we read
         // You might need to track this state separately if needed
@@ -146,7 +201,7 @@ bool serial_port::rts()
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_RTS) != 0;
 #endif // __linux__
     }
@@ -165,16 +220,16 @@ void serial_port::dtr(bool enable)
 #ifdef WIN32
         if (enable)
         {
-            ::EscapeCommFunction(serial_port_.native_handle(), SETDTR);
+            ::EscapeCommFunction(impl_->serial_port.native_handle(), SETDTR);
         }
         else
         {
-            ::EscapeCommFunction(serial_port_.native_handle(), CLRDTR);
+            ::EscapeCommFunction(impl_->serial_port.native_handle(), CLRDTR);
         }
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         if (enable)
         {
             status |= TIOCM_DTR;
@@ -183,7 +238,7 @@ void serial_port::dtr(bool enable)
         {
             status &= ~TIOCM_DTR;
         }
-        ::ioctl(serial_port_.native_handle(), TIOCMSET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMSET, &status);
 #endif // __linux__
     }
     catch (...)
@@ -199,7 +254,7 @@ bool serial_port::dtr()
     {
 #ifdef WIN32
         DWORD status;
-        ::GetCommModemStatus(serial_port_.native_handle(), &status);
+        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return DTR state directly
         // DTR is an output signal we control, not an input we read
         // You might need to track this state separately if needed
@@ -207,7 +262,7 @@ bool serial_port::dtr()
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DTR) != 0;
 #endif // __linux__
     }
@@ -225,14 +280,14 @@ bool serial_port::cts()
     {
 #ifdef WIN32
         DWORD status;
-        ::GetCommModemStatus(serial_port_.native_handle(), &status);
+        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_CTS_ON) != 0;
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CTS) != 0;
-#endif // __linux_
+#endif // __linux__
     }
     catch (...)
     {
@@ -248,12 +303,12 @@ bool serial_port::dsr()
     {
 #ifdef WIN32
         DWORD status;
-        ::GetCommModemStatus(serial_port_.native_handle(), &status);
+        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_DSR_ON) != 0;
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DSR) != 0;
 #endif // __linux__
     }
@@ -271,12 +326,12 @@ bool serial_port::dcd()
     {
 #ifdef WIN32
         DWORD status;
-        ::GetCommModemStatus(serial_port_.native_handle(), &status);
+        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_RLSD_ON) != 0;
 #endif // WIN32
 #ifdef __linux__
         int status;
-        ::ioctl(serial_port_.native_handle(), TIOCMGET, &status);
+        ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CAR) != 0;
 #endif // __linux__
     }
@@ -292,7 +347,7 @@ std::size_t serial_port::write(const std::vector<uint8_t>& data)
 
     try
     {
-        return boost::asio::write(serial_port_, boost::asio::buffer(data));
+        return boost::asio::write(impl_->serial_port, boost::asio::buffer(data));
     }
     catch (const boost::system::system_error&)
     {
@@ -306,7 +361,7 @@ std::size_t serial_port::write(const std::string& data)
 
     try
     {
-        return boost::asio::write(serial_port_, boost::asio::buffer(data));
+        return boost::asio::write(impl_->serial_port, boost::asio::buffer(data));
     }
     catch (const boost::system::system_error&)
     {
@@ -321,7 +376,7 @@ std::vector<uint8_t> serial_port::read(std::size_t size)
 
     try
     {
-        std::size_t bytes_read = boost::asio::read(serial_port_,
+        std::size_t bytes_read = boost::asio::read(impl_->serial_port,
             boost::asio::buffer(buffer));
         buffer.resize(bytes_read);
         return buffer;
@@ -340,7 +395,7 @@ std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 
     try
     {
-        std::size_t bytes_read = serial_port_.read_some(boost::asio::buffer(buffer));
+        std::size_t bytes_read = impl_->serial_port.read_some(boost::asio::buffer(buffer));
         buffer.resize(bytes_read);
         return buffer;
     }
@@ -358,7 +413,7 @@ std::string serial_port::read_until(const std::string& delimiter)
     try
     {
         boost::asio::streambuf buffer;
-        boost::asio::read_until(serial_port_, buffer, delimiter);
+        boost::asio::read_until(impl_->serial_port, buffer, delimiter);
 
         std::istream is(&buffer);
         std::string result;
@@ -385,7 +440,7 @@ std::size_t serial_port::bytes_available()
 #ifdef WIN32
         COMSTAT comstat;
         DWORD errors;
-        if (::ClearCommError(serial_port_.native_handle(), &errors, &comstat))
+        if (::ClearCommError(impl_->serial_port.native_handle(), &errors, &comstat))
         {
             return comstat.cbInQue;
         }
@@ -393,7 +448,7 @@ std::size_t serial_port::bytes_available()
 #endif // WIN32
 #ifdef __linux__
         int bytes_available = 0;
-        ::ioctl(serial_port_.native_handle(), FIONREAD, &bytes_available);
+        ::ioctl(impl_->serial_port.native_handle(), FIONREAD, &bytes_available);
         return bytes_available;
 #endif // __linux__
     }
@@ -408,10 +463,10 @@ void serial_port::flush()
     if (!is_open_) return;
 
 #ifdef WIN32
-    ::FlushFileBuffers(serial_port_.native_handle());
+    ::FlushFileBuffers(impl_->serial_port.native_handle());
 #endif // WIN32
 #ifdef __linux__
-    ::tcflush(serial_port_.native_handle(), TCIOFLUSH);
+    ::tcflush(impl_->serial_port.native_handle(), TCIOFLUSH);
 #endif // __linux__
 }
 
@@ -426,14 +481,14 @@ void serial_port::timeout(unsigned int milliseconds)
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = milliseconds;
     timeouts.WriteTotalTimeoutMultiplier = 0;
-    ::SetCommTimeouts(serial_port_.native_handle(), &timeouts);
+    ::SetCommTimeouts(impl_->serial_port.native_handle(), &timeouts);
 #endif // WIN32
 #ifdef __linux__
     struct termios tty;
-    ::tcgetattr(serial_port_.native_handle(), &tty);
+    ::tcgetattr(impl_->serial_port.native_handle(), &tty);
     tty.c_cc[VTIME] = milliseconds / 100;  // Convert to deciseconds
     tty.c_cc[VMIN] = 0;
-    ::tcsetattr(serial_port_.native_handle(), TCSANOW, &tty);
+    ::tcsetattr(impl_->serial_port.native_handle(), TCSANOW, &tty);
 #endif // __linux__
 }
 
