@@ -32,7 +32,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cmath>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -57,13 +56,13 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 // **************************************************************** //
 
-struct dds_afsk_modulator_f64
+struct dds_afsk_modulator_double
 {
-    dds_afsk_modulator_f64(double f_mark, double f_space, int bitrate, int sample_rate, double alpha);
+    dds_afsk_modulator_double(double f_mark, double f_space, int bitrate, int sample_rate, double alpha);
 
-    double modulate(uint8_t bit);
-    void reset();
-    int next_samples_per_bit();
+    double modulate(uint8_t bit) noexcept;
+    void reset() noexcept;
+    int next_samples_per_bit() noexcept;
 
 private:
     double f_mark;
@@ -86,11 +85,11 @@ private:
 
 struct modulator_base
 {
-    virtual double modulate_double(uint8_t bit);
-    virtual float modulate_float(uint8_t bit);
-    virtual int16_t modulate_int(uint8_t bit);
-    virtual void reset() = 0;
-    virtual int next_samples_per_bit() = 0;
+    virtual double modulate_double(uint8_t bit) noexcept;
+    virtual float modulate_float(uint8_t bit) noexcept;
+    virtual int16_t modulate_int(uint8_t bit) noexcept;
+    virtual void reset() noexcept = 0;
+    virtual int next_samples_per_bit() noexcept = 0;
     virtual ~modulator_base() = default;
 };
 
@@ -102,16 +101,16 @@ struct modulator_base
 //                                                                  //
 // **************************************************************** //
 
-struct dds_afsk_modulator_f64_adapter : public modulator_base
+struct dds_afsk_modulator_double_adapter : public modulator_base
 {
-    dds_afsk_modulator_f64_adapter(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000, double alpha = 1.0);
+    dds_afsk_modulator_double_adapter(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000, double alpha = 1.0);
 
-    double modulate_double(uint8_t bit) override;
-    void reset() override;
-    int next_samples_per_bit() override;
+    double modulate_double(uint8_t bit) noexcept override;
+    void reset() noexcept override;
+    int next_samples_per_bit() noexcept override;
 
 private:
-    dds_afsk_modulator_f64 dds_mod;
+    dds_afsk_modulator_double modulator;
 };
 
 LIBMODEM_NAMESPACE_END

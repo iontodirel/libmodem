@@ -2560,7 +2560,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     {
-        dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
         basic_bitstream_converter_adapter bitstream_converter;
         wav_audio_output_stream wav_stream("test.wav", 48000);        
 
@@ -2595,7 +2595,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
     for (const auto& rate : sample_rates)
     {
         {
-            dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, rate);
+            dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, rate);
             basic_bitstream_converter_adapter bitstream_converter;
             wav_audio_output_stream wav_stream("test.wav", rate);
 
@@ -2648,7 +2648,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     for (int i = 0; const auto& p : packets)
     {
         {
-            dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, 48000);
+            dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
             wav_audio_output_stream wav_stream("test.wav", 48000);
 
             modem m;
@@ -2701,7 +2701,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
             bitstream[i] ^= 1;
         }
         
-        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
+        dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
         
         for (uint8_t bit : bitstream)
         {
@@ -2747,7 +2747,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     aprs::router::packet packet = packet_string;
 
     wav_audio_output_stream wav_stream("test.wav", 48000);
-    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
     basic_bitstream_converter_adapter bitstream_converter;
 
     modem m;
@@ -2869,7 +2869,7 @@ TEST(dds_afsk_modulator, samples_per_bit)
         int sample_rate = 48000;
         int baud_rate = 1200;
 
-        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
+        dds_afsk_modulator_double modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
 
         int samples_per_bit = sample_rate / baud_rate;
 
@@ -2900,7 +2900,7 @@ TEST(dds_afsk_modulator, samples_per_bit)
         int sample_rate = 44100;
         int baud_rate = 1200;
 
-        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
+        dds_afsk_modulator_double modulator(1200.0, 2200.0, baud_rate, sample_rate, 1.0);
 
         double samples_per_bit_fixed = static_cast<double>(sample_rate) / baud_rate;
         std::vector<int> samples_per_bit_values;
@@ -2955,7 +2955,7 @@ TEST(dds_afsk_modulator, afsk_1200_frequency_accuracy)
 
         std::vector<uint8_t> bitstream = std::vector<uint8_t>(10000, bit);
 
-        dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+        dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0);
 
         for (uint8_t bit : bitstream)
         {
@@ -3015,7 +3015,7 @@ TEST(dds_afsk_modulator, afsk_1200_frequency_accuracy)
 
 TEST(dds_afsk_modulator, afsk_1200_phase_continuity)
 {
-    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+    dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0);
 
     std::vector<double> audio_buffer;
 
@@ -3048,7 +3048,7 @@ TEST(dds_afsk_modulator, afsk_1200_phase_continuity)
 
 TEST(dds_afsk_modulator, afsk_1200_dc_offset)
 {
-    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+    dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0);
 
     std::vector<double> audio_buffer;
 
@@ -3070,7 +3070,7 @@ TEST(dds_afsk_modulator, afsk_1200_dc_offset)
 
 TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
 {
-    dds_afsk_modulator_f64 modulator(1200.0, 2200.0, 1200, 48000, 1.0);
+    dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0);
 
     std::vector<double> audio_buffer;
 
@@ -3255,7 +3255,7 @@ TEST(audio_stream, wasapi_audio_output_stream_modem_transmit_1200)
     aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     audio_stream stream = device.stream();
-    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
     basic_bitstream_converter_adapter bitstream_converter;
 
     modem m;

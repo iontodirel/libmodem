@@ -429,7 +429,8 @@ LIBMODEM_INLINE std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, Inpu
     // Each entry represents the CRC remainder when dividing that byte value
     // by the polynomial, processing bits LSB-first
 
-    static constexpr uint16_t crc_table[256] = {
+    static constexpr uint16_t crc_table[256] =
+    {
         0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 0x57AD, 0x6536, 0x74BF,
         0x8C48, 0x9DC1, 0xAF5A, 0xBED3, 0xCA6C, 0xDBE5, 0xE97E, 0xF8F7,
         0x1081, 0x0108, 0x3393, 0x221A, 0x56A5, 0x472C, 0x75B7, 0x643E,
@@ -472,8 +473,7 @@ LIBMODEM_INLINE std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, Inpu
     }
 
     crc ^= 0xFFFF;
-    return { static_cast<uint8_t>(crc & 0xFF),
-            static_cast<uint8_t>((crc >> 8) & 0xFF) };
+    return { static_cast<uint8_t>(crc & 0xFF), static_cast<uint8_t>((crc >> 8) & 0xFF) };
 }
 
 template<typename InputIt, typename OutputIt>

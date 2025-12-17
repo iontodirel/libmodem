@@ -31,6 +31,7 @@
 
 #include "modulator.h"
 
+#include <cmath>
 #include <cassert>
 
 LIBMODEM_NAMESPACE_BEGIN
@@ -43,7 +44,7 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 // **************************************************************** //
 
-dds_afsk_modulator_f64::dds_afsk_modulator_f64(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000, double alpha = 1.0)
+dds_afsk_modulator_double::dds_afsk_modulator_double(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000, double alpha = 1.0)
 {
     this->f_mark = f_mark;
     this->f_space = f_space;
@@ -55,7 +56,7 @@ dds_afsk_modulator_f64::dds_afsk_modulator_f64(double f_mark = 1200.0, double f_
     samples_per_bit_error_ = 0.0;
 }
 
-double dds_afsk_modulator_f64::modulate(uint8_t bit)
+double dds_afsk_modulator_double::modulate(uint8_t bit) noexcept
 {
     assert(bit == 0 || bit == 1);
 
@@ -100,7 +101,7 @@ double dds_afsk_modulator_f64::modulate(uint8_t bit)
     return std::cos(phase);
 }
 
-void dds_afsk_modulator_f64::reset()
+void dds_afsk_modulator_double::reset() noexcept
 {
     // WARNING: Calling this during transmission will create phase discontinuities!
     // Only call reset() before starting a new independent transmission where
@@ -110,7 +111,7 @@ void dds_afsk_modulator_f64::reset()
     phase = 0.0;
 }
 
-int dds_afsk_modulator_f64::next_samples_per_bit()
+int dds_afsk_modulator_double::next_samples_per_bit() noexcept
 {
     // WARNING: Call only once per bit period
     // Calculate samples per bit with fractional error accumulation
@@ -134,19 +135,19 @@ int dds_afsk_modulator_f64::next_samples_per_bit()
 //                                                                  //
 // **************************************************************** //
 
-double modulator_base::modulate_double(uint8_t bit)
+double modulator_base::modulate_double(uint8_t bit) noexcept
 {
     (void)bit;
     return 0.0;
 }
 
-float modulator_base::modulate_float(uint8_t bit)
+float modulator_base::modulate_float(uint8_t bit) noexcept
 {
     (void)bit;
     return 0.0f;
 }
 
-int16_t modulator_base::modulate_int(uint8_t bit)
+int16_t modulator_base::modulate_int(uint8_t bit) noexcept
 {
     (void)bit;
     return 0;
@@ -160,23 +161,23 @@ int16_t modulator_base::modulate_int(uint8_t bit)
 //                                                                  //
 // **************************************************************** //
 
-dds_afsk_modulator_f64_adapter::dds_afsk_modulator_f64_adapter(double f_mark, double f_space, int bitrate, int sample_rate, double alpha) : dds_mod(f_mark, f_space, bitrate, sample_rate, alpha)
+dds_afsk_modulator_double_adapter::dds_afsk_modulator_double_adapter(double f_mark, double f_space, int bitrate, int sample_rate, double alpha) : modulator(f_mark, f_space, bitrate, sample_rate, alpha)
 {
 }
 
-double dds_afsk_modulator_f64_adapter::modulate_double(uint8_t bit)
+double dds_afsk_modulator_double_adapter::modulate_double(uint8_t bit) noexcept
 {
-    return dds_mod.modulate(bit);
+    return modulator.modulate(bit);
 }
 
-void dds_afsk_modulator_f64_adapter::reset()
+void dds_afsk_modulator_double_adapter::reset() noexcept
 {
-    dds_mod.reset();
+    modulator.reset();
 }
 
-int dds_afsk_modulator_f64_adapter::next_samples_per_bit()
+int dds_afsk_modulator_double_adapter::next_samples_per_bit() noexcept
 {
-    return dds_mod.next_samples_per_bit();
+    return modulator.next_samples_per_bit();
 }
 
 LIBMODEM_NAMESPACE_END
