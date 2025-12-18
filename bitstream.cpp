@@ -45,208 +45,6 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// bitstream_state                                                  //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-LIBMODEM_AX25_NAMESPACE_BEGIN
-
-void bitstream_state::reset()
-{
-    searching = true;
-    in_preamble = false;
-    in_frame = false;
-    complete = false;
-    last_nrzi_level = 0;
-    frame_start_index = 0;
-    bitstream.clear();
-    frame_start = 0;
-    frame_end = 0;
-}
-
-LIBMODEM_AX25_NAMESPACE_END
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// bitstream_converter_base                                         //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-bitstream_converter_base::~bitstream_converter_base()
-{
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// basic_bitstream_converter_adapter                                //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
-{
-    return converter.encode(p, preamble_flags, postamble_flags);
-}
-
-bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
-{
-    return converter.try_decode(bitstream, offset, p, read);
-}
-
-bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
-{
-    return converter.try_decode(bit, p);
-}
-
-void basic_bitstream_converter_adapter::reset()
-{
-    converter.reset();
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// fx25_bitstream_converter_adapter                                 //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
-{
-    return converter.encode(p, preamble_flags, postamble_flags);
-}
-
-bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
-{
-    return converter.try_decode(bitstream, offset, p, read);
-}
-
-bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
-{
-    (void)bit;
-    (void)p;
-    return false;
-}
-
-void fx25_bitstream_converter_adapter::reset()
-{
-    converter.reset();
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// basic_bitstream_converter                                        //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-std::vector<uint8_t> basic_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
-{
-LIBMODEM_AX25_USING_NAMESPACE
-
-    return encode_basic_bitstream(p, preamble_flags, postamble_flags);
-}
-
-bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
-{
-LIBMODEM_AX25_USING_NAMESPACE
-
-    return try_decode_basic_bitstream(bitstream, offset, p, read, state);
-}
-
-bool basic_bitstream_converter::try_decode(uint8_t bit, packet_type& p)
-{
-LIBMODEM_AX25_USING_NAMESPACE
-
-    return try_decode_basic_bitstream(bit, p, state);
-}
-
-void basic_bitstream_converter::reset()
-{
-    state.reset();
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// fx25_bitstream_converter                                        //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-std::vector<uint8_t> fx25_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
-{
-LIBMODEM_FX25_USING_NAMESPACE
-
-    return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
-}
-
-bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
-{
-LIBMODEM_FX25_USING_NAMESPACE
-
-    (void)bitstream;
-    (void)offset;
-    (void)p;
-    (void)read;
-
-    return false;
-}
-
-void fx25_bitstream_converter::reset()
-{
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-//                                                                  //
-// bitstream routines                                               //
-//                                                                  //
-// nrzi_decode, ends_with_hdlc_flag                                 //
-//                                                                  //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-LIBMODEM_AX25_NAMESPACE_BEGIN
-
-uint8_t nrzi_decode(uint8_t bit, uint8_t last_nrzi_level)
-{
-    uint8_t decoded_bit = (bit == last_nrzi_level) ? 1 : 0;
-    return decoded_bit;
-}
-
-bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream)
-{
-    if (bitstream.size() < 8)
-    {
-        return false;
-    }
-
-    size_t start = bitstream.size() - 8;
-
-    // HDLC flag pattern: 01111110 (LSB first representation of 0x7E)
-    return bitstream[start + 0] == 0 &&
-        bitstream[start + 1] == 1 &&
-        bitstream[start + 2] == 1 &&
-        bitstream[start + 3] == 1 &&
-        bitstream[start + 4] == 1 &&
-        bitstream[start + 5] == 1 &&
-        bitstream[start + 6] == 1 &&
-        bitstream[start + 7] == 0;
-}
-
-LIBMODEM_AX25_NAMESPACE_END
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
 // address                                                          //
 //                                                                  //
 //                                                                  //
@@ -397,7 +195,7 @@ std::string to_string(const struct address& address)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// to_packet                                                        //
+// frame                                                            //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -427,6 +225,166 @@ LIBMODEM_AX25_NAMESPACE_END
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// bitstream_state                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+LIBMODEM_AX25_NAMESPACE_BEGIN
+
+void bitstream_state::reset()
+{
+    searching = true;
+    in_preamble = false;
+    in_frame = false;
+    complete = false;
+    last_nrzi_level = 0;
+    frame_start_index = 0;
+    bitstream.clear();
+    frame_start = 0;
+    frame_end = 0;
+}
+
+LIBMODEM_AX25_NAMESPACE_END
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// basic_bitstream_converter                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+std::vector<uint8_t> basic_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+{
+    LIBMODEM_AX25_USING_NAMESPACE
+
+        return encode_basic_bitstream(p, preamble_flags, postamble_flags);
+}
+
+bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+{
+    LIBMODEM_AX25_USING_NAMESPACE
+
+        return try_decode_basic_bitstream(bitstream, offset, p, read, state);
+}
+
+bool basic_bitstream_converter::try_decode(uint8_t bit, packet_type& p)
+{
+    LIBMODEM_AX25_USING_NAMESPACE
+
+        return try_decode_basic_bitstream(bit, p, state);
+}
+
+void basic_bitstream_converter::reset()
+{
+    state.reset();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// fx25_bitstream_converter                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+std::vector<uint8_t> fx25_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+{
+    LIBMODEM_FX25_USING_NAMESPACE
+
+        return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
+}
+
+bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+{
+    LIBMODEM_FX25_USING_NAMESPACE
+
+    (void)bitstream;
+    (void)offset;
+    (void)p;
+    (void)read;
+
+    return false;
+}
+
+void fx25_bitstream_converter::reset()
+{
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// bitstream_converter_base                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bitstream_converter_base::~bitstream_converter_base()
+{
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// basic_bitstream_converter_adapter                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+{
+    return converter.encode(p, preamble_flags, postamble_flags);
+}
+
+bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+{
+    return converter.try_decode(bitstream, offset, p, read);
+}
+
+bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
+{
+    return converter.try_decode(bit, p);
+}
+
+void basic_bitstream_converter_adapter::reset()
+{
+    converter.reset();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// fx25_bitstream_converter_adapter                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+{
+    return converter.encode(p, preamble_flags, postamble_flags);
+}
+
+bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+{
+    return converter.try_decode(bitstream, offset, p, read);
+}
+
+bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
+{
+    (void)bit;
+    (void)p;
+    return false;
+}
+
+void fx25_bitstream_converter_adapter::reset()
+{
+    converter.reset();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // trim                                                             //
 //                                                                  //
 //                                                                  //
@@ -442,6 +400,48 @@ std::string_view trim(std::string_view str)
     size_t last = str.find_last_not_of(' ');
     return str.substr(first, last - first + 1);
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// bitstream routines                                               //
+//                                                                  //
+// nrzi_decode, ends_with_hdlc_flag                                 //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+LIBMODEM_AX25_NAMESPACE_BEGIN
+
+uint8_t nrzi_decode(uint8_t bit, uint8_t last_nrzi_level)
+{
+    uint8_t decoded_bit = (bit == last_nrzi_level) ? 1 : 0;
+    return decoded_bit;
+}
+
+bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream)
+{
+    if (bitstream.size() < 8)
+    {
+        return false;
+    }
+
+    size_t start = bitstream.size() - 8;
+
+    // HDLC flag pattern: 01111110 (LSB first representation of 0x7E)
+    return bitstream[start + 0] == 0 &&
+        bitstream[start + 1] == 1 &&
+        bitstream[start + 2] == 1 &&
+        bitstream[start + 3] == 1 &&
+        bitstream[start + 4] == 1 &&
+        bitstream[start + 5] == 1 &&
+        bitstream[start + 6] == 1 &&
+        bitstream[start + 7] == 0;
+}
+
+LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
 //                                                                  //
@@ -702,16 +702,6 @@ std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, i
     return encode_basic_bitstream(frame.begin(), frame.end(), preamble_flags, postamble_flags);
 }
 
-bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
-{
-    bool result = try_decode_basic_bitstream(bit, state);
-    if (result)
-    {
-        packet = to_packet(state.frame);
-    }
-    return result;
-}
-
 bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
 {
     // Process one bit at a time through the AX.25 bitstream decoding pipeline:
@@ -885,6 +875,16 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
     return false; // No complete packet yet
 }
 
+bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
+{
+    bool result = try_decode_basic_bitstream(bit, state);
+    if (result)
+    {
+        packet = to_packet(state.frame);
+    }
+    return result;
+}
+
 bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state)
 {
     for (size_t i = offset; i < bitstream.size(); i++)
@@ -906,20 +906,12 @@ LIBMODEM_AX25_NAMESPACE_END
 //                                                                  //
 // FX.25                                                            //
 //                                                                  //
-// encode_fx25_bitstream, encode_fx25_frame                         //
+// encode_fx25_frame, encode_fx25_bitstream                         //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 LIBMODEM_FX25_NAMESPACE_BEGIN
-
-std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
-{
-LIBMODEM_AX25_USING_NAMESPACE
-
-    std::vector<uint8_t> ax25_frame = encode_frame(p);
-    return encode_fx25_bitstream(ax25_frame.begin(), ax25_frame.end(), preamble_flags, postamble_flags, min_check_bytes);
-}
 
 std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& frame_bytes, size_t min_check_bytes)
 {
@@ -1097,6 +1089,14 @@ std::vector<uint8_t> encode_fx25_frame(std::span<const uint8_t> frame_bytes, siz
     // 2. Regular AX.25 receivers to ignore FX.25 overhead and decode normally
 
     return output;
+}
+
+std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> ax25_frame = encode_frame(p);
+    return encode_fx25_bitstream(ax25_frame.begin(), ax25_frame.end(), preamble_flags, postamble_flags, min_check_bytes);
 }
 
 LIBMODEM_FX25_NAMESPACE_END

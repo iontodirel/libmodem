@@ -1023,13 +1023,21 @@ std::vector<uint8_t> encode_fx25_frame(const std::vector<uint8_t>& frame_bytes, 
 std::vector<uint8_t> encode_fx25_frame(std::span<const uint8_t> frame_bytes, size_t min_check_bytes);
 
 template<typename InputIt>
+std::vector<uint8_t> encode_fx25_frame(InputIt frame_it_first, InputIt frame_it_last, size_t min_check_bytes);
+
+template<typename InputIt>
+std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
+
+std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
+
+template<typename InputIt>
 LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_frame(InputIt frame_it_first, InputIt frame_it_last, size_t min_check_bytes)
 {
     return encode_fx25_frame(std::span<const uint8_t>{ frame_it_first, frame_it_last }, min_check_bytes);
 }
 
 template<typename InputIt>
-LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0)
+LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -1091,7 +1099,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     return bitstream;
 }
 
-std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
+std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes);
 
 LIBMODEM_FX25_NAMESPACE_END
 
