@@ -2779,86 +2779,6 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
 
-//#define ENABLE_HARDWARE_IN_THE_LOOP_TESTS
-
-#ifdef ENABLE_HARDWARE_TESTS_1
-
-TEST(modem, transmit_hardware_demo)
-{
-    // Note: This test requires a Digirig device connected to the system
-    // Note: Windows: port COM16 is used and the audio device is named "Speakers (2- USB Audio Device)".
-    // Note: Linux: the audio device is named "USB Audio" and is connected to a serial port ex: /dev/ttyUSB0
-    // Note: the port and audio device name will vary, update accordingly
-    // The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.
-    // The radio will be set to transmit when the RTS line is asserted on the Digirig's serial port.
-    // The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
-    // Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
-    // This test is disabled by default.
-    // To enable, define ENABLE_HARDWARE_IN_THE_LOOP_TESTS during compilation.
-
-    // Get the Digirig render audio device
-    audio_device device;
-#if WIN32
-    if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
-    {
-        return;
-    }
-#endif // WIN32
-#if __linux__
-    if (!try_get_audio_device_by_name("USB Audio", device, audio_device_type::render, audio_device_state::active))
-    {
-        return;
-    }
-#endif // __linux__
-
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
-
-    // Connecting to a Digirig serial port, which uses the RTS line for the PTT
-    serial_port port;
-#if WIN32
-    if (!port.open("COM16", 9600))
-    {
-        return;
-    }
-#endif // WIN32
-#if __linux__
-    if (!port.open("/dev/ttyUSB0", 9600))
-    {
-        return;
-    }
-    // Turns out opening the port asserts the RTS line to on
-    // Disable it, if we do it fast it will never be asserted high
-    port.rts(false);
-#endif // __linux__
-
-    audio_stream stream = device.stream();
-    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
-
-    modem m;
-    m.baud_rate(1200);
-    m.tx_delay(300);
-    m.tx_tail(45);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
-    m.gain(0.3);
-    m.initialize(stream, modulator, bitstream_converter);
-
-    // Turn the transmitter on
-    port.rts(true);
-
-    // Set audio stream volume to 50%
-    stream.volume(50);
-
-    // Send the modulated packet to the audio device
-    m.transmit(p);
-
-    // Turn the transmitter off
-    port.rts(false);
-}
-
-#endif // ENABLE_HARDWARE_TESTS_1
-
 TEST(dds_afsk_modulator, samples_per_bit)
 {
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
@@ -3100,46 +3020,190 @@ TEST(dds_afsk_modulator, afsk_1200_constant_envelope)
     EXPECT_NEAR(min_sample, -1.0, 0.01);
 }
 
+#ifdef ENABLE_HARDWARE_TESTS_1
+
+TEST(modem, transmit_hardware_demo)
+{
+    // Note: This test requires a Digirig device connected to the system
+    // Note: Windows: port COM16 is used and the audio device is named "Speakers (2- USB Audio Device)".
+    // Note: Linux: the audio device is named "USB Audio" and is connected to a serial port ex: /dev/ttyUSB0
+    // Note: the port and audio device name will vary, update accordingly
+    // The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.
+    // The radio will be set to transmit when the RTS line is asserted on the Digirig's serial port.
+    // The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
+    // Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
+    // This test is disabled by default.
+    // To enable, define ENABLE_HARDWARE_IN_THE_LOOP_TESTS during compilation.
+
+    // Get the Digirig render audio device
+    audio_device device;
+#if WIN32
+    if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
+    {
+        return;
+    }
+#endif // WIN32
+#if __linux__
+    if (!try_get_audio_device_by_name("USB Audio", device, audio_device_type::render, audio_device_state::active))
+    {
+        return;
+    }
+#endif // __linux__
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Connecting to a Digirig serial port, which uses the RTS line for the PTT
+    serial_port port;
+#if WIN32
+    if (!port.open("COM16", 9600))
+    {
+        return;
+    }
+#endif // WIN32
+#if __linux__
+    if (!port.open("/dev/ttyUSB0", 9600))
+    {
+        return;
+    }
+    // Turns out opening the port asserts the RTS line to on
+    // Disable it, if we do it fast it will never be asserted high
+    port.rts(false);
+#endif // __linux__
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Turn the transmitter on
+    port.rts(true);
+
+    // Set audio stream volume to 50%
+    stream.volume(50);
+
+    // Send the modulated packet to the audio device
+    m.transmit(p);
+
+    // Turn the transmitter off
+    port.rts(false);
+}
+
+#endif // ENABLE_HARDWARE_TESTS_1
 #ifdef ENABLE_HARDWARE_TESTS_2
 
 #if WIN32
 
-TEST(audio_stream, wasapi_audio_output_stream_10s)
+TEST(audio_device, audio_device)
 {
-    // Windows audio hardware render tests
-    // As you are running these tests you will hear sound in your speaker
-    // 
-    // Write a 440Hz tone to the default render device for 10 seconds
+    for (int i = 0; i < 100; ++i)
+    {
+        audio_device render_device;
+        EXPECT_TRUE(try_get_default_audio_device(render_device, audio_device_type::render));
 
+        EXPECT_TRUE(!render_device.id.empty());
+        EXPECT_TRUE(!render_device.name.empty());
+        EXPECT_TRUE(!render_device.description.empty());
+        EXPECT_TRUE(!render_device.container_id.empty());
+        EXPECT_TRUE(render_device.type == audio_device_type::render);
+        EXPECT_TRUE(render_device.state == audio_device_state::active);
+
+        audio_device capture_device;
+        EXPECT_TRUE(try_get_default_audio_device(capture_device, audio_device_type::capture));
+
+        EXPECT_TRUE(!capture_device.id.empty());
+        EXPECT_TRUE(!capture_device.name.empty());
+        EXPECT_TRUE(!capture_device.description.empty());
+        EXPECT_TRUE(!capture_device.container_id.empty());
+        EXPECT_TRUE(capture_device.type == audio_device_type::capture);
+        EXPECT_TRUE(capture_device.state == audio_device_state::active);
+    }
+}
+
+TEST(audio_stream, wasapi_audio_input_stream)
+{
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::capture));
+
+    std::unique_ptr<audio_stream_base> stream = device.stream();
+
+    wasapi_audio_input_stream* wasapi_stream = dynamic_cast<wasapi_audio_input_stream*>(stream.get());
+
+    EXPECT_TRUE(wasapi_stream != nullptr);
+
+    wasapi_stream->stop();
+
+    wasapi_stream->start();
+
+    wasapi_stream->mute(true);
+
+    EXPECT_TRUE(wasapi_stream->mute() == true);
+
+    wasapi_stream->mute(false);
+
+    EXPECT_TRUE(wasapi_stream->mute() == false);
+}
+
+TEST(audio_stream, wasapi_audio_output_stream)
+{
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    EXPECT_TRUE(!device.id.empty());
-    EXPECT_TRUE(!device.name.empty());
-    EXPECT_TRUE(!device.description.empty());
-    EXPECT_TRUE(device.type == audio_device_type::render);
-    EXPECT_TRUE(device.state == audio_device_state::active);
+    std::unique_ptr<audio_stream_base> stream = device.stream();
+
+    wasapi_audio_output_stream* wasapi_stream = dynamic_cast<wasapi_audio_output_stream*>(stream.get());
+
+    EXPECT_TRUE(wasapi_stream != nullptr);
+
+    wasapi_stream->stop();
+
+    wasapi_stream->start();
+
+    wasapi_stream->mute(true);
+
+    EXPECT_TRUE(wasapi_stream->mute() == true);
+
+    wasapi_stream->mute(false);
+
+    EXPECT_TRUE(wasapi_stream->mute() == false);
+}
+
+#endif // WIN32
+
+#endif // ENABLE_HARDWARE_TESTS_2
+
+#define ENABLE_HARDWARE_TESTS_3
+
+#ifdef ENABLE_HARDWARE_TESTS_3
+
+#if WIN32
+
+TEST(audio_stream, render_10s_stream)
+{
+    // Windows audio hardware render test
+    // As you are running this test you could use a sound capture app on your phone to test the render
+    // We will write a 17kHz tone to the default render device for 10 seconds
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
 
     audio_stream stream = device.stream();
 
-    EXPECT_TRUE((bool)stream);
-
-    EXPECT_TRUE(stream.sample_rate() > 0);
-
-    stream.volume(50);
-    EXPECT_TRUE(stream.volume() == 50);
-    stream.volume(100);
-    EXPECT_TRUE(stream.volume() == 100);
     stream.volume(25);
-    EXPECT_TRUE(stream.volume() == 25);
 
-    // Write a 440Hz tone for 10 seconds, in chunks
+    // Write a 17kHz tone for 10 seconds, in chunks
+    // For audio testing purposes, we render the samples to a WAV file as well
 
-    // For audio testing purposes
-    // Can be used to inspect the audio output
     wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
 
-    constexpr double frequency = 440.0;
+    constexpr double frequency = 17000.0; // 17kHz tone, should be inaudible to most people
     constexpr double amplitude = 0.3;
     constexpr int duration_seconds = 10;
     constexpr double pi = 3.14159265358979323846;
@@ -3177,77 +3241,7 @@ TEST(audio_stream, wasapi_audio_output_stream_10s)
     wav_stream.close();
 }
 
-TEST(audio_stream, wasapi_audio_output_stream_start_stop_2s)
-{
-    // Windows audio hardware render tests
-    // As you are running these tests you will hear sound in your speaker
-    // 
-    // Reset the stream
-    // Then write another 2 seconds using start and stop
-
-    audio_device device;
-    EXPECT_TRUE(try_get_default_audio_device(device));
-
-    EXPECT_TRUE(!device.id.empty());
-    EXPECT_TRUE(!device.name.empty());
-    EXPECT_TRUE(!device.description.empty());
-    EXPECT_TRUE(device.type == audio_device_type::render);
-    EXPECT_TRUE(device.state == audio_device_state::active);
-
-    audio_stream stream = device.stream();
-
-    EXPECT_TRUE((bool)stream);
-
-    EXPECT_TRUE(stream.sample_rate() > 0);
-
-    stream.volume(50);
-    EXPECT_TRUE(stream.volume() == 50);
-    stream.volume(100);
-    EXPECT_TRUE(stream.volume() == 100);
-    stream.volume(25);
-    EXPECT_TRUE(stream.volume() == 25);
-
-    // Generate 2s of 440Hz tone
-
-    constexpr double frequency = 440.0;
-    constexpr double amplitude = 0.3;
-    constexpr int duration_seconds = 2;
-    constexpr double pi = 3.14159265358979323846;
-    constexpr size_t total_samples = static_cast<size_t>(48000 * duration_seconds);
-
-    std::vector<double> audio_buffer(total_samples);
-
-    for (size_t n = 0; n < total_samples; ++n)
-    {
-        audio_buffer[n] = amplitude * std::sin(2.0 * pi * frequency * n / 48000.0);
-    }
-
-    stream.close(); // Explicitly destroy the previous stream
-
-    std::unique_ptr<audio_stream_base> new_stream = device.stream(); // Recreate the stream
-
-    wasapi_audio_output_stream* wasapi_stream = dynamic_cast<wasapi_audio_output_stream*>(new_stream.get());
-
-    EXPECT_TRUE(wasapi_stream != nullptr);
-
-    wasapi_stream->stop();
-
-    wasapi_stream->start();
-
-    wasapi_stream->write(audio_buffer.data(), audio_buffer.size());
-
-    wasapi_stream->wait_write_completed(-1);
-
-    wasapi_stream->mute(true);
-
-    EXPECT_TRUE(wasapi_stream->mute() == true);
-
-    wasapi_stream->mute(false);
-
-    EXPECT_TRUE(wasapi_stream->mute() == false);
-}
-
-TEST(audio_stream, wasapi_audio_output_stream_modem_transmit_1200)
+TEST(audio_stream, modem_transmit_1200)
 {
     // Test similar to the modem-transmit_demo test
     // But instead of transmitting to a radio, it renders the packet to the default audio device
@@ -3280,25 +3274,118 @@ TEST(audio_stream, wasapi_audio_output_stream_modem_transmit_1200)
     m.transmit(p);
 }
 
-TEST(audio_stream, wasapi_audio_input_stream)
+TEST(audio_stream, wasapi_audio_output_stream_loopback_modem_transmit_1200) // generic for linux too!
+{
+    std::mutex capture_mutex;
+    std::condition_variable capture_cv;
+    bool stop_capture = false;
+    bool capture_started = false;
+    bool capture_stopped = false;
+
+    // Capture thread to read from the default capture device
+    std::jthread capture_thread([&]()
+    {
+
+        std::vector<audio_device> devices = get_audio_devices(audio_device_type::capture, audio_device_state::active);
+
+        audio_device capture_device = std::move(devices[1]);
+
+        audio_stream capture_stream = capture_device.stream();
+
+        wav_audio_output_stream wav_stream("loopback_capture.wav", capture_stream.sample_rate());
+
+        std::vector<double> buffer(1024);
+
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex);
+            capture_started = true;
+        }
+        capture_cv.notify_one();
+
+        while (true)
+        {
+            {
+                std::unique_lock<std::mutex> lock(capture_mutex);
+                if (capture_cv.wait_for(lock, std::chrono::milliseconds(10), [&] { return stop_capture; }))
+                {
+                    break;
+                }
+            }
+
+            size_t n = capture_stream.read(buffer.data(), buffer.size());
+            if (n > 0)
+            {
+                wav_stream.write(buffer.data(), n);
+            }
+        }
+
+        wav_stream.close();
+
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex);
+            capture_stopped = true;
+        }
+        capture_cv.notify_one();
+    });
+
+    // Wait for capture thread to start
+    {
+        std::unique_lock<std::mutex> lock(capture_mutex);
+        capture_cv.wait(lock, [&] { return capture_started; });
+    }
+
+    // Send a packet to the default render device
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.5);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Set audio stream volume to 30%
+    stream.volume(50);
+
+    // Send the modulated packet to the audio device
+    m.transmit(p);
+
+    // Stop capture thread
+    {
+        std::lock_guard<std::mutex> lock(capture_mutex);
+        stop_capture = true;
+    }
+    capture_cv.notify_one();
+
+    // Wait for capture thread to stop
+    {
+        std::unique_lock<std::mutex> lock(capture_mutex);
+        capture_cv.wait(lock, [&] { return capture_stopped; });
+    }
+
+    printf("Loopback capture complete, saved to loopback_capture.wav\n");
+
+
+}
+
+TEST(audio_stream, capture_5s_stream)
 {
     // Read from the default capture device for 5 seconds and write to a WAV file
 
-    std::vector<audio_device> devices = get_audio_devices(audio_device_type::capture, audio_device_state::active);
-
-    EXPECT_TRUE(!devices.empty());
-
-    audio_device device = std::move(devices[0]);
-
-    EXPECT_TRUE(!device.id.empty());
-    EXPECT_TRUE(!device.name.empty());
-    EXPECT_TRUE(!device.description.empty());
-    EXPECT_TRUE(device.type == audio_device_type::capture);
-    EXPECT_TRUE(device.state == audio_device_state::active);
+    audio_device device;
+    try_get_default_audio_device(device, audio_device_type::capture);
 
     audio_stream stream = device.stream();
-
-    EXPECT_TRUE((bool)stream);
 
     EXPECT_TRUE(stream.sample_rate() > 0);
 
@@ -3308,11 +3395,11 @@ TEST(audio_stream, wasapi_audio_input_stream)
 
     const size_t chunk_size = stream.sample_rate() / 10;  // 100ms
     const size_t total_samples = stream.sample_rate() * duration_seconds;
-    
+
     std::vector<double> buffer(chunk_size);
-    
+
     size_t samples_read = 0;
-    
+
     while (samples_read < total_samples)
     {
         size_t n = stream.read(buffer.data(), chunk_size);
@@ -3326,9 +3413,40 @@ TEST(audio_stream, wasapi_audio_input_stream)
     wav_stream.close();
 }
 
+TEST(audio_device, stream)
+{
+    audio_device render_device;
+    EXPECT_TRUE(try_get_default_audio_device(render_device, audio_device_type::render));
+
+    for (int i = 0, volume = 0; i < 10; i++, volume += 10)
+    {
+        audio_stream stream = render_device.stream();
+        stream.volume(volume);
+        EXPECT_TRUE(stream.volume() == volume);
+        EXPECT_TRUE(!stream.name().empty());
+        EXPECT_TRUE(stream.channels() > 0);
+        EXPECT_TRUE(stream.sample_rate() > 0);
+        stream.close();
+    }
+
+    audio_device capture_device;
+    EXPECT_TRUE(try_get_default_audio_device(capture_device, audio_device_type::capture));
+
+    for (int i = 0, volume = 0; i < 10; i++, volume += 10)
+    {
+        audio_stream stream = capture_device.stream();
+        stream.volume(volume);
+        EXPECT_TRUE(stream.volume() == volume);
+        EXPECT_TRUE(!stream.name().empty());
+        EXPECT_TRUE(stream.channels() > 0);
+        EXPECT_TRUE(stream.sample_rate() > 0);
+        stream.close();
+    }
+}
+
 #endif // WIN32
 
-#endif // ENABLE_HARDWARE_TESTS_2
+#endif // ENABLE_HARDWARE_TESTS_3
 
 int main(int argc, char** argv)
 {
