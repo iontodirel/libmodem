@@ -63,6 +63,10 @@
 #include <boost/process.hpp>
 #include <gtest/gtest.h>
 
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 #include "external/aprstrack.hpp"
 
 using namespace LIBMODEM_NAMESPACE;
