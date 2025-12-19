@@ -292,6 +292,15 @@ com_init::operator bool() const noexcept
     return initialized_;
 }
 
+static void ensure_com_initialized()
+{
+    static thread_local com_init tls_com_init;
+    if (!tls_com_init)
+    {
+        throw std::runtime_error("COM init failed");
+    }
+}
+
 #endif // WIN32
 
 // **************************************************************** //
@@ -313,7 +322,6 @@ struct audio_device_impl
 
 #if WIN32
     CComPtr<IMMDevice> device_;
-    com_init com_init_;
 #endif // WIN32
 };
 
@@ -323,7 +331,6 @@ audio_device_impl::audio_device_impl(audio_device_impl&& other)
     {
 #if WIN32
         device_.Attach(other.device_.Detach()); // Release old, take new
-        com_init_ = std::move(other.com_init_);
 #endif // WIN32
     }
 }
@@ -334,7 +341,6 @@ audio_device_impl& audio_device_impl::operator=(audio_device_impl&& other)
     {
 #if WIN32
         device_.Attach(other.device_.Detach());  // Release old, take new
-        com_init_ = std::move(other.com_init_);
 #endif // WIN32
     }
     return *this;
@@ -348,6 +354,8 @@ audio_device_impl& audio_device_impl::operator=(audio_device_impl&& other)
 //                                                                  //
 // **************************************************************** //
 
+#if WIN32
+
 struct wasapi_audio_output_stream_impl
 {
     wasapi_audio_output_stream_impl() = default;
@@ -357,37 +365,30 @@ struct wasapi_audio_output_stream_impl
     wasapi_audio_output_stream_impl& operator=(wasapi_audio_output_stream_impl&& other);
     ~wasapi_audio_output_stream_impl() = default;
 
-#if WIN32
     CComPtr<IMMDevice> device_;
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioRenderClient> render_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
-    com_init com_init_;
-#endif // WIN32
 };
 
 wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&& other)
 {
-#if WIN32
     device_.Attach(other.device_.Detach());
     audio_client_.Attach(other.audio_client_.Detach());
     render_client_.Attach(other.render_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-    com_init_ = std::move(other.com_init_);
-#endif // WIN32
 }
 
 wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
 {
-#if WIN32
     device_.Attach(other.device_.Detach());
     audio_client_.Attach(other.audio_client_.Detach());
     render_client_.Attach(other.render_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-    com_init_ = std::move(other.com_init_);
-#endif // WIN32
     return *this;
 }
+
+#endif // WIN32
 
 // **************************************************************** //
 //                                                                  //
@@ -412,7 +413,6 @@ struct wasapi_audio_input_stream_impl
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioCaptureClient> capture_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
-    com_init com_init_;
 };
 
 wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_input_stream_impl&& other)
@@ -421,7 +421,6 @@ wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_inpu
     audio_client_.Attach(other.audio_client_.Detach());
     capture_client_.Attach(other.capture_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-    com_init_ = std::move(other.com_init_);
 }
 
 wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi_audio_input_stream_impl&& other)
@@ -430,7 +429,6 @@ wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi
     audio_client_.Attach(other.audio_client_.Detach());
     capture_client_.Attach(other.capture_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-    com_init_ = std::move(other.com_init_);
     return *this;
 }
 
@@ -454,6 +452,8 @@ audio_device::audio_device(audio_device_impl* impl)
 {
     impl_ = std::make_unique<audio_device_impl>();
     impl_->device_ = impl->device_;
+
+    ensure_com_initialized();
 
     CComPtr<IMMEndpoint> endpoint;
     EDataFlow flow;
@@ -668,11 +668,7 @@ std::vector<audio_device> get_audio_devices()
 #if WIN32
     HRESULT hr;
 
-    com_init com_init_;
-    if (!com_init_)
-    {
-        throw std::runtime_error("COM init failed");
-    }
+    ensure_com_initialized();
 
     CComPtr<IMMDeviceEnumerator> enumerator;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator)))
@@ -770,6 +766,14 @@ std::vector<audio_device> get_audio_devices(audio_device_type type, audio_device
     return filtered_devices;
 }
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_audio_device_by_name                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 bool try_get_audio_device_by_name(const std::string& name, audio_device& device, audio_device_type type, audio_device_state state)
 {
     std::vector<audio_device> devices = get_audio_devices();
@@ -786,6 +790,53 @@ bool try_get_audio_device_by_name(const std::string& name, audio_device& device,
 
     return false;
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_audio_device_by_id                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bool try_get_audio_device_by_id(const std::string& id, audio_device& device)
+{
+    std::vector<audio_device> devices = get_audio_devices();
+
+    auto it = std::find_if(devices.begin(), devices.end(), [&](const audio_device& dev) {
+#if WIN32
+        return dev.id == id;
+#endif // WIN32
+#ifdef __linux__
+        int id_int = std::atoi(id.c_str());
+        return dev.card_id == id_int;
+#endif // __linux__
+        return false;
+    });
+
+    if(it != devices.end())
+    {
+        device = std::move(*it);
+        return true;
+    }
+
+    return false;
+}
+
+#ifdef __linux__
+
+bool try_get_audio_device_by_id(int card_id);
+bool try_get_audio_device_by_id(int card_id, int device_id);
+
+#endif // __linux__
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// try_get_audio_device_by_description                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 bool try_get_audio_device_by_description(const std::string& description, audio_device& device, audio_device_type type, audio_device_state state)
 {
@@ -814,14 +865,15 @@ bool try_get_audio_device_by_description(const std::string& description, audio_d
 
 bool try_get_default_audio_device(audio_device& device)
 {
+    return try_get_default_audio_device(device, audio_device_type::render);
+}
+
+bool try_get_default_audio_device(audio_device& device, audio_device_type type)
+{
 #if WIN32
     HRESULT hr;
 
-    com_init com_init_;
-    if (!com_init_)
-    {
-        throw std::runtime_error("COM init failed");
-    }
+    ensure_com_initialized();
 
     CComPtr<IMMDeviceEnumerator> enumerator = nullptr;
     if (FAILED(hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator)))
@@ -831,7 +883,8 @@ bool try_get_default_audio_device(audio_device& device)
 
     CComPtr<IMMDevice> device_ = nullptr;
 
-    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
+    EDataFlow flow = (type == audio_device_type::render) ? eRender : eCapture;
+    hr = enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device_);
 
     if (FAILED(hr))
     {
@@ -907,6 +960,8 @@ std::string wasapi_audio_output_stream::name()
         throw std::runtime_error("Stream not initialized");
     }
 
+    ensure_com_initialized();
+
     IPropertyStore* props = nullptr;
     PROPVARIANT variant;
 
@@ -940,6 +995,8 @@ void wasapi_audio_output_stream::mute(bool mute)
         throw std::runtime_error("Stream not initialized");
     }
 
+    ensure_com_initialized();
+
     BOOL mute_state = mute ? TRUE : FALSE;
     HRESULT hr = impl_->endpoint_volume_->SetMute(mute_state, nullptr);
     if (FAILED(hr))
@@ -954,6 +1011,8 @@ bool wasapi_audio_output_stream::mute()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     BOOL muted;
     HRESULT hr = impl_->endpoint_volume_->GetMute(&muted);
@@ -970,6 +1029,8 @@ void wasapi_audio_output_stream::volume(int percent)
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     percent = std::clamp(percent, 0, 100);
 
@@ -988,6 +1049,8 @@ int wasapi_audio_output_stream::volume()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     float volume_scalar;
 
@@ -1016,6 +1079,8 @@ size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     HRESULT hr;
 
@@ -1080,6 +1145,8 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
         throw std::runtime_error("Stream not initialized");
     }
 
+    ensure_com_initialized();
+
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
@@ -1118,6 +1185,8 @@ void wasapi_audio_output_stream::start()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     HRESULT hr;
 
@@ -1175,6 +1244,8 @@ void wasapi_audio_output_stream::stop()
 {
     if (impl_ && impl_->audio_client_)
     {
+        ensure_com_initialized();
+
         impl_->audio_client_->Stop();
         impl_->audio_client_ = nullptr;
         impl_->render_client_ = nullptr;
@@ -1246,6 +1317,8 @@ void wasapi_audio_input_stream::start()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     HRESULT hr;
 
@@ -1327,6 +1400,8 @@ std::string wasapi_audio_input_stream::name()
         throw std::runtime_error("Stream not initialized");
     }
 
+    ensure_com_initialized();
+
     IPropertyStore* props = nullptr;
     PROPVARIANT variant;
 
@@ -1360,6 +1435,8 @@ void wasapi_audio_input_stream::mute(bool mute)
         throw std::runtime_error("Stream not initialized");
     }
 
+    ensure_com_initialized();
+
     BOOL mute_state = mute ? TRUE : FALSE;
     HRESULT hr = impl_->endpoint_volume_->SetMute(mute_state, nullptr);
     if (FAILED(hr))
@@ -1374,6 +1451,8 @@ bool wasapi_audio_input_stream::mute()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     BOOL muted;
     HRESULT hr = impl_->endpoint_volume_->GetMute(&muted);
@@ -1390,6 +1469,8 @@ void wasapi_audio_input_stream::volume(int percent)
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     percent = std::clamp(percent, 0, 100);
 
@@ -1408,6 +1489,8 @@ int wasapi_audio_input_stream::volume()
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     float volume_scalar;
 
@@ -1443,6 +1526,8 @@ size_t wasapi_audio_input_stream::read(double* samples, size_t count)
     {
         throw std::runtime_error("Stream not initialized");
     }
+
+    ensure_com_initialized();
 
     if (samples == nullptr || count == 0)
     {

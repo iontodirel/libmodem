@@ -198,13 +198,12 @@ friend std::vector<audio_device> get_audio_devices();
     std::string container_id;
 #endif // WIN32
 
-private:
-
 #if __linux__
     int card_id;
     int device_id;
 #endif // __linux__
 
+private:
     std::unique_ptr<audio_device_impl> impl_;
 };
 
@@ -232,6 +231,23 @@ bool try_get_audio_device_by_name(const std::string& name, audio_device& device,
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// try_get_audio_device_by_id                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bool try_get_audio_device_by_id(const std::string& id, audio_device& device);
+
+#ifdef __linux__
+
+bool try_get_audio_device_by_id(int card_id);
+bool try_get_audio_device_by_id(int card_id, int device_id);
+
+#endif // __linux__
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // try_get_audio_device_by_description                              //
 //                                                                  //
 //                                                                  //
@@ -248,6 +264,7 @@ bool try_get_audio_device_by_description(const std::string& description, audio_d
 // **************************************************************** //
 
 bool try_get_default_audio_device(audio_device& device);
+bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 
 // **************************************************************** //
 //                                                                  //
