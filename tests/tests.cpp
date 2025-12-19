@@ -3230,8 +3230,6 @@ TEST(audio_stream, wasapi_audio_output_stream)
 
 #endif // ENABLE_HARDWARE_TESTS_2
 
-#define ENABLE_HARDWARE_TESTS_3
-
 #ifdef ENABLE_HARDWARE_TESTS_3
 
 #if WIN32
@@ -3423,10 +3421,6 @@ TEST(audio_stream, wasapi_audio_output_stream_loopback_modem_transmit_1200) // g
         std::unique_lock<std::mutex> lock(capture_mutex);
         capture_cv.wait(lock, [&] { return capture_stopped; });
     }
-
-    printf("Loopback capture complete, saved to loopback_capture.wav\n");
-
-
 }
 
 TEST(audio_stream, capture_5s_stream)
