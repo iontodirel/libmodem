@@ -257,23 +257,23 @@ LIBMODEM_AX25_NAMESPACE_END
 
 std::vector<uint8_t> basic_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
-    LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_AX25_USING_NAMESPACE
 
-        return encode_basic_bitstream(p, preamble_flags, postamble_flags);
+    return encode_basic_bitstream(p, preamble_flags, postamble_flags);
 }
 
 bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
-    LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_AX25_USING_NAMESPACE
 
-        return try_decode_basic_bitstream(bitstream, offset, p, read, state);
+    return try_decode_basic_bitstream(bitstream, offset, p, read, state);
 }
 
 bool basic_bitstream_converter::try_decode(uint8_t bit, packet_type& p)
 {
-    LIBMODEM_AX25_USING_NAMESPACE
+LIBMODEM_AX25_USING_NAMESPACE
 
-        return try_decode_basic_bitstream(bit, p, state);
+    return try_decode_basic_bitstream(bit, p, state);
 }
 
 void basic_bitstream_converter::reset()
@@ -291,14 +291,14 @@ void basic_bitstream_converter::reset()
 
 std::vector<uint8_t> fx25_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
 {
-    LIBMODEM_FX25_USING_NAMESPACE
+LIBMODEM_FX25_USING_NAMESPACE
 
-        return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
+    return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
 }
 
 bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
 {
-    LIBMODEM_FX25_USING_NAMESPACE
+LIBMODEM_FX25_USING_NAMESPACE
 
     (void)bitstream;
     (void)offset;
