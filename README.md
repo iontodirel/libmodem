@@ -24,35 +24,37 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
 
 ### Features
 - Modulator
-  - Support for both AFSK and FSK modulation
-  - Support all bauds: 300, 1200, 2400, and 9600 bps
+  - Support for AFSK and FSK modulation
+  - Supported baud rates: 300, 1200, 2400, and 9600
   - Coherent modulation
-  - Modulator interface for swappable modulators and extensibility
-- Audio interface support for WASAPI, ALSA, and Core Audio
+  - Modulator interface enables swappable modulators and extensibility
+- Audio interface
+  - Support for WASAPI, ALSA, and Core Audio
   - Sound over TCP/IP is supported for both capture/render with separate audio and control ports
     - Control port can be used to control the volume over a TCP interface 
-  - WAV input and output streams for repeatable testing and offline analysis
+  - WAV file input and output streams
   - Null and synthetic audio sources for demos, validation, and stress testing
   - Modem can automatically control volume level
-  - New audio stream interfaces can easily be integrated into the modem
+  - Extensibility allows for seamless integration of new audio interfaces into the modem
 - PTT
   - Serial PTT via RTS or DTR with configurable polarity
   - GPIO PTT support with configurable pin numbering and optional pre and post delays on Raspberry Pi platforms
   - External plugin library PTT interface for custom keying hardware
     - Enables hamlib or PTT control over CAT
   - TCP PTT control
-- Bitstream
+- Formatting
   - Supports AX.25 and FX.25 encoding and decoding
-- Pluggable pipeline design where bitstream encoders, audio interfaces, modulators, and demodulators can be swapped independently
-- Data stream support for multiple concurrent interfaces
-  - Multi client TCP servers with arbitrary number of clients
-  - Serial interface
-  - stdin and stdout data streams
-  - Rotating log streams and rotating JSON file streams with size and flush policies
-  - External dynamic library data stream interface for custom integrations
-- Multiple selectable data formats per stream
-  - KISS, TNC2 text, APRS text, APRS JSON, AX.25 hex, AX.25 binary, raw bitstream, telemetry streams
-  - Telemetry augmented variants for supported formats
+- Pipeline
+  - Pluggable pipeline design where bitstream encoders, audio interfaces, modulators, and demodulators can be swapped independently
+  - Data stream support for multiple concurrent interfaces
+    - Multi client TCP servers with arbitrary number of clients
+    - Serial interface
+    - stdin and stdout data streams
+    - Rotating log streams and rotating JSON file streams with size and flush policies
+    - External dynamic library data stream interface for custom integrations
+  - Multiple selectable data formats per stream
+    - KISS, TNC2 text, APRS text, APRS JSON, AX.25 hex, AX.25 binary, raw bitstream, telemetry streams
+    - Telemetry augmented variants for supported formats
 - Configurable from a single JSON configuration file
   - JSON file support comments, and inheritance of configurations
 - Cross platform support with native Windows, Linux, and macOS builds
