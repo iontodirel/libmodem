@@ -3101,11 +3101,12 @@ TEST(modem, transmit_hardware_demo)
 }
 
 #endif // ENABLE_HARDWARE_TESTS_1
+
 #ifdef ENABLE_HARDWARE_TESTS_2
 
 #if WIN32
 
-TEST(audio_device, audio_device)
+TEST(audio_device, try_get_default_audio_device)
 {
     for (int i = 0; i < 100; ++i)
     {
@@ -3130,6 +3131,52 @@ TEST(audio_device, audio_device)
         EXPECT_TRUE(capture_device.state == audio_device_state::active);
     }
 }
+
+#endif // WIN32
+
+#ifdef __linux__
+
+TEST(audio_device, audio_device)
+{
+    for (int i = 0; i < 100; ++i)
+    {
+        audio_device render_device;
+
+        std::vector<audio_device> render_devices = get_audio_devices(audio_device_type::render, audio_device_state::active);
+
+        EXPECT_TRUE(render_devices.size() > 0);
+
+        render_device = std::move(render_devices[0]);
+
+        EXPECT_TRUE(!render_device.id.empty());
+        EXPECT_TRUE(!render_device.name.empty());
+        EXPECT_TRUE(!render_device.description.empty());
+        EXPECT_TRUE(render_device.card_id >= 0);
+        EXPECT_TRUE(render_device.device_id >= 0);
+        EXPECT_TRUE(render_device.type == audio_device_type::render);
+        EXPECT_TRUE(render_device.state == audio_device_state::active);
+
+        audio_device capture_device;
+
+        std::vector<audio_device> capture_devices = get_audio_devices(audio_device_type::capture, audio_device_state::active);
+
+        EXPECT_TRUE(capture_devices.size() > 0);
+
+        capture_device = std::move(capture_devices[0]);
+
+        EXPECT_TRUE(!capture_device.id.empty());
+        EXPECT_TRUE(!capture_device.name.empty());
+        EXPECT_TRUE(!capture_device.description.empty());
+        EXPECT_TRUE(capture_device.card_id >= 0);
+        EXPECT_TRUE(capture_device.device_id >= 0);
+        EXPECT_TRUE(capture_device.type == audio_device_type::capture);
+        EXPECT_TRUE(capture_device.state == audio_device_state::active);
+    }
+}
+
+#endif // __linux__
+
+#if WIN32
 
 TEST(audio_stream, wasapi_audio_input_stream)
 {

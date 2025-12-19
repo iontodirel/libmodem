@@ -825,8 +825,39 @@ bool try_get_audio_device_by_id(const std::string& id, audio_device& device)
 
 #ifdef __linux__
 
-bool try_get_audio_device_by_id(int card_id);
-bool try_get_audio_device_by_id(int card_id, int device_id);
+bool try_get_audio_device_by_id(int card_id, audio_device& device)
+{
+    std::vector<audio_device> devices = get_audio_devices();
+
+    auto it = std::find_if(devices.begin(), devices.end(), [&](const audio_device& dev) {
+        return dev.card_id == card_id;
+    });
+
+    if(it != devices.end())
+    {
+        device = std::move(*it);
+        return true;
+    }
+
+    return false;
+}
+
+bool try_get_audio_device_by_id(int card_id, int device_id, audio_device& device)
+{
+    std::vector<audio_device> devices = get_audio_devices();
+
+    auto it = std::find_if(devices.begin(), devices.end(), [&](const audio_device& dev) {
+        return dev.card_id == card_id && dev.device_id == device_id;
+    });
+
+    if(it != devices.end())
+    {
+        device = std::move(*it);
+        return true;
+    }
+
+    return false;
+}
 
 #endif // __linux__
 
@@ -898,6 +929,9 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type)
 
     return true;
 #endif // WIN32
+
+    // Linux does not support default devices.
+    // While certain distros might store a default, it is not generally standardized.
 
     return false;
 }
