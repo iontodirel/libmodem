@@ -569,14 +569,7 @@ std::vector<uint8_t> encode_header(const address& from, const address& to, const
 std::vector<uint8_t> encode_addresses(const std::vector<address>& path)
 {
     std::vector<uint8_t> result;
-
-    for (size_t i = 0; i < path.size(); i++)
-    {
-        bool last = (i == path.size() - 1);
-        std::array<uint8_t, 7> addr_bytes = encode_address(path[i], last);
-        result.insert(result.end(), addr_bytes.begin(), addr_bytes.end());
-    }
-
+    encode_addresses(path, std::back_inserter(result));
     return result;
 }
 
