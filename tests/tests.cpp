@@ -2440,7 +2440,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         outfile.write(packet_str.data(), packet_str.size());
         outfile.put('\n');
-}
+    }
 }
 
 TEST(bitstream, try_decode_basic_bitstream_demo)
@@ -2948,9 +2948,6 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
         fx25_bitstream_converter bitstream_converter;
 
         std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 45, 30);
-
-        // 728
-
 
         // Introduce some bit errors into the FX.25 bitstream
         for (size_t i = 400; i <= 500; i += 10)
@@ -3739,6 +3736,88 @@ TEST(audio_device, stream)
 #endif // WIN32
 
 #endif // ENABLE_HARDWARE_TESTS_3
+
+TEST(audio_stream, wav_audio_input_stream_end_to_end)
+{
+    // Modulate a packet to a wav file
+    // Open it using a wav_audio_input_stream
+    // Write back to a wav file and demodulate with Direwolf
+
+APRS_TRACK_NAMESPACE_USE
+APRS_TRACK_DETAIL_NAMESPACE_USE
+
+    // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
+    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+
+    EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
+
+    aprs::router::packet packet = packet_string;
+
+    {
+        wav_audio_output_stream wav_stream("test.wav", 48000);
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
+        basic_bitstream_converter_adapter bitstream_converter;
+
+        modem m;
+        m.baud_rate(1200);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.start_silence(0.1);
+        m.end_silence(0.1);
+        m.gain(0.3);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(packet);
+
+        wav_stream.close();
+
+    }
+
+    {
+        wav_audio_input_stream wav_input_stream("test.wav");
+        wav_audio_output_stream wav_output_stream("test2.wav", 48000);
+
+        EXPECT_TRUE(wav_input_stream.sample_rate() == 48000);
+        EXPECT_TRUE(wav_input_stream.channels() == 1);
+
+        std::vector<double> audio_buffer;
+        while (true)
+        {
+            std::vector<double> buffer(1024);
+            size_t n = wav_input_stream.read(buffer.data(), buffer.size());
+            if (n == 0)
+            {
+                break;
+            }
+            audio_buffer.insert(audio_buffer.end(), buffer.begin(), buffer.begin() + n);
+        }
+
+        size_t offset = 0;
+        size_t chunk_size = 1024; // Deliberately use a smaller chunk size for testing purposes
+        while (offset < audio_buffer.size())
+        {
+            size_t size = (std::min)(chunk_size, audio_buffer.size() - offset);
+            size_t n = wav_output_stream.write(audio_buffer.data() + offset, size);
+            if (n == 0)
+            {
+                break;
+            }
+            offset += n;
+        }
+
+        wav_input_stream.close();
+        wav_output_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 1200 -d x
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test2.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+}
 
 int main(int argc, char** argv)
 {

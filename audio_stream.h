@@ -79,6 +79,7 @@ struct audio_stream_base
     virtual int channels() = 0;
 
     virtual size_t write(const double* samples, size_t count) = 0;
+    virtual size_t write_interleaved(const double* samples, size_t count) = 0;
     virtual size_t read(double* samples, size_t count) = 0;
 
     virtual bool wait_write_completed(int timeout_ms) = 0;
@@ -114,6 +115,7 @@ public:
     int channels();
 
     size_t write(const double* samples, size_t count);
+    size_t write_interleaved(const double* samples, size_t count);
     size_t read(double* samples, size_t count);
 
     bool wait_write_completed(int timeout_ms);
@@ -300,6 +302,7 @@ struct wasapi_audio_output_stream : public audio_stream_base
     int sample_rate() override;
     int channels() override;
     size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 
@@ -350,6 +353,7 @@ struct wasapi_audio_input_stream : public audio_stream_base
     int sample_rate() override;
     int channels() override;
     size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 
@@ -396,6 +400,7 @@ struct alsa_audio_stream : public audio_stream_base
     int sample_rate() override;
     int channels() override;
     size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 
@@ -431,6 +436,10 @@ struct wav_audio_input_stream : audio_stream_base
 {
 public:
     wav_audio_input_stream(const std::string& filename);
+    wav_audio_input_stream(const wav_audio_input_stream&) = delete;
+    wav_audio_input_stream& operator=(const wav_audio_input_stream&) = delete;
+    wav_audio_input_stream(wav_audio_input_stream&&) noexcept;
+    wav_audio_input_stream& operator=(wav_audio_input_stream&&) noexcept;
     virtual ~wav_audio_input_stream();
 
     std::string name();
@@ -440,6 +449,7 @@ public:
     int sample_rate() override;
     int channels() override;
     size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 
@@ -467,6 +477,10 @@ struct wav_audio_output_stream : audio_stream_base
 {
 public:
     wav_audio_output_stream(const std::string& filename, int sample_rate = 48000);
+    wav_audio_output_stream(const wav_audio_output_stream&) = delete;
+    wav_audio_output_stream& operator=(const wav_audio_output_stream&) = delete;
+    wav_audio_output_stream(wav_audio_output_stream&&) noexcept;
+    wav_audio_output_stream& operator=(wav_audio_output_stream&&) noexcept;
     virtual ~wav_audio_output_stream();
 
     std::string name();
@@ -476,6 +490,7 @@ public:
     int sample_rate() override;
     int channels() override;
     size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 

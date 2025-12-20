@@ -203,6 +203,15 @@ size_t audio_stream::write(const double* samples, size_t count)
     return stream_->write(samples, count);
 }
 
+size_t audio_stream::write_interleaved(const double* samples, size_t count)
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->write_interleaved(samples, count);
+}
+
 size_t audio_stream::read(double* samples, size_t count)
 {
     if (!stream_)
@@ -1164,6 +1173,11 @@ size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
     return samples_written;
 }
 
+size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size_t count)
+{
+    return 0;
+}
+
 size_t wasapi_audio_output_stream::read(double* samples, size_t count)
 {
     // Not implemented for output stream
@@ -1548,6 +1562,13 @@ int wasapi_audio_input_stream::channels()
 }
 
 size_t wasapi_audio_input_stream::write(const double* samples, size_t count)
+{
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
+size_t wasapi_audio_input_stream::write_interleaved(const double* samples, size_t count)
 {
     (void)samples;
     (void)count;
@@ -2154,6 +2175,11 @@ size_t alsa_audio_stream::write(const double* samples, size_t frames)
     return total_written;
 }
 
+size_t alsa_audio_stream::write_interleaved(const double* samples, size_t count)
+{
+    return 0;
+}
+
 bool alsa_audio_stream::wait_write_completed(int timeout_ms)
 {
     if (pcm_handle_)
@@ -2202,6 +2228,14 @@ int alsa_audio_stream::channels()
 
 #endif // __linux__
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wav_audio_impl                                                   //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 struct wav_audio_impl
 {
     SNDFILE* sf_file_ = nullptr;
@@ -2230,6 +2264,23 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
     // When reading, use the file's actual sample rate
     sample_rate_ = sfinfo.samplerate;
     channels_ = sfinfo.channels;
+}
+
+wav_audio_input_stream::wav_audio_input_stream(wav_audio_input_stream&& other) noexcept
+{
+    impl_ = std::move(other.impl_);
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
+    filename_ = std::move(other.filename_);
+}
+
+wav_audio_input_stream& wav_audio_input_stream::operator=(wav_audio_input_stream&& other) noexcept
+{
+    impl_ = std::move(other.impl_);
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
+    filename_ = std::move(other.filename_);
+    return *this;
 }
 
 wav_audio_input_stream::~wav_audio_input_stream()
@@ -2271,6 +2322,13 @@ size_t wav_audio_input_stream::write(const double* samples, size_t count)
     return 0;
 }
 
+size_t wav_audio_input_stream::write_interleaved(const double* samples, size_t count)
+{
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
 bool wav_audio_input_stream::wait_write_completed(int timeout_ms)
 {
     (void)timeout_ms;
@@ -2289,23 +2347,21 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
         throw std::runtime_error("Only mono WAV files are supported for reading");
     }
 
-    size_t total_read = 0;
-    while (total_read < count)
+    sf_count_t total = 0;
+    sf_count_t needed = static_cast<sf_count_t>(count);
+
+    while (total < needed)
     {
-        std::vector<int16_t> buffer(count);
-        int read_count = sf_read_short(impl_->sf_file_, buffer.data(), count);
-        if (read_count == 0)
+        sf_count_t remaining = needed - total;
+        sf_count_t n = sf_read_double(impl_->sf_file_, samples + total, remaining);
+        if (n <= 0)
         {
-            break;
+            break; // EOF or error
         }
-        for (size_t i = 0; i < read_count; i++)
-        {
-            double val = buffer[i] / 32767.0;
-            samples[total_read++] = val;
-        }
+        total += n;
     }
 
-    return total_read;
+    return static_cast<size_t>(total);
 }
 
 void wav_audio_input_stream::flush()
@@ -2347,6 +2403,21 @@ wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, in
     }
 }
 
+wav_audio_output_stream::wav_audio_output_stream(wav_audio_output_stream&& other) noexcept
+{
+    impl_ = std::move(other.impl_);
+    sample_rate_ = other.sample_rate_;
+    filename_ = std::move(other.filename_);
+}
+
+wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_output_stream&& other) noexcept
+{
+    impl_ = std::move(other.impl_);
+    sample_rate_ = other.sample_rate_;
+    filename_ = std::move(other.filename_);
+    return *this;
+}
+
 wav_audio_output_stream::~wav_audio_output_stream()
 {
     if (impl_)
@@ -2368,6 +2439,7 @@ void wav_audio_output_stream::volume(int percent)
 
 int wav_audio_output_stream::volume()
 {
+    // Always 100% for this implementation
     return 100;
 }
 
@@ -2378,23 +2450,37 @@ int wav_audio_output_stream::sample_rate()
 
 int wav_audio_output_stream::channels()
 {
+    // Always 1 channel for this implementation
+    // The value of channels_ is set in the class declaration
     return channels_;
 }
 
 size_t wav_audio_output_stream::write(const double* samples, size_t count)
 {
-    if (!impl_)
+    if (!impl_ || impl_->sf_file_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
 
-    for (size_t i = 0; i < count; i++)
+    if (channels_ != 1)
     {
-        int16_t pcm = static_cast<int16_t>(samples[i] * 32767.0);
-        sf_writef_short(impl_->sf_file_, &pcm, 1);
+        throw std::runtime_error("Only mono WAV files are supported for writing");
     }
 
-    return count;
+    sf_count_t written = sf_write_double(impl_->sf_file_, samples, static_cast<sf_count_t>(count));
+    if (written < 0)
+    {
+        throw std::runtime_error(std::string("Failed to write WAV: ") + sf_strerror(impl_->sf_file_));
+    }
+
+    return static_cast<size_t>(written);
+}
+
+size_t wav_audio_output_stream::write_interleaved(const double* samples, size_t count)
+{
+    (void)samples;
+    (void)count;
+    return 0;
 }
 
 bool wav_audio_output_stream::wait_write_completed(int timeout_ms)
