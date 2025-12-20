@@ -991,6 +991,31 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
     }
+
+    {
+        // N0CALL-10>APZ001:Hello, APRS!
+        // The Source address does not have the last address bit set
+        // And there are no path addresses
+
+        std::vector<uint8_t> frame = {
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10 (last addr, end bit set NOT SET)
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x84, 0xAE
+        };
+
+        aprs::router::packet p;
+
+        EXPECT_TRUE(try_decode_frame(frame, p));
+
+        EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001:Hello, APRS!");
+    }
 }
 
 TEST(fx25, encode_fx25_frame_iterator)

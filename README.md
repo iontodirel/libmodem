@@ -29,7 +29,7 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
   - Coherent modulation
   - Modulator interface enables swappable modulators and extensibility
 - Audio interface
-  - Support for WASAPI, ALSA, and Core Audio
+  - Support for native Windows, Linux and OSX audio: WASAPI, ALSA, and Core Audio
   - Sound over TCP/IP is supported for both capture/render with separate audio and control ports
     - Control port can be used to control the volume over a TCP interface 
   - WAV file input and output streams

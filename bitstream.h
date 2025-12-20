@@ -950,6 +950,7 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
 
     crc = received_crc;
 
+    // Check CRC validity
     if (computed_crc != received_crc)
     {
         return false;
@@ -965,21 +966,37 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
     size_t addresses_start = 14;
     size_t addresses_end_position = addresses_start;
 
-    // Find the end of the addresses list by looking for the last address with extension bit set
-    // If there are no addresses, the source address is expected to be marked as last (extension bit set)
-    if (!(*(frame_it_first + 13) & 0x01))
+    bool found_last_address = false;
+
+    // Check if there are no path addresses (i.e., the source address is the last address)
+    if (*(frame_it_first + 13) & 0x01)
     {
-        // Start from the source address
-        // And loop through each address (7 bytes each)
-        for (size_t i = 14; i + 7 <= frame_size - 2; i += 7)
+        found_last_address = true;
+    }
+
+    // Parse path addresses until we find the last address
+    // Each address is 7 bytes long
+    // The last address is indicated by the extension bit (bit 0 of byte 6) being set
+    // or by the Control Field indicating a U-frame or S-frame
+    for (size_t i = addresses_start; !found_last_address && i + 7 <= frame_size - 2; i += 7)
+    {
+        // First check if this looks like a Control Field (U-frame or S-frame)
+        if ((*(frame_it_first + i) & 0x03) == 0x03 || (*(frame_it_first + i) & 0x03) == 0x01)
         {
-            // Check if the extension bit (bit 0 of byte 6) is set
-            if (*(frame_it_first + i + 6) & 0x01)
-            {
-                addresses_end_position = i + 7;
-                break;
-            }
+            addresses_end_position = i;
+            found_last_address = true;
         }
+        // Otherwise check if the extension bit (bit 0 of byte 6) is set
+        else if (*(frame_it_first + i + 6) & 0x01)
+        {
+            addresses_end_position = i + 7;
+            found_last_address = true;
+        }
+    }
+
+    if (!found_last_address)
+    {
+        return false;
     }
 
     size_t addresses_length = addresses_end_position - addresses_start;
@@ -990,7 +1007,14 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
         return false;
     }
 
-    parse_addresses({ reinterpret_cast<const char*>(&(*(frame_it_first + addresses_start))), addresses_length }, path);
+    if (addresses_length > 0)
+    {
+        parse_addresses({ reinterpret_cast<const char*>(&(*(frame_it_first + addresses_start))), addresses_length }, path);
+    }
+    else
+    {
+        path.clear();
+    }
 
     size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
 
