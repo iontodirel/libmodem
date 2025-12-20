@@ -710,6 +710,9 @@ std::vector<uint8_t> encode_frame(const struct frame& frame);
 template <typename InputIt>
 std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last);
 
+template <typename PathInputIt, typename DataInputIt, typename BidirIt>
+BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out);
+
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
@@ -730,10 +733,16 @@ std::vector<uint8_t> encode_header(const address& from, const address& to, const
 template<typename OutputIt>
 OutputIt encode_header(const address& from, const address& to, const std::vector<address>& path, OutputIt out);
 
+template<typename InputIt, typename OutputIt>
+OutputIt encode_header(const address& from, const address& to, InputIt path_first_it, InputIt path_last_it, OutputIt out);
+
 std::vector<uint8_t> encode_addresses(const std::vector<address>& path);
 
 template<typename OutputIt>
 OutputIt encode_addresses(const std::vector<address>& path, OutputIt out);
+
+template<typename InputIt, typename OutputIt>
+OutputIt encode_addresses(InputIt path_first_it, InputIt path_last_it, OutputIt out);
 
 std::array<uint8_t, 7> encode_address(const struct address& address, bool last);
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last);
@@ -792,41 +801,8 @@ LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first, Input
 template <typename InputIt>
 LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, std::string& address_text, int& ssid, bool& mark)
 {
-
-    // Parse an AX.25 address
-    //
-    // AX.25 addresses are always exactly 7 bytes:
-    // 
-    //  - Bytes 0-5: Callsign (6 characters, space-padded)
-    //    - Each character is left-shifted by 1 bit
-    //  - Byte 6
-    //    - Bits 1-4: SSID
-    //    - Bit 0: Last address marker
-    //    - Bit 7: H-bit (used/marked)
-
-    char address_buffer[7] = { '\0' }; // addresses are 6 characters long
-
-    for (size_t i = 0; i < 6; i++)
-    {
-        if (first == last)
-        {
-            return false; // Fewer than 6 bytes
-        }
-        address_buffer[i] = static_cast<uint8_t>(*first++) >> 1; // data is organized in 7 bits
-    }
-
-    if (first == last)
-    {
-        return false; // Missing byte 7
-    }
-
-    ssid = (static_cast<uint8_t>(*first) >> 1) & 0b00001111; // 0xF masks for bits 1-4
-
-    mark = (static_cast<uint8_t>(*first) & 0b10000000) != 0; // 0x80 masks for the H bit in the last byte
-
-    address_text = trim(address_buffer);
-
-    return true;
+    auto [_, result] = try_parse_address(first, last, std::back_inserter(address_text), ssid, mark);
+    return result;
 }
 
 template <typename InputIt>
@@ -886,6 +862,39 @@ LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const add
     frame.insert(frame.end(), crc.begin(), crc.end());
 
     return frame;
+}
+
+template <typename PathInputIt, typename DataInputIt, typename BidirIt>
+LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out)
+{
+    // Encodes an AX.25 frame
+    //
+    //  - Build header (from, to, path)
+    //  - Add control and PID fields, typically 0x03 0xF0
+    //  - Append payload
+    //  - Compute 16 bits CRC and append at the end
+
+    BidirIt frame_start = out;
+    BidirIt frame_end;
+
+    // Encoding header
+    out = encode_header(from, to, path_first_it, path_last_it, out);
+
+    // Control: UI frame, PID: No layer 3 protocol
+    std::array<uint8_t, 2> control_pid = { static_cast<uint8_t>(0x03), static_cast<uint8_t>(0xF0) };
+    out = std::copy(control_pid.begin(), control_pid.end(), out);
+
+    // Append payload
+    out = std::copy(data_it_first, data_it_last, out);
+
+    frame_end = out;
+
+    // Compute 16 bits CRC
+    // Append CRC at the end of the frame
+    std::array<uint8_t, 2> crc = compute_crc(frame_start, frame_end);
+    out = std::copy(crc.begin(), crc.end(), out);
+
+    return out;
 }
 
 template<class InputIt>
@@ -1014,17 +1023,25 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
 template<typename OutputIt>
 LIBMODEM_INLINE OutputIt encode_header(const address& from, const address& to, const std::vector<address>& path, OutputIt out)
 {
+    return encode_header(from, to, path.begin(), path.end(), out);
+}
+
+template<typename InputIt, typename OutputIt>
+LIBMODEM_INLINE OutputIt encode_header(const address& from, const address& to, InputIt path_first_it, InputIt path_last_it, OutputIt out)
+{
     auto to_bytes = encode_address(to, false);
 
     out = std::copy(to_bytes.begin(), to_bytes.end(), out);
 
+    size_t path_size = std::distance(path_first_it, path_last_it);
+
     // If there is no path, the from address is the last address
     // and should be marked as such
-    auto from_bytes = encode_address(from, path.empty());
+    auto from_bytes = encode_address(from, (path_size == 0));
 
     out = std::copy(from_bytes.begin(), from_bytes.end(), out);
 
-    return encode_addresses(path, out);
+    return encode_addresses(path_first_it, path_last_it, out);
 }
 
 template<typename OutputIt>
@@ -1034,6 +1051,24 @@ LIBMODEM_INLINE OutputIt encode_addresses(const std::vector<address>& path, Outp
     {
         bool last = (i == path.size() - 1);
         std::array<uint8_t, 7> address_bytes = encode_address(path[i], last);
+        out = std::copy(address_bytes.begin(), address_bytes.end(), out);
+    }
+    return out;
+}
+
+template<typename InputIt, typename OutputIt>
+LIBMODEM_INLINE OutputIt encode_addresses(InputIt path_first_it, InputIt path_last_it, OutputIt out)
+{
+    if (path_first_it == path_last_it)
+    {
+        return out;
+    }
+
+    for (auto it = path_first_it; it != path_last_it; ++it)
+    {
+        auto next = std::next(it);
+        bool last = (next == path_last_it);
+        std::array<uint8_t, 7> address_bytes = encode_address(*it, last);
         out = std::copy(address_bytes.begin(), address_bytes.end(), out);
     }
     return out;
