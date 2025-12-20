@@ -375,33 +375,41 @@ void direwolf_output_to_packets(const std::string& direwolf_output_filename, std
             {
                 std::string packet_string = line.substr(bracket_end + 2);
 
+#if 0
                 // Replace hex markers with readable names
                 size_t p;
                 while ((p = packet_string.find("<0x0d>")) != std::string::npos)
                     packet_string.replace(p, 6, "<CR>");
                 while ((p = packet_string.find("<0x0a>")) != std::string::npos)
                     packet_string.replace(p, 6, "<LF>");
-                while ((p = packet_string.find("<0x1c>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x1C));
-                while ((p = packet_string.find("<0x1d>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x1D));
-                while ((p = packet_string.find("<0x7f>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x7F));
-                while ((p = packet_string.find("<0x1f>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x1F));
-                while ((p = packet_string.find("<0x1e>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x1E));
-                while ((p = packet_string.find("<0x20>")) != std::string::npos)
-                    packet_string.replace(p, 6, 1, static_cast<char>(0x20));
+
+                std::vector<std::pair<std::string, char>> control_chars = { {"<0x1c>", 0x1C}, {"<0x1d>", 0x1D}, {"<0x7f>", 0x7F}, {"<0x1f>", 0x1F}, {"<0x1e>", 0x1E}, {"<0x20>", 0x20} };
+                for (const auto& [marker, ch] : control_chars)
+                {
+                    while ((p = packet_string.find(marker)) != std::string::npos)
+                    {
+                        packet_string.replace(p, 6, 1, ch);
+                    }
+                }
+#endif
 
                 if (!packet_string.empty())
                 {
                     aprs::router::packet p(packet_string);
-                    p.path.clear();
                     packets.push_back(p);
                 }
             }
         }
+    }
+}
+
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets_string)
+{
+    std::vector<aprs::router::packet> packets;
+    direwolf_output_to_packets(direwolf_output_filename, packets);
+    for (const auto& packet : packets)
+    {
+        packets_string.push_back(aprs::router::to_string(packet));
     }
 }
 
@@ -2292,7 +2300,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::ifstream file("bitstream_1.txt");
     if (!file.is_open())
     {
-        FAIL() << "Failed to open bitstream.txt";
+        FAIL() << "Failed to open bitstream_1.txt";
     }
 
     std::vector<uint8_t> bitstream;
@@ -2342,6 +2350,97 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(packets.size() == 1005);
     }
+
+    {
+        std::ifstream file("packets_1d.txt");
+        if (!file.is_open())
+        {
+            FAIL() << "Failed to open packets_1d.txt";
+        }
+
+        std::vector<std::string> actual_packets;
+        std::vector<std::string> expected_packets;
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            expected_packets.push_back(line);
+        }
+
+        bitstream_state state;
+
+        for (uint8_t bit : bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, state))
+            {
+                packet = to_packet(state.frame);
+                std::string packet_str = to_string(packet); // packet to string
+                packet_str = replace_crlf(packet_str); // replace newlines for printing
+                actual_packets.push_back(packet_str);
+            }
+        }
+
+        EXPECT_TRUE(actual_packets.size() == expected_packets.size());
+
+        for (size_t i = 0; i < (std::min)(actual_packets.size(), expected_packets.size()); i++)
+        {
+            if (actual_packets[i] != expected_packets[i])
+            {
+                fmt::println("Packet {} does not match:", i);
+                fmt::println("Actual:   {}", actual_packets[i]);
+                fmt::println("Expected: {}", expected_packets[i]);
+            }
+        }
+
+        EXPECT_TRUE(actual_packets == expected_packets);
+    }
+}
+
+TEST(bitstream, save_to_file_demo)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream_1.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    std::vector<std::string> packets;
+
+    bitstream_state state;
+
+    for (uint8_t bit : bitstream)
+    {
+        if (try_decode_basic_bitstream(bit, state))
+        {
+            aprs::router::packet packet = to_packet(state.frame);
+            std::string packet_str = to_string(packet); // packet to string
+            packet_str = replace_crlf(packet_str); // replace newlines for printing
+            packets.push_back(packet_str);
+        }
+    }
+
+    std::ofstream outfile("packets_1d.txt");
+    if (!outfile.is_open())
+    {
+        FAIL() << "Failed to open packets_1d.txt for writing";
+    }
+
+    for (const auto& packet_str : packets)
+    {
+        outfile.write(packet_str.data(), packet_str.size());
+        outfile.put('\n');
+}
 }
 
 TEST(bitstream, try_decode_basic_bitstream_demo)

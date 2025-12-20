@@ -81,7 +81,7 @@ FetchContent_MakeAvailable(sndfile)
 FetchContent_Declare(
   libcorrect
   GIT_REPOSITORY https://github.com/quiet/libcorrect.git
-  GIT_TAG        master
+  GIT_TAG        f5a28c7
   GIT_SHALLOW    TRUE
 )
 
@@ -151,6 +151,10 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+# We use Direwolf's atest utility for demodulator testing
+# On Windows, we download a precompiled package
+# On other platforms, we expect atest to be installed
+# For Ubuntu systems, use the install_dependencies.sh script
 if(WIN32)
     FetchContent_Declare(
         direwolf
@@ -209,7 +213,7 @@ if(MSVC)
 endif()
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET tests PROPERTY CXX_STANDARD 20)
+  set_property(TARGET tests PROPERTY CXX_STANDARD 20)   
 endif()
 
 include(GoogleTest)
@@ -217,4 +221,5 @@ include(GoogleTest)
 gtest_discover_tests(tests)
 
 configure_file(${CMAKE_SOURCE_DIR}/test_assets/bitstream_1.txt ${CMAKE_BINARY_DIR}/bitstream_1.txt COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/test_assets/packets_1d.txt ${CMAKE_BINARY_DIR}/packets_1d.txt COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/fft.py ${CMAKE_BINARY_DIR}/fft.py COPYONLY)

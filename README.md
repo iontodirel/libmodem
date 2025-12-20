@@ -60,9 +60,17 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
 - Cross platform support with native Windows, Linux, and macOS builds
 
 ### Goals
-- Modular library first design for experimenting with AFSK and FSK modulation and demodulation and for building and evaluating new demodulators
-- Clarity and simplicity even at the cost of some code duplication
+- Modular library-first design for experimenting with AFSK and FSK modulation and demodulation and for building and evaluating new demodulators
+- Readability, reuse and simplicity even at the cost of some code duplication
 - Core building blocks for a complete software modem, including AX.25 and FX.25 bitstream encode and decode
 - Full testability with test suite with 50 plus tests, including FFT based frequency checks and Direwolf and WA8LMF test vector based validation
 - Complete end to end reference modem implementation with support for 300, 1200, 2400, and 9600 bps operation and AX.25 plus FX.25 framing
 - State of the art demulator for 1200 bps AFSK based on the WA8LMF TNC Test CD benchmark
+
+### Project Structure
+- **bitstream.h**/**bitstream.cpp** - Bitstream encoding and decoding including AX.25 and FX.25. Contains all the routines needed to encode an APRS packet or a AX.25 frame into a bistream, or decode a bitstream into a AX.25 frame or APRS packet.
+  - Contains all bitstream manipulation routines including NRZI encoding/decoding, bit stuffing/unstuffing, CRC calculation and verification, and AX.25 address field encoding/decoding, FX.25 Reed-Solomon encoding/decoding.
+  - Supports bit by bit processing for streaming operation.
+  - libcorrect is used for Reed-Solomon coding.
+  - Customizable packet type support, allowing the same packet type to be used among different libraries.
+  - Has no coupling to other code in the project.
