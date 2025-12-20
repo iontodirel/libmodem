@@ -2261,13 +2261,42 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
         throw std::runtime_error(std::string("Failed to open WAV file: ") + sf_strerror(nullptr));
     }
 
-    // When reading, use the file's actual sample rate
     sample_rate_ = sfinfo.samplerate;
     channels_ = sfinfo.channels;
+
+    if (channels_ != 1)
+    {
+        throw std::runtime_error("Only mono WAV files are supported for reading");
+    }
+
+    int type = sfinfo.format & SF_FORMAT_TYPEMASK;
+    if (type != SF_FORMAT_WAV /* && type != SF_FORMAT_WAVEX && type != SF_FORMAT_RF64 */)
+    {
+        throw std::runtime_error("Not a WAV file (unsupported container): " + filename);
+    }
+
+    int sub = sfinfo.format & SF_FORMAT_SUBMASK;
+    switch (sub)
+    {
+        case SF_FORMAT_PCM_16:
+        case SF_FORMAT_PCM_24:
+        case SF_FORMAT_PCM_32:
+        case SF_FORMAT_FLOAT:
+        case SF_FORMAT_DOUBLE:
+            break; // ok
+        default:
+            throw std::runtime_error("Unsupported WAV encoding (not PCM/float): " + filename);
+    }
+
+    sf_command(impl_->sf_file_, SFC_SET_NORM_DOUBLE, nullptr, SF_TRUE);  // normalize to [-1, 1]
 }
 
 wav_audio_input_stream::wav_audio_input_stream(wav_audio_input_stream&& other) noexcept
 {
+    if (impl_ && impl_->sf_file_)
+    {
+        close();
+    }
     impl_ = std::move(other.impl_);
     sample_rate_ = other.sample_rate_;
     channels_ = other.channels_;
@@ -2276,6 +2305,10 @@ wav_audio_input_stream::wav_audio_input_stream(wav_audio_input_stream&& other) n
 
 wav_audio_input_stream& wav_audio_input_stream::operator=(wav_audio_input_stream&& other) noexcept
 {
+    if (impl_ && impl_->sf_file_)
+    {
+        close();
+    }
     impl_ = std::move(other.impl_);
     sample_rate_ = other.sample_rate_;
     channels_ = other.channels_;
@@ -2285,7 +2318,7 @@ wav_audio_input_stream& wav_audio_input_stream::operator=(wav_audio_input_stream
 
 wav_audio_input_stream::~wav_audio_input_stream()
 {
-    if (impl_)
+    if (impl_ && impl_->sf_file_ != nullptr)
     {
         sf_close(impl_->sf_file_);
         impl_->sf_file_ = nullptr;
@@ -2299,11 +2332,13 @@ std::string wav_audio_input_stream::name()
 
 void wav_audio_input_stream::volume(int percent)
 {
+    // Not supported
     (void)percent;
 }
 
 int wav_audio_input_stream::volume()
 {
+    // Always 100% for this implementation
     return 100;
 }
 
@@ -2319,11 +2354,13 @@ int wav_audio_input_stream::channels()
 
 size_t wav_audio_input_stream::write(const double* samples, size_t count)
 {
+    // Not supported, read-only stream
     return 0;
 }
 
 size_t wav_audio_input_stream::write_interleaved(const double* samples, size_t count)
 {
+    // Not supported
     (void)samples;
     (void)count;
     return 0;
@@ -2331,20 +2368,16 @@ size_t wav_audio_input_stream::write_interleaved(const double* samples, size_t c
 
 bool wav_audio_input_stream::wait_write_completed(int timeout_ms)
 {
+    // Not supported
     (void)timeout_ms;
     return true;
 }
 
 size_t wav_audio_input_stream::read(double* samples, size_t count)
 {
-    if (!impl_)
+    if (!impl_ || impl_->sf_file_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
-    }
-
-    if (channels_ != 1)
-    {
-        throw std::runtime_error("Only mono WAV files are supported for reading");
     }
 
     sf_count_t total = 0;
@@ -2354,9 +2387,17 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
     {
         sf_count_t remaining = needed - total;
         sf_count_t n = sf_read_double(impl_->sf_file_, samples + total, remaining);
-        if (n <= 0)
+        if (n == 0)
         {
-            break; // EOF or error
+            if (sf_error(impl_->sf_file_) != SF_ERR_NO_ERROR)
+            {
+                throw std::runtime_error(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_));
+            }
+            break; // EOF
+        }
+        if (n < 0)
+        {
+            throw std::runtime_error(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_));
         }
         total += n;
     }
@@ -2366,11 +2407,12 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
 
 void wav_audio_input_stream::flush()
 {
+    // Not supported
 }
 
 void wav_audio_input_stream::close()
 {
-    if (impl_)
+    if (impl_ && impl_->sf_file_ != nullptr)
     {
         sf_close(impl_->sf_file_);
         impl_.reset();
@@ -2393,7 +2435,8 @@ wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, in
 
     // Set format for writing
     sfinfo.samplerate = sample_rate;
-    sfinfo.channels = 1;
+    sfinfo.channels = channels_; // Always mono
+    // Use PCM_16 for wider compatibility with software like Direwolf
     sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
 
     impl_->sf_file_ = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
@@ -2405,6 +2448,10 @@ wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, in
 
 wav_audio_output_stream::wav_audio_output_stream(wav_audio_output_stream&& other) noexcept
 {
+    if (impl_ && impl_->sf_file_ != nullptr)
+    {
+        close();
+    }
     impl_ = std::move(other.impl_);
     sample_rate_ = other.sample_rate_;
     filename_ = std::move(other.filename_);
@@ -2412,6 +2459,10 @@ wav_audio_output_stream::wav_audio_output_stream(wav_audio_output_stream&& other
 
 wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_output_stream&& other) noexcept
 {
+    if (impl_ && impl_->sf_file_ != nullptr)
+    {
+        close();
+    }
     impl_ = std::move(other.impl_);
     sample_rate_ = other.sample_rate_;
     filename_ = std::move(other.filename_);
@@ -2420,7 +2471,7 @@ wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_output_str
 
 wav_audio_output_stream::~wav_audio_output_stream()
 {
-    if (impl_)
+    if (impl_ && impl_->sf_file_ != nullptr)
     {
         sf_close(impl_->sf_file_);
         impl_->sf_file_ = nullptr;
@@ -2434,6 +2485,7 @@ std::string wav_audio_output_stream::name()
 
 void wav_audio_output_stream::volume(int percent)
 {
+    // Not supported
     (void)percent;
 }
 
@@ -2462,11 +2514,6 @@ size_t wav_audio_output_stream::write(const double* samples, size_t count)
         throw std::runtime_error("Stream not initialized");
     }
 
-    if (channels_ != 1)
-    {
-        throw std::runtime_error("Only mono WAV files are supported for writing");
-    }
-
     sf_count_t written = sf_write_double(impl_->sf_file_, samples, static_cast<sf_count_t>(count));
     if (written < 0)
     {
@@ -2478,6 +2525,7 @@ size_t wav_audio_output_stream::write(const double* samples, size_t count)
 
 size_t wav_audio_output_stream::write_interleaved(const double* samples, size_t count)
 {
+    // Not supported
     (void)samples;
     (void)count;
     return 0;
@@ -2485,6 +2533,7 @@ size_t wav_audio_output_stream::write_interleaved(const double* samples, size_t 
 
 bool wav_audio_output_stream::wait_write_completed(int timeout_ms)
 {
+    // Not supported
     (void)timeout_ms;
     return true;
 }
@@ -2496,7 +2545,7 @@ size_t wav_audio_output_stream::read(double* samples, size_t count)
 
 void wav_audio_output_stream::flush()
 {
-    if (impl_)
+    if (impl_ && impl_->sf_file_ != nullptr)
     {
         sf_write_sync(impl_->sf_file_);
     }
@@ -2504,7 +2553,7 @@ void wav_audio_output_stream::flush()
 
 void wav_audio_output_stream::close()
 {
-    if (impl_)
+    if (impl_ && impl_->sf_file_ != nullptr)
     {
         sf_close(impl_->sf_file_);
         impl_.reset();

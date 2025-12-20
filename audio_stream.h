@@ -421,7 +421,6 @@ private:
 
 #endif // __linux__
 
-
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -442,7 +441,7 @@ public:
     wav_audio_input_stream& operator=(wav_audio_input_stream&&) noexcept;
     virtual ~wav_audio_input_stream();
 
-    std::string name();
+    std::string name() override;
 
     void volume(int percent) override;
     int volume() override;
@@ -451,16 +450,16 @@ public:
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
-    bool wait_write_completed(int timeout_ms);
+    bool wait_write_completed(int timeout_ms) override;
 
     void flush();
-    void close();
+    void close() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;
     std::string filename_;
-    int sample_rate_;
-    int channels_ = 1;
+    int sample_rate_ = 0;
+    int channels_ = 0;
 };
 
 // **************************************************************** //
@@ -483,7 +482,7 @@ public:
     wav_audio_output_stream& operator=(wav_audio_output_stream&&) noexcept;
     virtual ~wav_audio_output_stream();
 
-    std::string name();
+    std::string name() override;
 
     void volume(int percent) override;
     int volume() override;
@@ -492,16 +491,16 @@ public:
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
-    bool wait_write_completed(int timeout_ms);
+    bool wait_write_completed(int timeout_ms) override;
 
     void flush();
-    void close();
+    void close() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;
     std::string filename_;
-    int sample_rate_;
-    int channels_ = 1;
+    int sample_rate_ = 0;
+    const int channels_ = 1;
 };
 
 LIBMODEM_NAMESPACE_END

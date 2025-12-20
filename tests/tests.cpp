@@ -737,6 +737,48 @@ LIBMODEM_AX25_USING_NAMESPACE
     }));
 }
 
+TEST(ax25, encode_frame_output_iterator_stack)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    struct frame frame
+    {
+        { "N0CALL", 0, 0, 10, false },
+        { "APZ001", 0, 0, 0, false },
+            {
+                { "WIDE1", 0, 1, 0, false },
+                { "WIDE2", 0, 2, 0, false }
+            },
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+    };
+
+    uint8_t frame_bytes[100] = { 0 };
+
+    auto end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), std::begin(frame_bytes));
+
+    size_t frame_size = std::distance(std::begin(frame_bytes), end_it);
+
+    EXPECT_TRUE(frame_size == 44);
+
+    EXPECT_TRUE(std::vector<uint8_t>(frame_bytes, frame_bytes + frame_size) == (std::vector<uint8_t>{
+        // Destination: APZ001
+        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+        // Source: N0CALL-10
+        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-2 (last addr, end bit set)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: "Hello, APRS!"
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+        // CRC (FCS), little-endian
+        0x50, 0x7B
+    }));
+}
+
 TEST(ax25, to_packet)
 {
 LIBMODEM_AX25_USING_NAMESPACE
@@ -2313,6 +2355,8 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     {
 
+        // Decode the entire bitstream into packets and expected 1005 packets
+
         std::vector<aprs::router::packet> packets;
 
         bitstream_state state;
@@ -2352,6 +2396,8 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 
     {
+        // Decoding and comparing to expected packets from file
+
         std::ifstream file("packets_1d.txt");
         if (!file.is_open())
         {
