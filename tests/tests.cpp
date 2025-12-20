@@ -79,6 +79,29 @@ using namespace LIBMODEM_NAMESPACE;
 //                                                                  //
 // **************************************************************** //
 
+struct fft_bin
+{
+    double frequency;
+    double magnitude;
+};
+
+std::vector<uint8_t> generate_random_bits(size_t count);
+size_t random_size(size_t max_size);
+void print_hex(const std::vector<uint8_t>& data, std::size_t per_line = 16);
+void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line = 8);
+std::string replace_non_printable(const std::string& s);
+template<typename... Args>
+int run_process(const std::string& exe_path, std::string& output, std::string& error, Args&&... args);
+struct fft_bin;
+std::vector<fft_bin> compute_fft(const std::string& wav_file);
+fft_bin dominant_frequency(const std::vector<fft_bin>& bins);
+std::vector<fft_bin> frequencies_above_threshold(const std::vector<fft_bin>& bins, double threshold);
+std::string to_string(const std::vector<address>& path);
+std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25);
+static std::string replace_crlf(std::string_view s);
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets);
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, const std::string& packets_filename);
+
 std::vector<uint8_t> generate_random_bits(size_t count)
 {
     std::random_device rd;
@@ -101,7 +124,7 @@ size_t random_size(size_t max_size)
     return dis(gen);
 }
 
-void print_hex(const std::vector<uint8_t>& data, std::size_t per_line = 16)
+void print_hex(const std::vector<uint8_t>& data, std::size_t per_line)
 {
     std::ios_base::fmtflags f = std::cout.flags(); // save flags
 
@@ -125,7 +148,7 @@ void print_hex(const std::vector<uint8_t>& data, std::size_t per_line = 16)
     std::cout.flags(f); // restore flags
 }
 
-void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line = 8)
+void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line)
 {
     for (size_t i = 0; uint8_t bit : bits)
     {
@@ -194,12 +217,6 @@ namespace bp = boost::process;
 
     return process.exit_code();
 }
-
-struct fft_bin
-{
-    double frequency;
-    double magnitude;
-};
 
 std::vector<fft_bin> compute_fft(const std::string& wav_file)
 {
@@ -302,7 +319,7 @@ std::string to_string(const std::vector<address>& path)
     return result;
 }
 
-std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25)
+std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns)
 {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
@@ -336,6 +353,68 @@ static std::string replace_crlf(std::string_view s)
         i = j + 1;
     }
     return out;
+}
+
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<aprs::router::packet>& packets)
+{
+    std::ifstream input_file(direwolf_output_filename);
+    std::string line;
+
+    while (std::getline(input_file, line))
+    {
+        // Find "[0.0] " or "[0.1] " pattern
+        size_t pos = line.find("[0.");
+        if (pos == std::string::npos)
+        {
+            pos = line.find("[0");
+        }
+        if (pos != std::string::npos)
+        {
+            size_t bracket_end = line.find("] ", pos);
+            if (bracket_end != std::string::npos)
+            {
+                std::string packet_string = line.substr(bracket_end + 2);
+
+                // Replace hex markers with readable names
+                size_t p;
+                while ((p = packet_string.find("<0x0d>")) != std::string::npos)
+                    packet_string.replace(p, 6, "<CR>");
+                while ((p = packet_string.find("<0x0a>")) != std::string::npos)
+                    packet_string.replace(p, 6, "<LF>");
+                while ((p = packet_string.find("<0x1c>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x1C));
+                while ((p = packet_string.find("<0x1d>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x1D));
+                while ((p = packet_string.find("<0x7f>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x7F));
+                while ((p = packet_string.find("<0x1f>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x1F));
+                while ((p = packet_string.find("<0x1e>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x1E));
+                while ((p = packet_string.find("<0x20>")) != std::string::npos)
+                    packet_string.replace(p, 6, 1, static_cast<char>(0x20));
+
+                if (!packet_string.empty())
+                {
+                    aprs::router::packet p(packet_string);
+                    p.path.clear();
+                    packets.push_back(p);
+                }
+            }
+        }
+    }
+}
+
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, const std::string& packets_filename)
+{
+    std::vector<std::string> packets;
+    direwolf_output_to_packets(direwolf_output_filename, packets);
+    std::ofstream outfile(packets_filename);
+    for (const auto& packet : packets)
+    {
+        outfile << packet << "\n";
+    }
+    outfile.close();
 }
 
 // **************************************************************** //
