@@ -36,6 +36,10 @@
 #include <memory>
 #include <cstdint>
 #include <numeric>
+#include <mutex>
+#include <shared_mutex>
+#include <atomic>
+#include <chrono>
 
 #ifdef __linux__
 
@@ -81,8 +85,18 @@ struct audio_stream_base
     virtual size_t write(const double* samples, size_t count) = 0;
     virtual size_t write_interleaved(const double* samples, size_t count) = 0;
     virtual size_t read(double* samples, size_t count) = 0;
+    virtual size_t read_interleaved(double* samples, size_t count) = 0;
+
+    template<typename Rep, typename Period>
+    bool wait_write_completed(const std::chrono::duration<Rep, Period>& timeout)
+    {
+        return wait_write_completed(static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count()));
+    }
 
     virtual bool wait_write_completed(int timeout_ms) = 0;
+
+    virtual void start() = 0;
+    virtual void stop() = 0;
 
     virtual void close() = 0;
 };
@@ -106,24 +120,81 @@ public:
     audio_stream& operator=(const audio_stream&) = delete;
     ~audio_stream();
 
-    void close();
+    void close() override;
 
-    std::string name();
-    void volume(int percent);
-    int volume();
-    int sample_rate();
-    int channels();
+    std::string name() override;
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    int channels() override;
 
-    size_t write(const double* samples, size_t count);
-    size_t write_interleaved(const double* samples, size_t count);
-    size_t read(double* samples, size_t count);
+    size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
 
-    bool wait_write_completed(int timeout_ms);
+    bool wait_write_completed(int timeout_ms) override;
+
+    void start() override;
+    void stop() override;
 
     explicit operator bool() const;
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// channelized_buffered_thread_safe_stream                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class channelized_buffered_thread_safe_stream : public audio_stream_base
+{
+public:
+    channelized_buffered_thread_safe_stream(std::unique_ptr<audio_stream_base> s);
+
+    channelized_buffered_thread_safe_stream(channelized_buffered_thread_safe_stream&&) = default;
+    channelized_buffered_thread_safe_stream& operator=(channelized_buffered_thread_safe_stream&&) = default;
+    channelized_buffered_thread_safe_stream(const channelized_buffered_thread_safe_stream&) = delete;
+    channelized_buffered_thread_safe_stream& operator=(const channelized_buffered_thread_safe_stream&) = delete;
+    ~channelized_buffered_thread_safe_stream();
+
+    void close() override;
+
+    std::string name() override;
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    int channels() override;
+
+    size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
+    bool wait_write_completed(int timeout_ms) override;
+
+    size_t write_channel(size_t channel, const double* samples, size_t count);
+    size_t read_channel(size_t channel, double* samples, size_t count);
+
+    bool write_lock(int timeout_ms);
+    void write_unlock();
+    void flush();
+
+    void start() override;
+    void stop() override;
+
+    explicit operator bool() const;
+
+private:
+    std::unique_ptr<audio_stream_base> stream_;
+    int sample_size = 1024;
+    std::vector<std::vector<double>> write_buffers_;
+    std::shared_timed_mutex write_mutex_;
 };
 
 // **************************************************************** //
@@ -304,15 +375,18 @@ struct wasapi_audio_output_stream : public audio_stream_base
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
     bool wait_write_completed(int timeout_ms);
 
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
 
 private:
     int buffer_size_ = 0;
     int sample_rate_ = 0;
-    int channels_ = 1;
+    int channels_ = 0;
+    bool started_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
 };
 
@@ -333,8 +407,7 @@ struct wasapi_audio_input_stream_impl;
 struct wasapi_audio_input_stream : public audio_stream_base
 {
     wasapi_audio_input_stream();
-    wasapi_audio_input_stream(int channel = 0);
-    wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl, int channel = 0);
+    wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl);
     wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream(wasapi_audio_input_stream&&) noexcept;
@@ -355,16 +428,17 @@ struct wasapi_audio_input_stream : public audio_stream_base
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
     bool wait_write_completed(int timeout_ms);
 
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
 
 private:
     int buffer_size_ = 0;
     int sample_rate_ = 0;
     int channels_ = 1;
-    int channel_ = 0;
+    bool started_ = false;
     std::unique_ptr<wasapi_audio_input_stream_impl> impl_;
 };
 
@@ -450,10 +524,15 @@ public:
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
     bool wait_write_completed(int timeout_ms) override;
 
     void flush();
     void close() override;
+
+    void start() override;
+    void stop() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;
@@ -491,10 +570,15 @@ public:
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
     bool wait_write_completed(int timeout_ms) override;
 
     void flush();
     void close() override;
+
+    void start() override;
+    void stop() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;

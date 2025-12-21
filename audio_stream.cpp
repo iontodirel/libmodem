@@ -78,15 +78,15 @@ LIBMODEM_NAMESPACE_BEGIN
 
 std::string utf16_to_utf8(const wchar_t* s)
 {
-    if (!s || !*s)
+    if (s == nullptr || s[0] == '\0')
     {
-        return {};
+        return "";
     }
 
     int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
     if (len <= 0)
     {
-        return {};
+        return "";
     }
 
     std::string r(len - 1, '\0');
@@ -122,6 +122,24 @@ std::string get_guid_property(IPropertyStore* props, const PROPERTYKEY& key)
     }
     PropVariantClear(&variant);
     return result;
+}
+
+bool is_float32_format(WAVEFORMATEX* device_format)
+{
+    bool float32_format = false;
+
+    if (device_format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT)
+    {
+        float32_format = (device_format->wBitsPerSample == 32) && (device_format->nBlockAlign == device_format->nChannels * 4);
+    }
+    else if (device_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+    {
+        const auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(device_format);
+        float32_format = IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) && device_format->wBitsPerSample == 32 &&
+            ext->Samples.wValidBitsPerSample == 32 && (device_format->nBlockAlign == device_format->nChannels * 4);
+    }
+
+    return float32_format;
 }
 
 #endif
@@ -221,6 +239,15 @@ size_t audio_stream::read(double* samples, size_t count)
     return stream_->read(samples, count);
 }
 
+size_t audio_stream::read_interleaved(double* samples, size_t count)
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->read_interleaved(samples, count);
+}
+
 bool audio_stream::wait_write_completed(int timeout_ms)
 {
     if (!stream_)
@@ -230,7 +257,161 @@ bool audio_stream::wait_write_completed(int timeout_ms)
     return stream_->wait_write_completed(timeout_ms);
 }
 
+void audio_stream::start()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream_->start();
+}
+
+void audio_stream::stop()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream_->stop();
+}
+
 audio_stream::operator bool() const
+{
+    return stream_ != nullptr;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// channelized_buffered_thread_safe_stream                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+channelized_buffered_thread_safe_stream::channelized_buffered_thread_safe_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::move(s))
+{
+}
+
+channelized_buffered_thread_safe_stream::~channelized_buffered_thread_safe_stream()
+{
+    stream_.reset();
+}
+
+void channelized_buffered_thread_safe_stream::close()
+{
+    stream_.reset();
+}
+
+std::string channelized_buffered_thread_safe_stream::name()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->name();
+}
+
+void channelized_buffered_thread_safe_stream::volume(int percent)
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream_->volume(percent);
+}
+
+int channelized_buffered_thread_safe_stream::volume()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->volume();
+}
+
+int channelized_buffered_thread_safe_stream::sample_rate()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->sample_rate();
+}
+
+int channelized_buffered_thread_safe_stream::channels()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->channels();
+}
+
+size_t channelized_buffered_thread_safe_stream::write(const double* samples, size_t count)
+{
+    return 0;
+}
+
+size_t channelized_buffered_thread_safe_stream::write_interleaved(const double* samples, size_t count)
+{
+    return 0;
+}
+
+size_t channelized_buffered_thread_safe_stream::read(double* samples, size_t count)
+{
+    return 0;
+}
+
+size_t channelized_buffered_thread_safe_stream::read_interleaved(double* samples, size_t count)
+{
+    return 0;
+}
+
+bool channelized_buffered_thread_safe_stream::wait_write_completed(int timeout_ms)
+{
+    return false;
+}
+
+
+size_t channelized_buffered_thread_safe_stream::write_channel(size_t channel, const double* samples, size_t count)
+{
+    return 0;
+}
+
+size_t channelized_buffered_thread_safe_stream::read_channel(size_t channel, double* samples, size_t count)
+{
+    return 0;
+}
+
+bool channelized_buffered_thread_safe_stream::write_lock(int timeout_ms)
+{
+    return write_mutex_.try_lock_for(std::chrono::milliseconds(timeout_ms));
+}
+
+void channelized_buffered_thread_safe_stream::write_unlock()
+{
+    write_mutex_.unlock();
+}
+
+void channelized_buffered_thread_safe_stream::start()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream_->start();
+}
+
+void channelized_buffered_thread_safe_stream::stop()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream_->stop();
+}
+
+channelized_buffered_thread_safe_stream::operator bool() const
 {
     return stream_ != nullptr;
 }
@@ -390,10 +571,18 @@ wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_ou
 
 wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
 {
-    device_.Attach(other.device_.Detach());
-    audio_client_.Attach(other.audio_client_.Detach());
-    render_client_.Attach(other.render_client_.Detach());
-    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    if (this != &other)
+    {
+        render_client_.Release();
+        endpoint_volume_.Release();
+        audio_client_.Release();
+        device_.Release();
+
+        device_.Attach(other.device_.Detach());
+        audio_client_.Attach(other.audio_client_.Detach());
+        render_client_.Attach(other.render_client_.Detach());
+        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    }
     return *this;
 }
 
@@ -434,10 +623,18 @@ wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_inpu
 
 wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi_audio_input_stream_impl&& other)
 {
-    device_.Attach(other.device_.Detach());
-    audio_client_.Attach(other.audio_client_.Detach());
-    capture_client_.Attach(other.capture_client_.Detach());
-    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    if (this != &other)
+    {
+        capture_client_.Release();
+        endpoint_volume_.Release();
+        audio_client_.Release();
+        device_.Release();
+
+        device_.Attach(other.device_.Detach());
+        audio_client_.Attach(other.audio_client_.Detach());
+        capture_client_.Attach(other.capture_client_.Detach());
+        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    }
     return *this;
 }
 
@@ -915,13 +1112,13 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type)
 
     ensure_com_initialized();
 
-    CComPtr<IMMDeviceEnumerator> enumerator = nullptr;
+    CComPtr<IMMDeviceEnumerator> enumerator;
     if (FAILED(hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator)))
     {
         return false;
     }
 
-    CComPtr<IMMDevice> device_ = nullptr;
+    CComPtr<IMMDevice> device_;
 
     EDataFlow flow = (type == audio_device_type::render) ? eRender : eCapture;
     hr = enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device_);
@@ -963,6 +1160,72 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_strea
 {
     impl_ = std::make_unique<wasapi_audio_output_stream_impl>();
     impl_->device_ = impl->device_;
+
+    assert(impl_->audio_client_ == nullptr);
+    assert(impl_->endpoint_volume_ == nullptr);
+    assert(impl_->render_client_ == nullptr);
+
+    ensure_com_initialized();
+
+    HRESULT hr;
+
+    CComPtr<IAudioClient> audio_client;
+    CComPtr<IAudioEndpointVolume> endpoint_volume;
+    CComPtr<IAudioRenderClient> render_client;
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
+    {
+        throw std::runtime_error("Failed to activate client");
+    }
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&endpoint_volume)))
+    {
+        throw std::runtime_error("Failed to get volume control");
+    }
+
+    WAVEFORMATEX* device_format = nullptr;
+    if (FAILED(hr = audio_client->GetMixFormat(&device_format)))
+    {
+        throw std::runtime_error("Failed to get mix format");
+    }
+
+    if (!is_float32_format(device_format))
+    {
+        CoTaskMemFree(device_format);
+        throw std::runtime_error("Unsupported audio format: only 32-bit float is supported");
+    }
+
+    sample_rate_ = static_cast<int>(device_format->nSamplesPerSec);
+    channels_ = static_cast<int>(device_format->nChannels);
+
+    hr = audio_client->Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        0,
+        2000000,  // 200ms buffer
+        0,
+        device_format,
+        nullptr);
+
+    CoTaskMemFree(device_format);
+
+    if (FAILED(hr))
+    {
+        throw std::runtime_error("Failed to initialize audio client");
+    }
+
+    if (FAILED(hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client)))
+    {
+        throw std::runtime_error("Failed to get render client");
+    }
+
+    if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
+    {
+        throw std::runtime_error("Failed to get buffer size");
+    }
+
+    impl_->audio_client_.Attach(audio_client.Detach());
+    impl_->endpoint_volume_.Attach(endpoint_volume.Detach());
+    impl_->render_client_.Attach(render_client.Detach());
 }
 
 wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept
@@ -993,19 +1256,24 @@ wasapi_audio_output_stream::~wasapi_audio_output_stream()
 void wasapi_audio_output_stream::close()
 {
     stop();
+
+    impl_->render_client_.Release();
+    impl_->endpoint_volume_.Release();
+    impl_->audio_client_.Release();
+
     impl_.reset();
 }
 
 std::string wasapi_audio_output_stream::name()
 {
-    if (!impl_)
+    if (!impl_ || impl_->device_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
 
     ensure_com_initialized();
 
-    IPropertyStore* props = nullptr;
+    CComPtr<IPropertyStore> props;
     PROPVARIANT variant;
 
     HRESULT hr;
@@ -1016,9 +1284,9 @@ std::string wasapi_audio_output_stream::name()
 
     PropVariantInit(&variant);
     
-    if (FAILED(hr = props->GetValue(PKEY_Device_FriendlyName, &variant)))
+    if (FAILED(hr = props->GetValue(PKEY_Device_FriendlyName, &variant)) || variant.vt != VT_LPWSTR)
     {
-        props->Release();
+        PropVariantClear(&variant);
         return "unknown";
     }
 
@@ -1026,14 +1294,12 @@ std::string wasapi_audio_output_stream::name()
 
     PropVariantClear(&variant);
     
-    props->Release();
-
     return name;
 }
 
 void wasapi_audio_output_stream::mute(bool mute)
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1050,7 +1316,7 @@ void wasapi_audio_output_stream::mute(bool mute)
 
 bool wasapi_audio_output_stream::mute()
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1068,7 +1334,7 @@ bool wasapi_audio_output_stream::mute()
 
 void wasapi_audio_output_stream::volume(int percent)
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1088,7 +1354,7 @@ void wasapi_audio_output_stream::volume(int percent)
 
 int wasapi_audio_output_stream::volume()
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1118,69 +1384,138 @@ int wasapi_audio_output_stream::channels()
 
 size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
 {
-    if (!impl_)
+    if (samples == nullptr || count == 0)
+    {
+        return 0;
+    }
+
+    // Convert mono to interleaved (duplicate to all channels)
+    std::vector<double> interleaved(count * channels_);
+
+    for (size_t i = 0; i < count; i++)
+    {
+        for (int channel = 0; channel < channels_; channel++)
+        {
+            // WASAPI uses interleaved (samples grouped by frame):
+            // 
+            // 0 * 2 + 0 = 0
+            // 0 * 2 + 1 = 1
+            // 1 * 2 + 0 = 2
+            // 1 * 2 + 1 = 3
+            //
+            // frame0   frame1   frame2
+            //  L0 R0    L1 R1    L2 R2
+            // [s0,s0], [s1,s1], [s2,s2] for 2 channels
+
+            interleaved[i * channels_ + channel] = samples[i];
+        }
+    }
+
+    size_t samples_written = write_interleaved(interleaved.data(), interleaved.size());
+
+    return samples_written / channels_;
+}
+
+size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size_t count)
+{
+    if (!impl_ || !impl_->audio_client_ || !impl_->render_client_)
     {
         throw std::runtime_error("Stream not initialized");
+    }
+
+    if (samples == nullptr || count == 0)
+    {
+        return 0;
+    }
+
+    if (count % channels_ != 0)
+    {
+        throw std::invalid_argument("Sample count must be a multiple of channel count");
     }
 
     ensure_com_initialized();
 
     HRESULT hr;
 
-    size_t samples_written = 0;
-    while (samples_written < count)
+    size_t total_frames = count / channels_;
+    size_t frames_written = 0;
+
+    while (frames_written < total_frames)
     {
+        // Check available space in buffer
+        // GetCurrentPadding gives the number of frames that are queued up to play
+        // Wait until buffer space is available
+
         UINT32 padding;
         if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
         {
-            return 0;
+            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                throw std::runtime_error("Audio device disconnected");
+            }
+            throw std::runtime_error("Failed to get current padding");
         }
 
-        UINT32 available_frames = buffer_size_ - padding;
+        UINT32 available_frames = static_cast<UINT32>(buffer_size_) - padding;
         if (available_frames == 0)
         {
+            SwitchToThread();
             continue;
         }
 
-        UINT32 frames_to_write = (std::min)(available_frames, static_cast<UINT32>(count - samples_written));
+        UINT32 frames_to_write = (std::min)(available_frames, static_cast<UINT32>(total_frames - frames_written));
 
         BYTE* buffer;
         if (FAILED(hr = impl_->render_client_->GetBuffer(frames_to_write, &buffer)))
         {
-            return samples_written;
+            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                throw std::runtime_error("Audio device disconnected");
+            }
+            throw std::runtime_error("Failed to get buffer");
+        }
+
+        if (buffer == nullptr)
+        {
+            throw std::runtime_error("Received null buffer from render client");
         }
 
         float* float_buffer = reinterpret_cast<float*>(buffer);
 
-        for (UINT32 i = 0; i < frames_to_write; i++)
-        {
-            float sample = static_cast<float>(samples[samples_written + i]);
+        size_t offset = frames_written * channels_;
+        size_t samples_to_copy = static_cast<size_t>(frames_to_write) * channels_;
 
-            for (int channel = 0; channel < channels_; channel++)
-            {
-                float_buffer[i * channels_ + channel] = sample;
-            }
+        for (size_t i = 0; i < samples_to_copy; i++)
+        {
+            float_buffer[i] = static_cast<float>(samples[offset + i]);
         }
 
         if (FAILED(hr = impl_->render_client_->ReleaseBuffer(frames_to_write, 0)))
         {
-            return samples_written;
+            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            {
+                throw std::runtime_error("Audio device disconnected");
+            }
+            throw std::runtime_error("Failed to release buffer");
         }
 
-        samples_written += frames_to_write;
+        frames_written += frames_to_write;
     }
 
-    return samples_written;
-}
-
-size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size_t count)
-{
-    return 0;
+    return frames_written * channels_;  // Return total samples written
 }
 
 size_t wasapi_audio_output_stream::read(double* samples, size_t count)
 {
-    // Not implemented for output stream
+    // Not implemented for output streams
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
+size_t wasapi_audio_output_stream::read_interleaved(double* samples, size_t count)
+{
+    // Not implemented for output streams
     (void)samples;
     (void)count;
     return 0;
@@ -1188,7 +1523,7 @@ size_t wasapi_audio_output_stream::read(double* samples, size_t count)
 
 bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 {
-    if (!impl_)
+    if (!impl_ || impl_->audio_client_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1229,7 +1564,12 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 
 void wasapi_audio_output_stream::start()
 {
-    if (!impl_)
+    if (started_)
+    {
+        return;
+    }
+
+    if (!impl_ || impl_->audio_client_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1238,66 +1578,31 @@ void wasapi_audio_output_stream::start()
 
     HRESULT hr;
 
-    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&impl_->audio_client_)))
-    {
-        throw std::runtime_error("Failed to activate client");
-    }
-
-    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&impl_->endpoint_volume_)))
-    {
-        throw std::runtime_error("Failed to get volume control");
-    }
-
-    WAVEFORMATEX* device_format = nullptr;
-    if (FAILED(hr = impl_->audio_client_->GetMixFormat(&device_format)))
-    {
-        throw std::runtime_error("Failed to get mix format");
-    }
-
-    sample_rate_ = static_cast<int>(device_format->nSamplesPerSec);
-    channels_ = static_cast<int>(device_format->nChannels);
-
-    hr = impl_->audio_client_->Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        0,
-        2000000,  // 200ms buffer
-        0,
-        device_format,
-        nullptr);
-
-    CoTaskMemFree(device_format);
-
-    if (FAILED(hr))
-    {
-        throw std::runtime_error("Failed to initialize audio client");
-    }
-
-    if (FAILED(hr = impl_->audio_client_->GetService(__uuidof(IAudioRenderClient), (void**)&impl_->render_client_)))
-    {
-        throw std::runtime_error("Failed to get render client");
-    }
-
-    if (FAILED(hr = impl_->audio_client_->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
-    {
-        throw std::runtime_error("Failed to get buffer size");
-    }
-
     if (FAILED(hr = impl_->audio_client_->Start()))
     {
         throw std::runtime_error("Failed to start audio client");
     }
+
+    started_ = true;
 }
 
 void wasapi_audio_output_stream::stop()
 {
-    if (impl_ && impl_->audio_client_)
+    if (!started_)
+    {        
+        return;
+    }
+
+    if (impl_)
     {
         ensure_com_initialized();
 
-        impl_->audio_client_->Stop();
-        impl_->audio_client_ = nullptr;
-        impl_->render_client_ = nullptr;
-        impl_->endpoint_volume_ = nullptr;
+        if (impl_->audio_client_)
+        {
+            impl_->audio_client_->Stop();
+        }
+
+        started_ = false;
     }
 }
 
@@ -1317,89 +1622,59 @@ wasapi_audio_input_stream::wasapi_audio_input_stream()
 {
 }
 
-wasapi_audio_input_stream::wasapi_audio_input_stream(int channel)
-{
-    channel_ = channel;
-}
-
-wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl, int channel)
+wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl)
 {
     impl_ = std::make_unique<wasapi_audio_input_stream_impl>();
     impl_->device_ = impl->device_;
-    channel_ = channel;
-}
 
-wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other) noexcept
-{
-    impl_ = std::move(other.impl_);
-    buffer_size_ = other.buffer_size_;
-    sample_rate_ = other.sample_rate_;
-    channels_ = other.channels_;
-    channel_ = other.channel_;
-}
-
-wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(wasapi_audio_input_stream&& other) noexcept
-{
-    impl_ = std::move(other.impl_);
-    buffer_size_ = other.buffer_size_;
-    sample_rate_ = other.sample_rate_;
-    channels_ = other.channels_;
-    channel_ = other.channel_;
-    return *this;
-}
-
-wasapi_audio_input_stream::~wasapi_audio_input_stream()
-{
-    close();
-}
-
-void wasapi_audio_input_stream::close()
-{
-    stop();
-    impl_.reset();
-}
-
-void wasapi_audio_input_stream::start()
-{
-    if (!impl_)
-    {
-        throw std::runtime_error("Stream not initialized");
-    }
+    assert(impl_->audio_client_ == nullptr);
+    assert(impl_->endpoint_volume_ == nullptr);
+    assert(impl_->capture_client_ == nullptr);
 
     ensure_com_initialized();
 
     HRESULT hr;
 
-    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&impl_->audio_client_)))
+    CComPtr<IAudioClient> audio_client;
+    CComPtr<IAudioEndpointVolume> endpoint_volume;
+    CComPtr<IAudioCaptureClient> capture_client;
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
     {
         throw std::runtime_error("Failed to activate client");
     }
 
-    CComPtr<IAudioSessionControl> session_control = nullptr;
-    if (SUCCEEDED(impl_->audio_client_->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
+    CComPtr<IAudioSessionControl> session_control;
+    if (SUCCEEDED(audio_client->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
     {
-        CComPtr<IAudioSessionControl2> session_control2 = nullptr;
+        CComPtr<IAudioSessionControl2> session_control2;
         if (SUCCEEDED(session_control->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&session_control2)))
         {
             session_control2->SetDuckingPreference(TRUE); // Disable ducking
         }
     }
-    
-    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&impl_->endpoint_volume_)))
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&endpoint_volume)))
     {
         throw std::runtime_error("Failed to get volume control");
     }
 
     WAVEFORMATEX* device_format = nullptr;
-    if (FAILED(hr = impl_->audio_client_->GetMixFormat(&device_format)))
+    if (FAILED(hr = audio_client->GetMixFormat(&device_format)))
     {
         throw std::runtime_error("Failed to get mix format");
+    }
+
+    if (!is_float32_format(device_format))
+    {
+        CoTaskMemFree(device_format);
+        throw std::runtime_error("Unsupported audio format: only 32-bit float is supported");
     }
 
     sample_rate_ = static_cast<int>(device_format->nSamplesPerSec);
     channels_ = static_cast<int>(device_format->nChannels);
 
-    hr = impl_->audio_client_->Initialize(
+    hr = audio_client->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         0,
         2000000,  // 200ms buffer
@@ -1414,43 +1689,111 @@ void wasapi_audio_input_stream::start()
         throw std::runtime_error("Failed to initialize");
     }
 
-    if (FAILED(hr = impl_->audio_client_->GetService(__uuidof(IAudioCaptureClient), (void**)&impl_->capture_client_)))
+    if (FAILED(hr = audio_client->GetService(__uuidof(IAudioCaptureClient), (void**)&capture_client)))
     {
         throw std::runtime_error("Failed to get capture client");
     }
 
-    if (FAILED(hr = impl_->audio_client_->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
+    if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
     {
         throw std::runtime_error("Failed to get buffer size");
     }
 
-    if (FAILED(hr = impl_->audio_client_->Start()))
-    {
-        throw std::runtime_error("Failed to start");
-    }
+    impl_->audio_client_.Attach(audio_client.Detach());
+    impl_->endpoint_volume_.Attach(endpoint_volume.Detach());
+    impl_->capture_client_.Attach(capture_client.Detach());
 }
 
-void wasapi_audio_input_stream::stop()
+wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other) noexcept
 {
-    if (impl_ && impl_->audio_client_)
-    {
-        impl_->audio_client_->Stop();
-        impl_->audio_client_ = nullptr;
-        impl_->capture_client_ = nullptr;
-        impl_->endpoint_volume_ = nullptr;
-    }
+    impl_ = std::move(other.impl_);
+    buffer_size_ = other.buffer_size_;
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
 }
 
-std::string wasapi_audio_input_stream::name()
+wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(wasapi_audio_input_stream&& other) noexcept
 {
-    if (!impl_)
+    if (this != &other)
+    {
+        impl_ = std::move(other.impl_);
+        buffer_size_ = other.buffer_size_;
+        sample_rate_ = other.sample_rate_;
+        channels_ = other.channels_;
+    }
+    return *this;
+}
+
+wasapi_audio_input_stream::~wasapi_audio_input_stream()
+{
+    close();
+}
+
+void wasapi_audio_input_stream::close()
+{
+    stop();
+
+    impl_->capture_client_.Release();
+    impl_->endpoint_volume_.Release();
+    impl_->audio_client_.Release();
+
+    impl_.reset();
+}
+
+void wasapi_audio_input_stream::start()
+{
+    if (started_)
+    {
+        return;
+    }
+
+    if (!impl_ || impl_->audio_client_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
 
     ensure_com_initialized();
 
-    IPropertyStore* props = nullptr;
+    HRESULT hr;
+
+    if (FAILED(hr = impl_->audio_client_->Start()))
+    {
+        throw std::runtime_error("Failed to start");
+    }
+
+    started_ = true;
+}
+
+void wasapi_audio_input_stream::stop()
+{
+    if (!started_)
+    {
+        return;
+    }
+
+    if (impl_)
+    {
+        ensure_com_initialized();
+
+        if (impl_->audio_client_)
+        {
+            impl_->audio_client_->Stop();
+        }
+
+        started_ = false;
+    }
+}
+
+std::string wasapi_audio_input_stream::name()
+{
+    if (!impl_ || impl_->device_ == nullptr)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    ensure_com_initialized();
+
+    CComPtr<IPropertyStore> props;
     PROPVARIANT variant;
 
     HRESULT hr;
@@ -1461,9 +1804,9 @@ std::string wasapi_audio_input_stream::name()
 
     PropVariantInit(&variant);
 
-    if (FAILED(hr = props->GetValue(PKEY_Device_FriendlyName, &variant)))
+    if (FAILED(hr = props->GetValue(PKEY_Device_FriendlyName, &variant)) || variant.vt != VT_LPWSTR)
     {
-        props->Release();
+        PropVariantClear(&variant);
         return "unknown";
     }
 
@@ -1471,14 +1814,12 @@ std::string wasapi_audio_input_stream::name()
 
     PropVariantClear(&variant);
 
-    props->Release();
-
     return name;
 }
 
 void wasapi_audio_input_stream::mute(bool mute)
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1495,7 +1836,7 @@ void wasapi_audio_input_stream::mute(bool mute)
 
 bool wasapi_audio_input_stream::mute()
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1513,7 +1854,7 @@ bool wasapi_audio_input_stream::mute()
 
 void wasapi_audio_input_stream::volume(int percent)
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1533,7 +1874,7 @@ void wasapi_audio_input_stream::volume(int percent)
 
 int wasapi_audio_input_stream::volume()
 {
-    if (!impl_)
+    if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1577,22 +1918,41 @@ size_t wasapi_audio_input_stream::write_interleaved(const double* samples, size_
 
 size_t wasapi_audio_input_stream::read(double* samples, size_t count)
 {
-    if (!impl_)
+    if (samples == nullptr || count == 0)
+    {
+        return 0;
+    }
+
+    std::vector<double> interleaved_buffer(count * channels_);
+
+    size_t frames_read = read_interleaved(interleaved_buffer.data(), count);
+
+    for (size_t i = 0; i < frames_read; i++)
+    {
+        samples[i] = interleaved_buffer[i * channels_]; // Always take the first channel
+    }
+
+    return frames_read;
+}
+
+size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count)
+{
+    if (!impl_ || impl_->capture_client_ == nullptr)
     {
         throw std::runtime_error("Stream not initialized");
     }
 
     ensure_com_initialized();
-
+    
     if (samples == nullptr || count == 0)
     {
         return 0;
     }
 
     HRESULT hr;
-    size_t samples_read = 0;
+    size_t frames_read = 0;
 
-    while (samples_read < count)
+    while (frames_read < count)
     {
         UINT32 packet_length = 0;
         if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_length)))
@@ -1605,28 +1965,30 @@ size_t wasapi_audio_input_stream::read(double* samples, size_t count)
             break;
         }
 
-        BYTE* data = nullptr;
+        BYTE* buffer = nullptr;
         UINT32 frames_available = 0;
         DWORD flags = 0;
-
-        if (FAILED(hr = impl_->capture_client_->GetBuffer(&data, &frames_available, &flags, nullptr, nullptr)))
+        if (FAILED(hr = impl_->capture_client_->GetBuffer(&buffer, &frames_available, &flags, nullptr, nullptr)))
         {
             throw std::runtime_error("Failed to get buffer");
         }
 
-        float* float_data = reinterpret_cast<float*>(data);
+        UINT32 frames_to_copy = (std::min)(frames_available, static_cast<UINT32>(count - frames_read));
+        size_t samples_to_copy = frames_to_copy * channels_;
 
-        UINT32 frames_to_read = (std::min)(frames_available, static_cast<UINT32>(count - samples_read));
+        double* output_position = samples + frames_read * channels_;
 
-        for (UINT32 i = 0; i < frames_to_read; i++)
+        if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
         {
-            if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
+            std::fill_n(output_position, samples_to_copy, 0.0);
+        }
+        else
+        {
+            const float* captured_samples = reinterpret_cast<const float*>(buffer);
+
+            for (size_t i = 0; i < samples_to_copy; i++)
             {
-                samples[samples_read + i] = 0.0;
-            }
-            else
-            {
-                samples[samples_read + i] = float_data[i * channels_ + channel_];
+                output_position[i] = captured_samples[i];
             }
         }
 
@@ -1635,10 +1997,10 @@ size_t wasapi_audio_input_stream::read(double* samples, size_t count)
             throw std::runtime_error("Failed to release buffer");
         }
 
-        samples_read += frames_to_read;
+        frames_read += frames_to_copy;
     }
 
-    return samples_read;
+    return frames_read;
 }
 
 bool wasapi_audio_input_stream::wait_write_completed(int timeout_ms)
@@ -2405,6 +2767,14 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
     return static_cast<size_t>(total);
 }
 
+size_t wav_audio_input_stream::read_interleaved(double* samples, size_t count)
+{
+    // Not supported
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
 void wav_audio_input_stream::flush()
 {
     // Not supported
@@ -2417,6 +2787,16 @@ void wav_audio_input_stream::close()
         sf_close(impl_->sf_file_);
         impl_.reset();
     }
+}
+
+void wav_audio_input_stream::start()
+{
+    // Not supported
+}
+
+void wav_audio_input_stream::stop()
+{
+    // Not supported
 }
 
 // **************************************************************** //
@@ -2543,6 +2923,14 @@ size_t wav_audio_output_stream::read(double* samples, size_t count)
     return 0;
 }
 
+size_t wav_audio_output_stream::read_interleaved(double* samples, size_t count)
+{
+    // Not supported
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
 void wav_audio_output_stream::flush()
 {
     if (impl_ && impl_->sf_file_ != nullptr)
@@ -2558,6 +2946,16 @@ void wav_audio_output_stream::close()
         sf_close(impl_->sf_file_);
         impl_.reset();
     }
+}
+
+void wav_audio_output_stream::start()
+{
+    // Not supported
+}
+
+void wav_audio_output_stream::stop()
+{
+    // Not supported
 }
 
 LIBMODEM_NAMESPACE_END
