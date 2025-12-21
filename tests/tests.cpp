@@ -3349,13 +3349,13 @@ TEST(modem, transmit_hardware_demo)
     // Connecting to a Digirig serial port, which uses the RTS line for the PTT
     serial_port port;
 #if WIN32
-    if (!port.open("COM16", 9600))
+    if (!port.open("COM16"))
     {
         return;
     }
 #endif // WIN32
 #if __linux__
-    if (!port.open("/dev/ttyUSB0", 9600))
+    if (!port.open("/dev/ttyUSB0"))
     {
         return;
     }
@@ -3365,7 +3365,7 @@ TEST(modem, transmit_hardware_demo)
 #endif // __linux__
 
     audio_stream stream = device.stream();
-    dds_afsk_modulator_f64_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
     basic_bitstream_converter_adapter bitstream_converter;
 
     modem m;
@@ -3490,6 +3490,18 @@ TEST(audio_stream, wasapi_audio_input_stream)
     wasapi_stream->mute(false);
 
     EXPECT_TRUE(wasapi_stream->mute() == false);
+
+    bool mute = true;
+
+    for (int i = 0; i < 100; i++)
+    {
+        wasapi_stream->mute(mute);
+        EXPECT_TRUE(wasapi_stream->mute() == mute);
+        // Mute is fast enough that we won't observe it in the system controls
+        // If we don't have add a small delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        mute = !mute;
+    }
 }
 
 TEST(audio_stream, wasapi_audio_output_stream)
@@ -3514,6 +3526,18 @@ TEST(audio_stream, wasapi_audio_output_stream)
     wasapi_stream->mute(false);
 
     EXPECT_TRUE(wasapi_stream->mute() == false);
+
+    bool mute = true;
+
+    for (int i = 0; i < 100; i++)
+    {
+        wasapi_stream->mute(mute);
+        EXPECT_TRUE(wasapi_stream->mute() == mute);
+        // Mute is fast enough that we won't observe it in the system controls
+        // If we don't have add a small delay
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        mute = !mute;
+    }
 }
 
 #endif // WIN32
@@ -3528,7 +3552,7 @@ TEST(audio_stream, render_10s_stream)
 {
     // Windows audio hardware render test
     // As you are running this test you could use a sound capture app on your phone to test the render
-    // We will write a 17kHz tone to the default render device for 10 seconds
+    // We will write a tone to the default render device for 10 seconds
 
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
@@ -3537,12 +3561,12 @@ TEST(audio_stream, render_10s_stream)
 
     stream.volume(25);
 
-    // Write a 17kHz tone for 10 seconds, in chunks
+    // Write a  tone for 10 seconds, in chunks
     // For audio testing purposes, we render the samples to a WAV file as well
 
     wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
 
-    constexpr double frequency = 17000.0; // 17kHz tone, should be inaudible to most people
+    constexpr double frequency = 440.0;
     constexpr double amplitude = 0.3;
     constexpr int duration_seconds = 10;
     constexpr double pi = 3.14159265358979323846;
@@ -3748,7 +3772,45 @@ TEST(audio_stream, capture_5s_stream)
     wav_stream.close();
 }
 
-TEST(audio_device, stream)
+TEST(audio_stream, capture_5s_stream_no_buffer)
+{
+    // Read from the default capture device for 5 seconds and write to a WAV file
+
+    std::vector<double> buffer;
+
+    int sample_rate = 0;
+
+    {
+        audio_device device;
+        try_get_default_audio_device(device, audio_device_type::capture);
+
+        audio_stream stream = device.stream();
+
+        buffer.resize(stream.sample_rate() * 5); // 5 seconds
+        sample_rate = stream.sample_rate();
+
+        size_t total_read = 0;
+        while (total_read < buffer.size())
+        {
+            total_read += stream.read(buffer.data() + total_read, buffer.size() - total_read);
+        }
+
+        EXPECT_TRUE(total_read == buffer.size());
+    }
+
+    {
+
+        wav_audio_output_stream wav_stream("test.wav", sample_rate);
+
+        size_t written = wav_stream.write(buffer.data(), buffer.size());
+
+        EXPECT_TRUE(written == buffer.size());
+
+        wav_stream.close();
+    }    
+}
+
+TEST(audio_device, audio_stream)
 {
     audio_device render_device;
     EXPECT_TRUE(try_get_default_audio_device(render_device, audio_device_type::render));
