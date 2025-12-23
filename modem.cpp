@@ -75,6 +75,11 @@ void modem::transmit()
 
 void modem::transmit(packet_type p)
 {
+    if (!conv.has_value())
+    {
+        throw std::runtime_error("No bitstream converter");
+    }
+
     bitstream_converter_base& converter = conv.value().get();
 
     // Convert packet to bitstream
@@ -93,6 +98,16 @@ void modem::transmit(packet_type p)
 
 void modem::transmit(const std::vector<uint8_t>& bits)
 {
+    if (!mod.has_value())
+    {
+        throw std::runtime_error("No modulator");
+    }
+
+    if (!audio.has_value())
+    {
+        throw std::runtime_error("No audio stream");
+    }
+
     modulator_base& modulator = mod.value().get();
     struct audio_stream_base& audio_stream = audio.value().get();
 
@@ -113,6 +128,11 @@ void modem::transmit(const std::vector<uint8_t>& bits)
 
 void modem::postprocess_audio(std::vector<double>& audio_buffer)
 {
+    if (!audio.has_value())
+    {
+        throw std::runtime_error("No audio stream");
+    }
+
     struct audio_stream_base& audio_stream = audio.value().get();
 
     int silence_samples = static_cast<int>(start_silence_duration_s * audio_stream.sample_rate());
@@ -131,6 +151,16 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
 
 void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer)
 {
+    if (!mod.has_value())
+    {
+        throw std::runtime_error("No modulator");
+    }
+
+    if (!audio.has_value())
+    {
+        throw std::runtime_error("No audio stream");
+    }
+
     modulator_base& modulator = mod.value().get();
     struct audio_stream_base& audio_stream = audio.value().get();
 
@@ -157,25 +187,34 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
 
 void modem::render_audio(const std::vector<double>& audio_buffer)
 {
-    struct audio_stream_base& audio_stream = audio.value().get();
-    const size_t chunk_size = 480;  // 10ms at 48kHz
-    size_t pos = 0;
-    while (pos < audio_buffer.size())
+    if (!audio.has_value())
     {
-        size_t remaining = audio_buffer.size() - pos;
-        size_t to_write = (std::min)(chunk_size, remaining);
-        size_t written = audio_stream.write(&audio_buffer[pos], to_write);
-        if (written > 0)
-        {
-            pos += written;
-        }
-        else
-        {
-            // Buffer full, wait a bit
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+        throw std::runtime_error("No audio stream");
     }
-    audio_stream.wait_write_completed(-1);
+
+    struct audio_stream_base& audio_stream = audio.value().get();
+
+    // Start the playback
+    audio_stream.start();
+
+    try
+    {
+        // Write audio samples to output device
+        // The stream will automatically handle buffering, the stream typically has a 200ms buffer
+        // This effectively starts the audible playback of the packet
+        audio_stream.write(audio_buffer.data(), audio_buffer.size());
+
+        // Actually wait for all samples to be played
+        audio_stream.wait_write_completed();
+    }
+    catch (...)
+    {
+        audio_stream.stop();
+        throw;
+    }
+
+    // Stop the playback
+    audio_stream.stop();
 }
 
 size_t modem::receive(std::vector<packet_type>& packets)

@@ -283,26 +283,171 @@ audio_stream::operator bool() const
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// channelized_buffered_thread_safe_stream                          //
+// channel_stream                                                   //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-channelized_buffered_thread_safe_stream::channelized_buffered_thread_safe_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::move(s))
+channel_stream::channel_stream(channelized_stream_base& stream, int channel) : stream(stream), channel_(channel)
 {
 }
 
-channelized_buffered_thread_safe_stream::~channelized_buffered_thread_safe_stream()
+channel_stream::~channel_stream()
+{
+    stream.reset();
+}
+
+void channel_stream::close()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream.value().get().close();
+}
+
+std::string channel_stream::name()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().name();
+}
+
+void channel_stream::volume(int percent)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream.value().get().volume(percent);
+}
+
+int channel_stream::volume()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().volume();
+}
+
+int channel_stream::sample_rate()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().sample_rate();
+}
+
+int channel_stream::channels()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().channels();
+}
+
+size_t channel_stream::write(const double* samples, size_t count)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().write_channel(channel_, samples, count);
+}
+
+size_t channel_stream::write_interleaved(const double* samples, size_t count)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().write_interleaved(samples, count);
+}
+
+size_t channel_stream::read(double* samples, size_t count)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().read_channel(channel_, samples, count);
+}
+
+size_t channel_stream::read_interleaved(double* samples, size_t count)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().read_interleaved(samples, count);
+}
+
+bool channel_stream::wait_write_completed(int timeout_ms)
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream.value().get().wait_write_completed(timeout_ms);
+}
+
+void channel_stream::start()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream.value().get().start();
+}
+
+void channel_stream::stop()
+{
+    if (!stream.has_value())
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    stream.value().get().stop();
+}
+
+int channel_stream::channel() const
+{
+    return channel_;
+}
+
+channel_stream::operator bool() const
+{
+    return stream.has_value();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// channelized_stream                                               //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+channelized_stream::channelized_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::move(s))
+{
+    write_buffers_.resize(s->channels());
+}
+
+channelized_stream::~channelized_stream()
 {
     stream_.reset();
 }
 
-void channelized_buffered_thread_safe_stream::close()
+void channelized_stream::close()
 {
     stream_.reset();
 }
 
-std::string channelized_buffered_thread_safe_stream::name()
+std::string channelized_stream::name()
 {
     if (!stream_)
     {
@@ -311,7 +456,7 @@ std::string channelized_buffered_thread_safe_stream::name()
     return stream_->name();
 }
 
-void channelized_buffered_thread_safe_stream::volume(int percent)
+void channelized_stream::volume(int percent)
 {
     if (!stream_)
     {
@@ -320,7 +465,7 @@ void channelized_buffered_thread_safe_stream::volume(int percent)
     stream_->volume(percent);
 }
 
-int channelized_buffered_thread_safe_stream::volume()
+int channelized_stream::volume()
 {
     if (!stream_)
     {
@@ -329,7 +474,7 @@ int channelized_buffered_thread_safe_stream::volume()
     return stream_->volume();
 }
 
-int channelized_buffered_thread_safe_stream::sample_rate()
+int channelized_stream::sample_rate()
 {
     if (!stream_)
     {
@@ -338,7 +483,7 @@ int channelized_buffered_thread_safe_stream::sample_rate()
     return stream_->sample_rate();
 }
 
-int channelized_buffered_thread_safe_stream::channels()
+int channelized_stream::channels()
 {
     if (!stream_)
     {
@@ -347,53 +492,62 @@ int channelized_buffered_thread_safe_stream::channels()
     return stream_->channels();
 }
 
-size_t channelized_buffered_thread_safe_stream::write(const double* samples, size_t count)
+size_t channelized_stream::write(const double* samples, size_t count)
 {
     return 0;
 }
 
-size_t channelized_buffered_thread_safe_stream::write_interleaved(const double* samples, size_t count)
+size_t channelized_stream::write_interleaved(const double* samples, size_t count)
 {
     return 0;
 }
 
-size_t channelized_buffered_thread_safe_stream::read(double* samples, size_t count)
+size_t channelized_stream::read(double* samples, size_t count)
 {
     return 0;
 }
 
-size_t channelized_buffered_thread_safe_stream::read_interleaved(double* samples, size_t count)
+size_t channelized_stream::read_interleaved(double* samples, size_t count)
 {
     return 0;
 }
 
-bool channelized_buffered_thread_safe_stream::wait_write_completed(int timeout_ms)
+bool channelized_stream::wait_write_completed(int timeout_ms)
 {
     return false;
 }
 
 
-size_t channelized_buffered_thread_safe_stream::write_channel(size_t channel, const double* samples, size_t count)
+size_t channelized_stream::write_channel(size_t channel, const double* samples, size_t count)
 {
     return 0;
 }
 
-size_t channelized_buffered_thread_safe_stream::read_channel(size_t channel, double* samples, size_t count)
+size_t channelized_stream::read_channel(size_t channel, double* samples, size_t count)
 {
     return 0;
 }
 
-bool channelized_buffered_thread_safe_stream::write_lock(int timeout_ms)
+bool channelized_stream::write_lock(int timeout_ms)
 {
     return write_mutex_.try_lock_for(std::chrono::milliseconds(timeout_ms));
 }
 
-void channelized_buffered_thread_safe_stream::write_unlock()
+void channelized_stream::write_unlock()
 {
     write_mutex_.unlock();
 }
 
-void channelized_buffered_thread_safe_stream::start()
+bool channelized_stream::write_lock(int channel, int timeout_ms)
+{
+    return false;
+}
+
+void channelized_stream::write_unlock(int channel)
+{
+}
+
+void channelized_stream::start()
 {
     if (!stream_)
     {
@@ -402,7 +556,7 @@ void channelized_buffered_thread_safe_stream::start()
     stream_->start();
 }
 
-void channelized_buffered_thread_safe_stream::stop()
+void channelized_stream::stop()
 {
     if (!stream_)
     {
@@ -411,7 +565,21 @@ void channelized_buffered_thread_safe_stream::stop()
     stream_->stop();
 }
 
-channelized_buffered_thread_safe_stream::operator bool() const
+std::vector<channel_stream> channelized_stream::channel_streams()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    std::vector<channel_stream> result;
+    for (int i = 0; i < stream_->channels(); i++)
+    {
+        result.emplace_back(*this, i);
+    }
+    return result;
+}
+
+channelized_stream::operator bool() const
 {
     return stream_ != nullptr;
 }
@@ -832,19 +1000,11 @@ std::unique_ptr<audio_stream_base> audio_device::stream()
 
     if (type == audio_device_type::render)
     {
-        wasapi_audio_output_stream_impl stream_impl;
-        stream_impl.device_ = impl_->device_;
-        auto stream = std::make_unique<wasapi_audio_output_stream>(&stream_impl);
-        stream->start();
-        return stream;
+        return std::make_unique<wasapi_audio_output_stream>(impl_.get());
     }
     else if (type == audio_device_type::capture)
     {
-        wasapi_audio_input_stream_impl stream_impl;
-        stream_impl.device_ = impl_->device_;
-        auto stream = std::make_unique<wasapi_audio_input_stream>(&stream_impl);
-        stream->start();
-        return stream;
+        return std::make_unique<wasapi_audio_input_stream>(impl_.get());
     }
 #endif // WIN32
 
@@ -1156,7 +1316,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream()
 {
 }
 
-wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream_impl* impl)
+wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
 {
     impl_ = std::make_unique<wasapi_audio_output_stream_impl>();
     impl_->device_ = impl->device_;
@@ -1622,7 +1782,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream()
 {
 }
 
-wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl)
+wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
 {
     impl_ = std::make_unique<wasapi_audio_input_stream_impl>();
     impl_->device_ = impl->device_;

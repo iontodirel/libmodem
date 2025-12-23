@@ -39,6 +39,7 @@
 #include <string_view>
 #include <array>
 #include <span>
+#include <tuple>
 
 // Typedef for the packet type and packet type customization
 // A packet type has to be supplied externally, and it allows sharing of the type across various projects
@@ -693,11 +694,17 @@ LIBMODEM_AX25_NAMESPACE_BEGIN
 template <typename InputIt, typename OutputIt>
 std::pair<OutputIt, bool> try_parse_address(InputIt first, InputIt last, OutputIt out, int& ssid, bool& mark);
 
+template <typename InputIt, typename OutputIt>
+std::pair<OutputIt, bool> try_parse_address(InputIt first_it, InputIt last_it, OutputIt out, int& ssid, bool& mark, bool& last);
+
 template <typename InputIt>
 bool try_parse_address(InputIt first, InputIt last, std::string& address_text, int& ssid, bool& mark);
 
 template <typename InputIt>
 bool try_parse_address(InputIt first, InputIt last, struct address& address);
+
+template <typename InputIt, typename OutputIt>
+OutputIt parse_addresses(InputIt first, InputIt last, OutputIt out);
 
 bool try_parse_address(std::string_view data, std::string& address, int& ssid, bool& mark);
 bool try_parse_address(std::string_view data, struct address& address);
@@ -758,7 +765,14 @@ bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_stat
 bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
 
 template <typename InputIt, typename OutputIt>
-LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first, InputIt last, OutputIt out, int& ssid, bool& mark)
+LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first_it, InputIt last_it, OutputIt out, int& ssid, bool& mark)
+{
+    bool last = false;
+    return try_parse_address(first_it, last_it, out, ssid, mark, last);
+}
+
+template <typename InputIt, typename OutputIt>
+LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first_it, InputIt last_it, OutputIt out, int& ssid, bool& mark, bool& last)
 {
     // Parse an AX.25 address
     //
@@ -775,21 +789,24 @@ LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first, Input
 
     for (size_t i = 0; i < 6; i++)
     {
-        if (first == last)
+        if (first_it == last_it)
         {
             return { out, false }; // Fewer than 6 bytes
         }
-        address_text[i] = static_cast<uint8_t>(*first++) >> 1; // data is organized in 7 bits
+        address_text[i] = static_cast<uint8_t>(*first_it++) >> 1; // data is organized in 7 bits
     }
 
-    if (first == last)
+    if (first_it == last_it)
     {
         return { out, false }; // Missing byte 7
     }
 
-    ssid = (static_cast<uint8_t>(*first) >> 1) & 0b00001111; // 0xF masks for bits 1-4
+    // The ssid is shifted left by 1 bit, bits 1-4 contain the SSID
+    ssid = (static_cast<uint8_t>(*first_it) >> 1) & 0b00001111; // 0xF mask for bits 1-4
 
-    mark = (static_cast<uint8_t>(*first) & 0b10000000) != 0; // 0x80 masks for the H bit in the last byte
+    mark = (static_cast<uint8_t>(*first_it) & 0b10000000) != 0; // 0x80 mask for the H bit in the last byte
+
+    last = (static_cast<uint8_t>(*first_it) & 0b00000001) != 0; // 0x01 mask for the last address marker
 
     std::string_view address_text_trimmed = trim(address_text);
 
@@ -830,6 +847,21 @@ LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, struct addre
     }
 
     return LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, address);
+}
+
+template <typename InputIt, typename OutputIt>
+LIBMODEM_INLINE OutputIt parse_addresses(InputIt first, InputIt last, OutputIt out)
+{
+    while (std::distance(first, last) >= 7)
+    {
+        struct address address;
+        auto next = std::next(first, 7);
+        LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(first, next, address);
+        *out++ = address;
+        first = next;
+    }
+
+    return out;
 }
 
 template <typename InputIt>
@@ -1044,6 +1076,107 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
     return true;
 }
 
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, std::array<uint8_t, 2>& crc)
+{
+    size_t frame_size = std::distance(frame_it_first, frame_it_last);
+
+    if (frame_size < 18)
+    {
+        return { path, data, false };
+    }
+
+    std::array<uint8_t, 2> computed_crc = compute_crc_using_lut(frame_it_first, frame_it_last - 2);
+    std::array<uint8_t, 2> received_crc = { *(frame_it_last - 2), *(frame_it_last - 1) };
+
+    crc = received_crc;
+
+    // Check CRC validity
+    if (computed_crc != received_crc)
+    {
+        return { path, data, false };
+    }
+
+    LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address({ reinterpret_cast<const char*>(&(*frame_it_first)), 7 }, to);
+    LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address({ reinterpret_cast<const char*>(&(*(frame_it_first + 7))), 7 }, from);
+
+    // C-bit in source/destination has different meaning than H-bit in digipeaters; ignore it
+    to.mark = false;
+    from.mark = false;
+
+    size_t addresses_start = 14;
+    size_t addresses_end_position = addresses_start;
+
+    bool found_last_address = false;
+
+    // Check if there are no path addresses (i.e., the source address is the last address)
+    if (*(frame_it_first + 13) & 0x01)
+    {
+        found_last_address = true;
+    }
+
+    // Parse path addresses until we find the last address
+    // Each address is 7 bytes long
+    // The last address is indicated by the extension bit (bit 0 of byte 6) being set
+    // or by the Control Field indicating a U-frame or S-frame
+    for (size_t i = addresses_start; !found_last_address && i + 7 <= frame_size - 2; i += 7)
+    {
+        // First check if this looks like a Control Field (U-frame or S-frame)
+        if ((*(frame_it_first + i) & 0x03) == 0x03 || (*(frame_it_first + i) & 0x03) == 0x01)
+        {
+            addresses_end_position = i;
+            found_last_address = true;
+        }
+        // Otherwise check if the extension bit (bit 0 of byte 6) is set
+        else if (*(frame_it_first + i + 6) & 0x01)
+        {
+            addresses_end_position = i + 7;
+            found_last_address = true;
+        }
+    }
+
+    if (!found_last_address)
+    {
+        return { path, data, false };
+    }
+
+    size_t addresses_length = addresses_end_position - addresses_start;
+
+    // Ensure that the addresses length is a multiple of 7
+    if (addresses_length % 7 != 0)
+    {
+        return { path, data, false };
+    }
+
+    if (addresses_length > 0)
+    {
+        path = parse_addresses(frame_it_first + addresses_start, frame_it_first + addresses_end_position, path);
+    }
+
+    size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
+
+    // Check bounds before calculating length so that we do not underflow
+    if (info_field_start > frame_size - 2)
+    {
+        return { path, data, false };
+    }
+
+    size_t info_field_length = (frame_size - 2) - info_field_start; // subtract CRC bytes
+
+    // Ensure that the info field does not exceed frame bounds
+    if ((info_field_start + info_field_length) > (frame_size - 2))
+    {
+        return { path, data, false };
+    }
+
+    if (info_field_length > 0)
+    {
+        data = std::copy(frame_it_first + info_field_start, frame_it_first + info_field_start + info_field_length, data);
+    }
+
+    return { path, data, true };
+}
+
 template<typename OutputIt>
 LIBMODEM_INLINE OutputIt encode_header(const address& from, const address& to, const std::vector<address>& path, OutputIt out)
 {
@@ -1077,6 +1210,7 @@ LIBMODEM_INLINE OutputIt encode_addresses(const std::vector<address>& path, Outp
         std::array<uint8_t, 7> address_bytes = encode_address(path[i], last);
         out = std::copy(address_bytes.begin(), address_bytes.end(), out);
     }
+
     return out;
 }
 
@@ -1095,6 +1229,7 @@ LIBMODEM_INLINE OutputIt encode_addresses(InputIt path_first_it, InputIt path_la
         std::array<uint8_t, 7> address_bytes = encode_address(*it, last);
         out = std::copy(address_bytes.begin(), address_bytes.end(), out);
     }
+
     return out;
 }
 

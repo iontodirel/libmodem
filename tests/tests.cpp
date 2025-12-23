@@ -101,6 +101,7 @@ std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25)
 static std::string replace_crlf(std::string_view s);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, const std::string& packets_filename);
+std::vector<double> generate_audio_samples(double duration_seconds, double frequency, double gain, double sample_rate);
 
 std::vector<uint8_t> generate_random_bits(size_t count)
 {
@@ -120,7 +121,7 @@ size_t random_size(size_t max_size)
 {
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    std::uniform_int_distribution<size_t> dis(8, max_size);
+    std::uniform_int_distribution<size_t> dis(1, max_size);
     return dis(gen);
 }
 
@@ -375,7 +376,7 @@ void direwolf_output_to_packets(const std::string& direwolf_output_filename, std
             {
                 std::string packet_string = line.substr(bracket_end + 2);
 
-#if 0
+#ifdef REPLACE_DIREWOLF_HEX_MARKERS
                 // Replace hex markers with readable names
                 size_t p;
                 while ((p = packet_string.find("<0x0d>")) != std::string::npos)
@@ -423,6 +424,22 @@ void direwolf_output_to_packets(const std::string& direwolf_output_filename, con
         outfile << packet << "\n";
     }
     outfile.close();
+}
+
+std::vector<double> generate_audio_samples(double duration_seconds, double frequency, double gain, double sample_rate)
+{
+    constexpr double pi = 3.14159265358979323846;
+
+    const size_t total_samples = static_cast<size_t>(std::llround(sample_rate * duration_seconds));
+
+    std::vector<double> samples(total_samples);
+
+    for (size_t i = 0; i < total_samples; ++i)  
+    {
+        samples[i] = gain * std::sin(2.0 * pi * frequency * static_cast<double>(i) / sample_rate);
+    }
+
+    return samples;
 }
 
 // **************************************************************** //
@@ -972,6 +989,143 @@ TEST(ax25, try_parse_address_output_iterator)
         EXPECT_EQ(ssid, 11);
         EXPECT_FALSE(mark);
     }
+
+    {
+        // Not enough bytes
+
+        std::string address;
+        int ssid = -1;
+        bool mark = false;
+        std::array<uint8_t, 6> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98 };
+        auto [_, result] = try_parse_address(address_bytes.begin(), address_bytes.end(), std::back_inserter(address), ssid, mark);
+        EXPECT_FALSE(result);
+        EXPECT_EQ(address, "");
+        EXPECT_EQ(ssid, -1);
+        EXPECT_FALSE(mark);
+    }
+}
+
+TEST(ax25, parse_addresses)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // Test 1: Exactly 7 bytes - one complete address (N0CALL-10)
+    {
+        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        std::string_view data(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size());
+        std::vector<address> addresses;
+        parse_addresses(data, addresses);
+        EXPECT_TRUE(addresses.size() == 1);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+    }
+
+    // Test 2: Exactly 14 bytes - two complete addresses (N0CALL-10, N0CALL-11)
+    {
+        std::array<uint8_t, 14> address_bytes = { 
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,  // N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x76   // N0CALL-11
+        };
+        std::string_view data(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size());
+        std::vector<address> addresses;
+        parse_addresses(data, addresses);
+        EXPECT_TRUE(addresses.size() == 2);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+        EXPECT_TRUE(addresses[1].text == "N0CALL");
+        EXPECT_TRUE(addresses[1].ssid == 11);
+        EXPECT_FALSE(addresses[1].mark);
+    }
+
+    // Test 3: 6 bytes - not enough for one address, should not crash
+    {
+        std::array<uint8_t, 6> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98 };
+        std::string_view data(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size());
+        std::vector<address> addresses;
+        parse_addresses(data, addresses);
+        EXPECT_TRUE(addresses.size() == 0);
+    }
+
+    // Test 4: 13 bytes - one complete address + 6 trailing bytes (incomplete)
+    // Should parse exactly 1 address and ignore the trailing incomplete data
+    {
+        std::array<uint8_t, 13> address_bytes = { 
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,  // N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98         // incomplete (6 bytes)
+        };
+        std::string_view data(reinterpret_cast<const char*>(address_bytes.data()), address_bytes.size());
+        std::vector<address> addresses;
+        parse_addresses(data, addresses);
+        EXPECT_TRUE(addresses.size() == 1);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+    }
+}
+
+TEST(ax25, parse_addresses_output_iterator)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // Test 1: Exactly 7 bytes - one complete address (N0CALL-10)
+    {
+        std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
+        std::vector<address> addresses;
+        parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
+        EXPECT_TRUE(addresses.size() == 1);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+    }
+
+    // Test 2: Exactly 14 bytes - two complete addresses (N0CALL-10, N0CALL-11)
+    {
+        std::array<uint8_t, 14> address_bytes = { 
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,  // N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x76   // N0CALL-11
+        };
+        std::vector<address> addresses;
+        parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
+        EXPECT_TRUE(addresses.size() == 2);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+        EXPECT_TRUE(addresses[1].text == "N0CALL");
+        EXPECT_TRUE(addresses[1].ssid == 11);
+        EXPECT_FALSE(addresses[1].mark);
+    }
+
+    // Test 3: 6 bytes - not enough for one address, should not crash
+    {
+        std::array<uint8_t, 6> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98 };
+        std::vector<address> addresses;
+        parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
+        EXPECT_TRUE(addresses.size() == 0);
+    }
+
+    // Test 4: 13 bytes - one complete address + 6 trailing bytes (incomplete)
+    {
+        std::array<uint8_t, 13> address_bytes = { 
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,  // N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98         // incomplete (6 bytes)
+        };
+        std::vector<address> addresses;
+        parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
+        EXPECT_TRUE(addresses.size() == 1);
+        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(addresses[0].ssid == 10);
+        EXPECT_FALSE(addresses[0].mark);
+    }
+
+    // Test 5: Empty input
+    {
+        std::array<uint8_t, 0> address_bytes = {};
+        std::vector<address> addresses;
+        parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
+        EXPECT_TRUE(addresses.size() == 0);
+    }
 }
 
 TEST(ax25, parse_address_ssid_0_15)
@@ -1144,6 +1298,120 @@ LIBMODEM_AX25_USING_NAMESPACE
         EXPECT_TRUE(try_decode_frame(frame, p));
 
         EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001:Hello, APRS!");
+    }
+}
+
+TEST(ax25, try_decode_frame_output_iterator_stack)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    {
+        // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        std::vector<uint8_t> frame = {
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2 (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x50, 0x7B
+        };
+
+        address from;
+        address to;
+        std::array<address, 9> path;
+        std::array<uint8_t, 255> data;
+        std::array<uint8_t, 2> crc;
+        auto [path_it, data_it, success] = try_decode_frame(frame.begin(), frame.end(), from, to, path.begin(), data.begin(), crc);
+        size_t path_size = std::distance(path.begin(), path_it);
+        size_t data_size = std::distance(data.begin(), data_it);
+        EXPECT_TRUE(success);
+        EXPECT_TRUE(to_string(from) == "N0CALL-10");
+        EXPECT_TRUE(to_string(to) == "APZ001");
+        EXPECT_TRUE(path_size == 2);
+        EXPECT_TRUE(to_string(path[0]) == "WIDE1-1");
+        EXPECT_TRUE(to_string(path[1]) == "WIDE2-2");
+        EXPECT_TRUE(data_size == 12);
+        EXPECT_TRUE(std::vector<uint8_t>(data.begin(), data_it) == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
+        EXPECT_TRUE(crc[0] == 0x50);
+        EXPECT_TRUE(crc[1] == 0x7B);
+    }
+
+    {
+        std::vector<uint8_t> frame = {
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10 (last addr, end bit set NOT SET)
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x84, 0xAE
+        };
+
+        address from;
+        address to;
+        std::array<address, 9> path;
+        std::array<uint8_t, 255> data;
+        std::array<uint8_t, 2> crc;
+        auto [path_it, data_it, success] = try_decode_frame(frame.begin(), frame.end(), from, to, path.begin(), data.begin(), crc);
+        size_t path_size = std::distance(path.begin(), path_it);
+        size_t data_size = std::distance(data.begin(), data_it);
+        EXPECT_TRUE(success);
+        EXPECT_TRUE(to_string(from) == "N0CALL-10");
+        EXPECT_TRUE(to_string(to) == "APZ001");
+        EXPECT_TRUE(path_size == 0);
+        EXPECT_TRUE(data_size == 12);
+        EXPECT_TRUE(std::vector<uint8_t>(data.begin(), data_it) == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
+        EXPECT_TRUE(crc[0] == 0x84);
+        EXPECT_TRUE(crc[1] == 0xAE);
+    }
+
+    {
+        std::vector<uint8_t> frame = {
+            // Destination: APZ001
+            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+            // Source: N0CALL-10
+            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+            // Path 1: WIDE1-1
+            0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+            // Path 2: WIDE2-2* (last addr, end bit set)
+            0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0xE5,
+            // Control, PID
+            0x03, 0xF0,
+            // Payload: "Hello, APRS!"
+            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
+            // CRC (FCS), little-endian
+            0x25, 0x44
+        };
+
+        address from;
+        address to;
+        std::array<address, 9> path;
+        std::array<uint8_t, 255> data;
+        std::array<uint8_t, 2> crc;
+        auto [path_it, data_it, success] = try_decode_frame(frame.begin(), frame.end(), from, to, path.begin(), data.begin(), crc);
+        size_t path_size = std::distance(path.begin(), path_it);
+        size_t data_size = std::distance(data.begin(), data_it);
+        EXPECT_TRUE(success);
+        EXPECT_TRUE(to_string(from) == "N0CALL-10");
+        EXPECT_TRUE(to_string(to) == "APZ001");
+        EXPECT_TRUE(path_size == 2);
+        EXPECT_TRUE(to_string(path[0]) == "WIDE1-1");
+        EXPECT_TRUE(to_string(path[1]) == "WIDE2-2*");
+        EXPECT_TRUE(data_size == 12);
+        EXPECT_TRUE(std::vector<uint8_t>(data.begin(), data_it) == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
+        EXPECT_TRUE(crc[0] == 0x25);
+        EXPECT_TRUE(crc[1] == 0x44);
     }
 }
 
@@ -2529,6 +2797,9 @@ LIBMODEM_AX25_USING_NAMESPACE
             packet_str = replace_crlf(packet_str); // replace newlines for printing
             
             fmt::print("packet: ");
+            // Write to stdout directly to handle some invalid UTF-8 sequences
+            // present in some of the packets
+            // Some of the packets heard over the air contain bytes that are invalid under UTF-8
             std::cout.write(packet_str.data(), packet_str.size());
             fmt::print("\n\n");
         }
@@ -2552,6 +2823,11 @@ LIBMODEM_AX25_USING_NAMESPACE
         if (c == '0') bitstream.push_back(0);
         else if (c == '1') bitstream.push_back(1);
     }
+
+    // Decode all packets and store their bitstreams and NRZI levels
+    // For each frame decoded, save the bitstream from preamble to postamble
+    // Also save the NRZI level at the end of the frame for use in re-decoding
+    // Store all packets in a vector for later comparison
 
     std::vector<aprs::router::packet> packets;
 
@@ -2582,26 +2858,29 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     EXPECT_TRUE(packets.size() == 1005);
 
-    std::vector<aprs::router::packet> diag_packets;
+    // Decode each saved packet bitstream again using its saved NRZI level
+    // Compare the restored packets to the original packets
 
-    for (int j = 0; const auto& packet_bitstream : packet_bitstreams)
+    std::vector<aprs::router::packet> restored_packets;
+
+    for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
         bitstream_state packet_state;
-        packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[j];
+        packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
             aprs::router::packet packet;
             if (try_decode_basic_bitstream(bit, packet, packet_state))
             {
-                diag_packets.push_back(packet);
+                restored_packets.push_back(packet);
             }
         }
-        j++;
+        i++;
     }
 
-    EXPECT_TRUE(diag_packets.size() == 1005);
+    EXPECT_TRUE(restored_packets.size() == 1005);
 
-    EXPECT_TRUE(packets == diag_packets);
+    EXPECT_TRUE(packets == restored_packets);
 }
 
 TEST(bitstream, try_decode_basic_bitstream_1005_enable_diagnostics_batch)
@@ -2621,6 +2900,11 @@ LIBMODEM_AX25_USING_NAMESPACE
         if (c == '0') bitstream.push_back(0);
         else if (c == '1') bitstream.push_back(1);
     }
+
+    // Decode all packets and store their bitstreams and NRZI levels
+    // For each frame decoded, save the bitstream from preamble to postamble
+    // Also save the NRZI level at the end of the frame for use in re-decoding
+    // Store all packets in a vector for later comparison
 
     std::vector<aprs::router::packet> packets;
 
@@ -2655,26 +2939,29 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     EXPECT_TRUE(packets.size() == 1005);
 
-    std::vector<aprs::router::packet> diag_packets;
+    // Decode each saved packet bitstream again using its saved NRZI level
+    // Compare the restored packets to the original packets
 
-    for (int j = 0; const auto& packet_bitstream : packet_bitstreams)
+    std::vector<aprs::router::packet> restored_packets;
+
+    for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
         bitstream_state packet_state;
-        packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[j];
+        packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
             aprs::router::packet packet;
             if (try_decode_basic_bitstream(bit, packet, packet_state))
             {
-                diag_packets.push_back(packet);
+                restored_packets.push_back(packet);
             }
         }
-        j++;
+        i++;
     }
 
-    EXPECT_TRUE(diag_packets.size() == 1005);
+    EXPECT_TRUE(restored_packets.size() == 1005);
 
-    EXPECT_TRUE(packets == diag_packets);
+    EXPECT_TRUE(packets == restored_packets);
 }
 
 TEST(bitstream, try_decode_basic_bitstream_shared_preamble_postamble)
@@ -3559,6 +3846,8 @@ TEST(audio_stream, render_10s_stream)
 
     audio_stream stream = device.stream();
 
+    stream.start();
+
     stream.volume(25);
 
     // Write a  tone for 10 seconds, in chunks
@@ -3566,37 +3855,22 @@ TEST(audio_stream, render_10s_stream)
 
     wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
 
-    constexpr double frequency = 440.0;
-    constexpr double amplitude = 0.3;
-    constexpr int duration_seconds = 10;
-    constexpr double pi = 3.14159265358979323846;
-
-    const double sample_rate = static_cast<double>(stream.sample_rate());
-    const int total_samples = static_cast<int>(sample_rate * duration_seconds);
-
-    size_t chunk_size = static_cast<size_t>(sample_rate / 500);  // 5ms
-
-    std::vector<double> chunk(chunk_size);
-    int n = 0;
+    std::vector<double> audio_buffer = generate_audio_samples(10.0, 440.0, 0.01, static_cast<double>(stream.sample_rate()));
 
     // After 5-8 seconds on playback, you might hear small increments in volume
     // This is likely due to the audio device's internal volume leveling or AGC kicking in
     // There is no control over this behavior in WASAPI, on in Windows
 
-    while (n < total_samples)
+    size_t chunk_size = stream.sample_rate() / 500;  // 2ms
+
+    size_t samples_written = 0;
+
+    while (samples_written < audio_buffer.size())
     {
-        size_t samples_to_write = (std::min)(chunk_size, static_cast<size_t>(total_samples - n));
-
-        for (size_t i = 0; i < samples_to_write; ++i)
-        {
-            chunk[i] = amplitude * std::sin(2.0 * pi * frequency * (n + i) / sample_rate);
-        }
-
-        stream.write(chunk.data(), samples_to_write);
-
-        wav_stream.write(chunk.data(), samples_to_write);
-
-        n += static_cast<int>(samples_to_write);
+        size_t samples_to_write = (std::min)(chunk_size, audio_buffer.size() - samples_written);
+        size_t written = stream.write(audio_buffer.data() + samples_written, samples_to_write);
+        wav_stream.write(audio_buffer.data() + samples_written, written);
+        samples_written += written;
     }
 
     stream.wait_write_completed(-1);
@@ -3631,10 +3905,75 @@ TEST(audio_stream, modem_transmit_1200)
     m.initialize(stream, modulator, bitstream_converter);
 
     // Set audio stream volume to 30%
-    stream.volume(30);
+    stream.volume(20);
 
     // Send the modulated packet to the audio device
     m.transmit(p);
+}
+
+TEST(audio_stream, modem_transmit_10_1200)
+{
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Set audio stream volume to 30%
+    stream.volume(30);
+
+    // Send the modulated packet to the audio device
+    for (int i = 0; i < 10; i++)
+    {
+        m.transmit(p);
+    }
+}
+
+TEST(audio_stream, modem_transmit_10_continuous_1200)
+{
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    std::vector<uint8_t> bitstream;
+
+    for (int i = 0; i < 10; i++)
+    {
+        std::vector<uint8_t> packet_bitstream = bitstream_converter.encode(p, 45, 30);
+        bitstream.insert(bitstream.end(), packet_bitstream.begin(), packet_bitstream.end());
+    }
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(0.1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Set audio stream volume to 30%
+    stream.volume(30);
+
+    // Send the modulated packet to the audio device
+    m.transmit(bitstream);
 }
 
 TEST(audio_stream, wasapi_audio_output_stream_loopback_modem_transmit_1200) // generic for linux too!
@@ -3654,6 +3993,8 @@ TEST(audio_stream, wasapi_audio_output_stream_loopback_modem_transmit_1200) // g
         audio_device capture_device = std::move(devices[1]);
 
         audio_stream capture_stream = capture_device.stream();
+
+        capture_stream.start();
 
         wav_audio_output_stream wav_stream("loopback_capture.wav", capture_stream.sample_rate());
 
@@ -3746,6 +4087,8 @@ TEST(audio_stream, capture_5s_stream)
 
     audio_stream stream = device.stream();
 
+    stream.start();
+
     EXPECT_TRUE(stream.sample_rate() > 0);
 
     wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
@@ -3785,6 +4128,8 @@ TEST(audio_stream, capture_5s_stream_no_buffer)
         try_get_default_audio_device(device, audio_device_type::capture);
 
         audio_stream stream = device.stream();
+
+        stream.start();
 
         buffer.resize(stream.sample_rate() * 5); // 5 seconds
         sample_rate = stream.sample_rate();
@@ -3862,6 +4207,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     aprs::router::packet packet = packet_string;
 
     {
+        // Modulate to a wav file
+
         wav_audio_output_stream wav_stream("test.wav", 48000);
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
         basic_bitstream_converter_adapter bitstream_converter;
@@ -3878,10 +4225,11 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
         m.transmit(packet);
 
         wav_stream.close();
-
     }
 
     {
+        // Copy wav file to another wav file
+
         wav_audio_input_stream wav_input_stream("test.wav");
         wav_audio_output_stream wav_output_stream("test2.wav", 48000);
 
@@ -3917,14 +4265,18 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
         wav_output_stream.close();
     }
 
-    std::string output;
-    std::string error;
+    {
+        // Demodulate the copied wav file with Direwolf
 
-    // Run Direwolf's ATEST with -B 1200 -d x
-    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test2.wav");
+        std::string output;
+        std::string error;
 
-    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+        // Run Direwolf's ATEST with -B 1200 -d x
+        run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test2.wav");
+
+        // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+    }
 }
 
 int main(int argc, char** argv)

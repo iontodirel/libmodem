@@ -468,7 +468,7 @@ bool try_parse_address(std::string_view data, struct address& address)
 void parse_addresses(std::string_view data, std::vector<address>& addresses)
 {
     addresses.clear();
-    for (size_t i = 0; i < data.size(); i += 7)
+    for (size_t i = 0; (i + 7) <= data.size(); i += 7)
     {
         struct address address;
         LIBMODEM_AX25_NAMESPACE_REFERENCE try_parse_address(data.substr(i, 7), address);

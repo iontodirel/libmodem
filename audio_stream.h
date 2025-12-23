@@ -93,6 +93,11 @@ struct audio_stream_base
         return wait_write_completed(static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count()));
     }
 
+    virtual void wait_write_completed()
+    {
+        wait_write_completed(-1);
+    }
+
     virtual bool wait_write_completed(int timeout_ms) = 0;
 
     virtual void start() = 0;
@@ -118,7 +123,7 @@ public:
     audio_stream& operator=(audio_stream&&) = default;
     audio_stream(const audio_stream&) = delete;
     audio_stream& operator=(const audio_stream&) = delete;
-    ~audio_stream();
+    virtual ~audio_stream();
 
     void close() override;
 
@@ -147,21 +152,76 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// channelized_buffered_thread_safe_stream                          //
+// channelized_stream_base                                          //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-class channelized_buffered_thread_safe_stream : public audio_stream_base
+struct channelized_stream_base : public audio_stream_base
+{
+    virtual size_t write_channel(size_t channel, const double* samples, size_t count) = 0;
+    virtual size_t read_channel(size_t channel, double* samples, size_t count) = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// channel_stream                                                   //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class channel_stream : public audio_stream_base
 {
 public:
-    channelized_buffered_thread_safe_stream(std::unique_ptr<audio_stream_base> s);
+    channel_stream(channelized_stream_base& stream, int channel);
+    virtual ~channel_stream();
 
-    channelized_buffered_thread_safe_stream(channelized_buffered_thread_safe_stream&&) = default;
-    channelized_buffered_thread_safe_stream& operator=(channelized_buffered_thread_safe_stream&&) = default;
-    channelized_buffered_thread_safe_stream(const channelized_buffered_thread_safe_stream&) = delete;
-    channelized_buffered_thread_safe_stream& operator=(const channelized_buffered_thread_safe_stream&) = delete;
-    ~channelized_buffered_thread_safe_stream();
+    void close() override;
+
+    std::string name() override;
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    int channels() override;
+
+    size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
+    bool wait_write_completed(int timeout_ms) override;
+
+    void start() override;
+    void stop() override;
+
+    int channel() const;
+
+    explicit operator bool() const;
+
+private:
+    std::optional<std::reference_wrapper<channelized_stream_base>> stream;
+    int channel_ = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// channelized_stream                                               //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class channelized_stream : public channelized_stream_base
+{
+public:
+    channelized_stream(std::unique_ptr<audio_stream_base> s);
+
+    channelized_stream(channelized_stream&&) = default;
+    channelized_stream& operator=(channelized_stream&&) = default;
+    channelized_stream(const channelized_stream&) = delete;
+    channelized_stream& operator=(const channelized_stream&) = delete;
+    ~channelized_stream();
 
     void close() override;
 
@@ -183,10 +243,15 @@ public:
 
     bool write_lock(int timeout_ms);
     void write_unlock();
+    bool write_lock(int channel, int timeout_ms);
+    void write_unlock(int channel);
+
     void flush();
 
     void start() override;
     void stop() override;
+
+    std::vector<channel_stream> channel_streams();
 
     explicit operator bool() const;
 
@@ -257,7 +322,7 @@ friend std::vector<audio_device> get_audio_devices();
     audio_device& operator=(const audio_device& other) = delete;
     audio_device(audio_device&&) noexcept;
     audio_device& operator=(audio_device&& other) noexcept;
-    ~audio_device();
+    virtual ~audio_device();
 
     std::unique_ptr<audio_stream_base> stream();
 
@@ -350,11 +415,13 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 #if WIN32
 
 struct wasapi_audio_output_stream_impl;
+struct audio_device_impl;
 
-struct wasapi_audio_output_stream : public audio_stream_base
+class wasapi_audio_output_stream : public audio_stream_base
 {
+public:
     wasapi_audio_output_stream();
-    wasapi_audio_output_stream(wasapi_audio_output_stream_impl* impl);
+    wasapi_audio_output_stream(audio_device_impl* impl);
     wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream(wasapi_audio_output_stream&&) noexcept;
@@ -403,11 +470,12 @@ private:
 #if WIN32
 
 struct wasapi_audio_input_stream_impl;
+struct audio_device_impl;
 
 struct wasapi_audio_input_stream : public audio_stream_base
 {
     wasapi_audio_input_stream();
-    wasapi_audio_input_stream(wasapi_audio_input_stream_impl* impl);
+    wasapi_audio_input_stream(audio_device_impl* impl);
     wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream(wasapi_audio_input_stream&&) noexcept;
