@@ -486,6 +486,10 @@ LIBMODEM_INLINE std::array<uint8_t, 2> compute_crc_using_lut(InputIt first, Inpu
     return { static_cast<uint8_t>(crc & 0xFF), static_cast<uint8_t>((crc >> 8) & 0xFF) };
 }
 
+uint16_t compute_crc_using_lut_init();
+uint16_t compute_crc_using_lut_update(uint8_t byte, uint16_t crc);
+std::array<uint8_t, 2> compute_crc_using_lut_finalize(uint16_t crc);
+
 template<typename InputIt, typename OutputIt>
 LIBMODEM_INLINE OutputIt bit_stuff(InputIt first, InputIt last, OutputIt out)
 {
@@ -562,8 +566,8 @@ LIBMODEM_INLINE OutputIt bit_unstuff(InputIt first, InputIt last, OutputIt out)
     return out;
 }
 
-template<typename It>
-LIBMODEM_INLINE void nrzi_encode(It first, It last)
+template<typename InputIt>
+LIBMODEM_INLINE void nrzi_encode(InputIt first, InputIt last)
 {
     // Encodes bitstream in-place to ensure signal transitions for clock recovery
     // NRZI: 0-bit = toggle level, 1-bit = keep level
@@ -573,7 +577,7 @@ LIBMODEM_INLINE void nrzi_encode(It first, It last)
     //   Input:  1 0 1 1 0 0 1
     //   Output: 0 1 1 1 0 1 1
 
-    int level = 0; // Start at level 0
+    uint8_t level = 0; // Start at level 0
 
     for (auto it = first; it != last; ++it)
     {

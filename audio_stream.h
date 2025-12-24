@@ -161,6 +161,8 @@ struct channelized_stream_base : public audio_stream_base
 {
     virtual size_t write_channel(size_t channel, const double* samples, size_t count) = 0;
     virtual size_t read_channel(size_t channel, double* samples, size_t count) = 0;
+    virtual bool write_lock(int channel, int timeout_ms) = 0;
+    virtual void write_unlock(int channel) = 0;
 };
 
 // **************************************************************** //
@@ -216,7 +218,6 @@ class channelized_stream : public channelized_stream_base
 {
 public:
     channelized_stream(std::unique_ptr<audio_stream_base> s);
-
     channelized_stream(channelized_stream&&) = default;
     channelized_stream& operator=(channelized_stream&&) = default;
     channelized_stream(const channelized_stream&) = delete;
@@ -243,8 +244,8 @@ public:
 
     bool write_lock(int timeout_ms);
     void write_unlock();
-    bool write_lock(int channel, int timeout_ms);
-    void write_unlock(int channel);
+    bool write_lock(int channel, int timeout_ms) override;
+    void write_unlock(int channel) override;
 
     void flush();
 
