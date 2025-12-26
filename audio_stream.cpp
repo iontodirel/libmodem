@@ -2464,6 +2464,195 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
     return available / channels_;
 }
 
+//size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count)
+//{
+//    if (!impl_ || impl_->capture_client_ == nullptr)
+//    {
+//        throw std::runtime_error("Stream not initialized");
+//    }
+//
+//    if (samples == nullptr || count == 0)
+//    {
+//        return 0;
+//    }
+//
+//    ensure_com_initialized();
+//
+//    HRESULT hr;
+//    HANDLE wait_array[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
+//
+//    // Wait for audio data or stop signal
+//    DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
+//
+//    switch (wait_result)
+//    {
+//        case WAIT_OBJECT_0:
+//            // stop_capture_event_ was signaled
+//            return 0;
+//
+//        case WAIT_OBJECT_0 + 1:
+//            // audio_samples_ready_event_ was signaled
+//            break;
+//
+//        case WAIT_FAILED:
+//        default:
+//            throw std::runtime_error("WaitForMultipleObjects failed");
+//    }
+//
+//    // Get one packet
+//    BYTE* buffer = nullptr;
+//    UINT32 frames_available = 0;
+//    DWORD flags = 0;
+//
+//    hr = impl_->capture_client_->GetBuffer(&buffer, &frames_available, &flags, nullptr, nullptr);
+//    if (FAILED(hr))
+//    {
+//        if (hr == AUDCLNT_S_BUFFER_EMPTY)
+//        {
+//            return 0;
+//        }
+//        throw std::runtime_error("Failed to get buffer");
+//    }
+//
+//    UINT32 frames_to_copy = (std::min)(frames_available, static_cast<UINT32>(count));
+//    size_t samples_to_copy = frames_to_copy * channels_;
+//
+//    if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
+//    {
+//        std::fill_n(samples, samples_to_copy, 0.0);
+//    }
+//    else
+//    {
+//        const float* captured_samples = reinterpret_cast<const float*>(buffer);
+//        for (size_t i = 0; i < samples_to_copy; i++)
+//        {
+//            samples[i] = captured_samples[i];
+//        }
+//    }
+//
+//    // Release entire buffer (data beyond count is discarded)
+//    hr = impl_->capture_client_->ReleaseBuffer(frames_available);
+//    if (FAILED(hr))
+//    {
+//        throw std::runtime_error("Failed to release buffer");
+//    }
+//
+//    return frames_to_copy;
+//}
+//
+//size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count)
+//{
+//    if (!impl_ || impl_->capture_client_ == nullptr)
+//    {
+//        throw std::runtime_error("Stream not initialized");
+//    }
+//
+//    if (samples == nullptr || count == 0)
+//    {
+//        return 0;
+//    }
+//
+//    ensure_com_initialized();
+//
+//    HRESULT hr;
+//    size_t frames_read = 0;
+//
+//    // First, consume any overflow from previous reads
+//    if (!impl_->overflow_.empty())
+//    {
+//        size_t overflow_frames = impl_->overflow_.size() / channels_;
+//        size_t frames_to_copy = (std::min)(overflow_frames, count);
+//        size_t samples_to_copy = frames_to_copy * channels_;
+//
+//        for (size_t i = 0; i < samples_to_copy; i++)
+//        {
+//            samples[i] = impl_->overflow_[i];
+//        }
+//
+//        frames_read = frames_to_copy;
+//
+//        // Remove used samples from overflow
+//        impl_->overflow_.erase(impl_->overflow_.begin(), impl_->overflow_.begin() + samples_to_copy);
+//    }
+//
+//    HANDLE wait_array[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
+//
+//    while (frames_read < count)
+//    {
+//        // Wait for audio data or stop signal
+//        DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
+//
+//        if (wait_result == WAIT_OBJECT_0)
+//        {
+//            // stop_capture_event_ was signaled
+//            return frames_read;
+//        }
+//
+//        if (wait_result == WAIT_FAILED)
+//        {
+//            throw std::runtime_error("WaitForMultipleObjects failed");
+//        }
+//
+//        // WAIT_OBJECT_0 + 1: audio_samples_ready_event_ was signaled
+//        // Drain all available packets
+//        UINT32 packet_size = 0;
+//        while (SUCCEEDED(impl_->capture_client_->GetNextPacketSize(&packet_size)) && packet_size > 0)
+//        {
+//            BYTE* buffer = nullptr;
+//            UINT32 frames_available = 0;
+//            DWORD flags = 0;
+//
+//            if (FAILED(hr = impl_->capture_client_->GetBuffer(&buffer, &frames_available, &flags, nullptr, nullptr)))
+//            {
+//                throw std::runtime_error("Failed to get buffer");
+//            }
+//
+//            UINT32 frames_to_copy = (std::min)(frames_available, static_cast<UINT32>(count - frames_read));
+//            size_t samples_to_copy = frames_to_copy * channels_;
+//            size_t samples_end_pos = frames_read * channels_;
+//
+//            if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
+//            {
+//                std::fill_n(samples + samples_end_pos, samples_to_copy, 0.0);
+//
+//                // Store overflow as silence
+//                size_t overflow_frames = frames_available - frames_to_copy;
+//                impl_->overflow_.insert(impl_->overflow_.end(), overflow_frames * channels_, 0.0f);
+//            }
+//            else
+//            {
+//                const float* captured_samples = reinterpret_cast<const float*>(buffer);
+//
+//                for (size_t i = 0; i < samples_to_copy; i++)
+//                {
+//                    samples[samples_end_pos + i] = captured_samples[i];
+//                }
+//
+//                // Store overflow
+//                for (size_t i = samples_to_copy; i < frames_available * channels_; i++)
+//                {
+//                    impl_->overflow_.push_back(captured_samples[i]);
+//                }
+//            }
+//
+//            if (FAILED(hr = impl_->capture_client_->ReleaseBuffer(frames_available)))
+//            {
+//                throw std::runtime_error("Failed to release buffer");
+//            }
+//
+//            frames_read += frames_to_copy;
+//
+//            // Stop draining if we have enough
+//            if (frames_read >= count)
+//            {
+//                break;
+//            }
+//        }
+//    }
+//
+//    return frames_read;
+//}
+
 bool wasapi_audio_input_stream::wait_write_completed(int timeout_ms)
 {
     (void)timeout_ms;
