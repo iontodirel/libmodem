@@ -609,6 +609,37 @@ std::vector<channel_stream> channelized_stream::channel_streams()
     return result;
 }
 
+void channelized_stream::flush()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    size_t total_samples = write_buffers_[0].size();
+    if (total_samples == 0)
+    {
+        return;
+    }
+
+    std::vector<double> interleaved_samples(total_samples * write_buffers_.size());
+
+    for (size_t i = 0; i < total_samples; i++)
+    {
+        for (int ch = 0; ch < stream_->channels(); ch++)
+        {
+            interleaved_samples[i * stream_->channels() + ch] = write_buffers_[ch][i];
+        }
+    }
+
+    for (size_t i = 0; i < write_buffers_.size(); i++)
+    {
+        write_buffers_[i].clear();
+    }
+
+    stream_->write_interleaved(interleaved_samples.data(), total_samples);
+}
+
 channelized_stream::operator bool() const
 {
     return stream_ != nullptr;
@@ -2041,263 +2072,6 @@ void wasapi_audio_input_stream::close()
     }
 }
 
-void wasapi_audio_input_stream::start()
-{
-    if (started_)
-    {
-        return;
-    }
-
-    if (!impl_ || impl_->audio_client_ == nullptr)
-    {
-        throw std::runtime_error("Stream not initialized");
-    }
-
-    ensure_com_initialized();
-
-    // Start the capture thread
-    // The capture thread will read audio data from the WASAPI capture client and place it in a ring buffer
-    // After we start the capture thread, we start the audio client to begin capturing audio
-
-    impl_->capture_thread_ = std::jthread(std::bind(&wasapi_audio_input_stream::run, this, std::placeholders::_1));
-
-    // The capture thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
-    // It does not matter if the audio client is started after the thread is started
-    // Now we start the audio client
-
-    HRESULT hr;
-
-    if (FAILED(hr = impl_->audio_client_->Start()))
-    {
-        impl_->capture_thread_.request_stop();
-        SetEvent(impl_->stop_capture_event_);
-        impl_->capture_thread_.join();
-        throw std::runtime_error("Failed to start");
-    }
-
-    started_ = true;
-}
-
-void wasapi_audio_input_stream::run(std::stop_token stop_token)
-{
-    try
-    {
-        run_internal(stop_token);
-    }
-    catch (...)
-    {
-        // Swallow exceptions to prevent std::terminate from being called
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-        impl_->capture_exception_ = std::current_exception();
-        impl_->buffer_cv_.notify_all();
-    }
-}
-
-void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
-{
-    ensure_com_initialized();
-
-    // Enable MMCSS for low-latency audio
-    // Multimedia Class Scheduler Service (MMCSS) allows us to prioritize the audio capture thread
-    // to reduce latency and improve audio quality
-    // If we fail to set MMCSS, we proceed without it
-
-    DWORD task_index = 0;
-    HANDLE mmcss_handle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
-    assert(mmcss_handle != nullptr);
-    if (mmcss_handle != nullptr)
-    {
-         BOOL result = AvSetMmThreadPriority(mmcss_handle, AVRT_PRIORITY_CRITICAL);
-         assert(result != FALSE);
-         (void)result;
-    }
-
-    // MMCSS is used for the lifetime of the capture thread
-    // When the thread exits, we free the MMCSS handle using the unique_ptr custom deleter
-    std::unique_ptr<void, void(*)(void*)> mmcss_guard(mmcss_handle, [](void* h) { if (h) AvRevertMmThreadCharacteristics(h); });
-    (void)mmcss_guard;
-
-    HRESULT hr;
-
-    HANDLE wait_array[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
-
-    // The capture thread runs continuously, until stop is requested
-    // Or if we encounter an error
-    // Before we retrieve available audio data, we wait for WASAPI to signal us that data is available
-    // This avoids busy-waiting and reduces CPU usage
-    // If data is available, we drain all available (audio) packets from the WASAPI capture buffer
-    // And store them in our ring buffer for later retrieval
-
-    while (!stop_token.stop_requested())
-    {
-        DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
-
-        switch (wait_result)
-        {
-            case WAIT_OBJECT_0: // Stop event signaled
-                return;
-
-            case WAIT_OBJECT_0 + 1: // Audio data available
-                break;
-
-            case WAIT_FAILED:
-            default:
-                throw std::runtime_error("WaitForMultipleObjects failed");
-        }
-
-        // Drain all available packets
-        UINT32 packet_size = 0;
-
-        if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
-        {
-            throw std::runtime_error("Failed to get next packet size");
-        }
-
-        while (packet_size > 0)
-        {
-            BYTE* buffer = nullptr;
-            UINT32 frames_available = 0;
-            DWORD flags = 0;
-
-            hr = impl_->capture_client_->GetBuffer(&buffer, &frames_available, &flags, nullptr, nullptr);
-
-            if (hr == AUDCLNT_S_BUFFER_EMPTY)
-            {
-                throw std::runtime_error("Capture buffer is empty");
-            }
-
-            if (hr == AUDCLNT_E_OUT_OF_ORDER)
-            {
-                impl_->capture_client_->ReleaseBuffer(frames_available);
-
-                if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
-                {
-                    throw std::runtime_error("Failed to get next packet size");
-                }
-
-                continue;
-            }
-
-            if (FAILED(hr))
-            {
-                throw std::runtime_error("Failed to get capture buffer");
-            }
-
-            if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
-            {
-                impl_->discontinuity_count_++;
-            }
-
-            size_t samples_count = frames_available * channels_;
-
-            {
-                std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-
-                if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
-                {
-                    for (size_t i = 0; i < samples_count; i++)
-                    {
-                        impl_->ring_buffer_.push_back(0.0f);
-                    }
-                }
-                else
-                {
-                    const float* captured_samples = reinterpret_cast<const float*>(buffer);
-                    for (size_t i = 0; i < samples_count; i++)
-                    {
-                        impl_->ring_buffer_.push_back(captured_samples[i]);
-                    }
-                }
-            }
-
-            impl_->buffer_cv_.notify_one();
-
-            if (FAILED(impl_->capture_client_->ReleaseBuffer(frames_available)))
-            {
-                throw std::runtime_error("Failed to release capture buffer");
-            }
-
-            if (stop_token.stop_requested())
-            {
-                break;
-            }
-
-            if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
-            {
-                throw std::runtime_error("Failed to get next packet size");
-            }
-        }
-    }
-}
-
-void wasapi_audio_input_stream::stop()
-{
-    if (!started_)
-    {
-        return;
-    }
-
-    if (impl_)
-    {
-        ensure_com_initialized();
-
-        impl_->capture_thread_.request_stop();
-
-        // Signal the stop event to unblock any waiting read operations
-        if (impl_->stop_capture_event_ != nullptr)
-        {
-            SetEvent(impl_->stop_capture_event_);
-        }
-
-        impl_->buffer_cv_.notify_all();
-
-        impl_->capture_thread_.join();
-
-        if (impl_->audio_client_)
-        {
-            impl_->audio_client_->Stop();
-        }
-
-        started_ = false;
-    }
-}
-
-bool wasapi_audio_input_stream::faulted()
-{
-    if (!impl_)
-    {
-        throw std::runtime_error("Stream not initialized");
-    }
-
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    return impl_->capture_exception_ != nullptr;
-}
-
-void wasapi_audio_input_stream::throw_if_faulted()
-{
-    if (!impl_)
-    {
-        throw std::runtime_error("Stream not initialized");
-    }
-
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    if (impl_->capture_exception_)
-    {
-        std::exception_ptr ex = impl_->capture_exception_;
-        impl_->capture_exception_ = nullptr;
-        std::rethrow_exception(ex);
-    }
-}
-
-void wasapi_audio_input_stream::flush()
-{
-    if (impl_)
-    {
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-        impl_->ring_buffer_.clear();
-    }
-}
-
 std::string wasapi_audio_input_stream::name()
 {
     if (!impl_ || impl_->device_ == nullptr)
@@ -2363,6 +2137,7 @@ bool wasapi_audio_input_stream::mute()
     {
         throw std::runtime_error("Failed to get mute state");
     }
+
     return muted == TRUE;
 }
 
@@ -2496,8 +2271,266 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
 
 bool wasapi_audio_input_stream::wait_write_completed(int timeout_ms)
 {
+    // Not applicable for input streams
     (void)timeout_ms;
     return true;
+}
+
+void wasapi_audio_input_stream::start()
+{
+    if (started_)
+    {
+        return;
+    }
+
+    if (!impl_ || impl_->audio_client_ == nullptr)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    ensure_com_initialized();
+
+    // Start the capture thread
+    // The capture thread will read audio data from the WASAPI capture client and place it in a ring buffer
+    // After we start the capture thread, we start the audio client to begin capturing audio
+
+    impl_->capture_thread_ = std::jthread(std::bind(&wasapi_audio_input_stream::run, this, std::placeholders::_1));
+
+    // The capture thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
+    // It does not matter if the audio client is started after the thread is started
+    // Now we start the audio client
+
+    HRESULT hr;
+
+    if (FAILED(hr = impl_->audio_client_->Start()))
+    {
+        impl_->capture_thread_.request_stop();
+        SetEvent(impl_->stop_capture_event_);
+        impl_->capture_thread_.join();
+        throw std::runtime_error("Failed to start");
+    }
+
+    started_ = true;
+}
+
+void wasapi_audio_input_stream::stop()
+{
+    if (!started_)
+    {
+        return;
+    }
+
+    if (impl_)
+    {
+        ensure_com_initialized();
+
+        impl_->capture_thread_.request_stop();
+
+        // Signal the stop event to unblock any waiting read operations
+        if (impl_->stop_capture_event_ != nullptr)
+        {
+            SetEvent(impl_->stop_capture_event_);
+        }
+
+        impl_->buffer_cv_.notify_all();
+
+        impl_->capture_thread_.join();
+
+        if (impl_->audio_client_)
+        {
+            impl_->audio_client_->Stop();
+        }
+
+        started_ = false;
+    }
+}
+
+bool wasapi_audio_input_stream::faulted()
+{
+    if (!impl_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+    return impl_->capture_exception_ != nullptr;
+}
+
+void wasapi_audio_input_stream::throw_if_faulted()
+{
+    if (!impl_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+    if (impl_->capture_exception_)
+    {
+        std::exception_ptr ex = impl_->capture_exception_;
+        impl_->capture_exception_ = nullptr;
+        std::rethrow_exception(ex);
+    }
+}
+
+void wasapi_audio_input_stream::flush()
+{
+    if (impl_)
+    {
+        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        impl_->ring_buffer_.clear();
+    }
+}
+
+void wasapi_audio_input_stream::run(std::stop_token stop_token)
+{
+    try
+    {
+        run_internal(stop_token);
+    }
+    catch (...)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        impl_->capture_exception_ = std::current_exception();
+        impl_->buffer_cv_.notify_all();
+    }
+}
+
+void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
+{
+    ensure_com_initialized();
+
+    // Enable MMCSS for low-latency audio
+    // Multimedia Class Scheduler Service (MMCSS) allows us to prioritize the audio capture thread
+    // to reduce latency and improve audio quality
+    // If we fail to set MMCSS, we proceed without it
+
+    DWORD task_index = 0;
+    HANDLE mmcss_handle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+    assert(mmcss_handle != nullptr);
+    if (mmcss_handle != nullptr)
+    {
+        BOOL result = AvSetMmThreadPriority(mmcss_handle, AVRT_PRIORITY_CRITICAL);
+        assert(result != FALSE);
+        (void)result;
+    }
+
+    // MMCSS is used for the lifetime of the capture thread
+    // When the thread exits, we free the MMCSS handle using the unique_ptr custom deleter
+    std::unique_ptr<void, void(*)(void*)> mmcss_guard(mmcss_handle, [](void* h) { if (h) AvRevertMmThreadCharacteristics(h); });
+    (void)mmcss_guard;
+
+    HRESULT hr;
+
+    HANDLE wait_array[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
+
+    // The capture thread runs continuously, until stop is requested
+    // Or if we encounter an error
+    // Before we retrieve available audio data, we wait for WASAPI to signal us that data is available
+    // This avoids busy-waiting and reduces CPU usage
+    // If data is available, we drain all available (audio) packets from the WASAPI capture buffer
+    // And store them in our ring buffer for later retrieval
+
+    while (!stop_token.stop_requested())
+    {
+        DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
+
+        switch (wait_result)
+        {
+            case WAIT_OBJECT_0: // Stop event signaled
+                return;
+
+            case WAIT_OBJECT_0 + 1: // Audio data available
+                break;
+
+            case WAIT_FAILED:
+            default:
+                throw std::runtime_error("WaitForMultipleObjects failed");
+        }
+
+        // Drain all available packets
+        UINT32 packet_size = 0;
+
+        if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+        {
+            throw std::runtime_error("Failed to get next packet size");
+        }
+
+        while (packet_size > 0)
+        {
+            BYTE* buffer = nullptr;
+            UINT32 frames_available = 0;
+            DWORD flags = 0;
+
+            hr = impl_->capture_client_->GetBuffer(&buffer, &frames_available, &flags, nullptr, nullptr);
+
+            if (hr == AUDCLNT_S_BUFFER_EMPTY)
+            {
+                throw std::runtime_error("Capture buffer is empty");
+            }
+
+            if (hr == AUDCLNT_E_OUT_OF_ORDER)
+            {
+                impl_->capture_client_->ReleaseBuffer(frames_available);
+
+                if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+                {
+                    throw std::runtime_error("Failed to get next packet size");
+                }
+
+                continue;
+            }
+
+            if (FAILED(hr))
+            {
+                throw std::runtime_error("Failed to get capture buffer");
+            }
+
+            if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
+            {
+                impl_->discontinuity_count_++;
+            }
+
+            size_t samples_count = frames_available * channels_;
+
+            {
+                std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+
+                if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
+                {
+                    for (size_t i = 0; i < samples_count; i++)
+                    {
+                        impl_->ring_buffer_.push_back(0.0f);
+                    }
+                }
+                else
+                {
+                    const float* captured_samples = reinterpret_cast<const float*>(buffer);
+                    for (size_t i = 0; i < samples_count; i++)
+                    {
+                        impl_->ring_buffer_.push_back(captured_samples[i]);
+                    }
+                }
+            }
+
+            impl_->buffer_cv_.notify_one();
+
+            if (FAILED(impl_->capture_client_->ReleaseBuffer(frames_available)))
+            {
+                throw std::runtime_error("Failed to release capture buffer");
+            }
+
+            if (stop_token.stop_requested())
+            {
+                break;
+            }
+
+            if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+            {
+                throw std::runtime_error("Failed to get next packet size");
+            }
+        }
+    }
 }
 
 #endif // WIN32

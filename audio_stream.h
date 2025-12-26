@@ -516,7 +516,7 @@ private:
     int buffer_size_ = 0;
     int sample_rate_ = 0;
     int channels_ = 1;
-    bool started_ = false;
+    std::atomic<bool> started_ = false;
     std::unique_ptr<wasapi_audio_input_stream_impl> impl_;
 };
 
