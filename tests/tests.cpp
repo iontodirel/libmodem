@@ -1668,6 +1668,37 @@ LIBMODEM_AX25_USING_NAMESPACE
     EXPECT_TRUE(crc == (std::array<uint8_t, 2>{ 0x50, 0x7B }));
 }
 
+TEST(bitstream, compute_crc_using_lut_update)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::vector<uint8_t> frame = {
+        // Destination: APZ001
+        0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
+        // Source: N0CALL-10
+        0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
+        // Path 1: WIDE1-1
+        0xAE, 0x92, 0x88, 0x8A, 0x62, 0x40, 0x62,
+        // Path 2: WIDE2-2* (last addr, end bit set)
+        0xAE, 0x92, 0x88, 0x8A, 0x64, 0x40, 0x65,
+        // Control, PID
+        0x03, 0xF0,
+        // Payload: "Hello, APRS!"
+        0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21
+    };
+
+    uint16_t crc16 = compute_crc_using_lut_init();
+
+    for (auto b : frame)
+    {
+        crc16 = compute_crc_using_lut_update(b, crc16);
+    }
+
+    std::array<uint8_t, 2> crc = compute_crc_using_lut_finalize(crc16);
+
+    EXPECT_TRUE(crc == (std::array<uint8_t, 2>{ 0x50, 0x7B }));
+}
+
 TEST(bitstream, bytes_to_bits)
 {
 LIBMODEM_AX25_USING_NAMESPACE
