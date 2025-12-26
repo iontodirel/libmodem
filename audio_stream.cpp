@@ -782,12 +782,34 @@ struct wasapi_audio_output_stream_impl
     wasapi_audio_output_stream_impl& operator=(const wasapi_audio_output_stream_impl& other) = delete;
     wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&&);
     wasapi_audio_output_stream_impl& operator=(wasapi_audio_output_stream_impl&& other);
-    ~wasapi_audio_output_stream_impl() = default;
+    ~wasapi_audio_output_stream_impl();
 
     CComPtr<IMMDevice> device_;
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioRenderClient> render_client_;
     CComPtr<IAudioEndpointVolume> endpoint_volume_;
+    CComPtr<IAudioClock> audio_clock_;
+
+    // Event that the audio engine signals each time a buffer becomes ready
+    // to be processed by the client. Used in event-driven capture mode.
+    HANDLE audio_samples_ready_event_ = nullptr;
+
+    // Event used to signal the capture loop to stop.
+    HANDLE stop_render_event_ = nullptr;
+
+    // Render thread
+    std::jthread render_thread_;
+
+    // Ring buffer and synchronization
+    boost::circular_buffer<float> ring_buffer_;
+    std::mutex buffer_mutex_;
+    std::condition_variable buffer_cv_;
+
+    std::exception_ptr render_exception_;
+
+    size_t ring_buffer_size_seconds_ = 5;
+
+    std::atomic<uint64_t> total_frames_written_ = 0;
 };
 
 wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&& other)
@@ -796,6 +818,20 @@ wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_ou
     audio_client_.Attach(other.audio_client_.Detach());
     render_client_.Attach(other.render_client_.Detach());
     endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+    audio_clock_.Attach(other.audio_clock_.Detach());
+
+    audio_samples_ready_event_ = other.audio_samples_ready_event_;
+    other.audio_samples_ready_event_ = nullptr;
+
+    stop_render_event_ = other.stop_render_event_;
+    other.stop_render_event_ = nullptr;
+
+    // Note: render_thread_ cannot be moved while running
+    // the mutex, condition_variable, and ring_buffer_ should not be moved as they
+    // represent running state, and a stream should not be moved while running
+
+    render_exception_ = other.render_exception_;
+    ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
 }
 
 wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
@@ -806,13 +842,50 @@ wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasa
         endpoint_volume_.Release();
         audio_client_.Release();
         device_.Release();
+        audio_clock_.Release();
 
         device_.Attach(other.device_.Detach());
         audio_client_.Attach(other.audio_client_.Detach());
         render_client_.Attach(other.render_client_.Detach());
         endpoint_volume_.Attach(other.endpoint_volume_.Detach());
+        audio_clock_.Attach(other.audio_clock_.Detach());
+
+        if (audio_samples_ready_event_ != nullptr)
+        {
+            CloseHandle(audio_samples_ready_event_);
+        }
+        if (stop_render_event_ != nullptr)
+        {
+            CloseHandle(stop_render_event_);
+        }
+
+        audio_samples_ready_event_ = other.audio_samples_ready_event_;
+        other.audio_samples_ready_event_ = nullptr;
+
+        stop_render_event_ = other.stop_render_event_;
+        other.stop_render_event_ = nullptr;
+
+        // Note: render_thread_ cannot be moved while running
+        // the mutex, condition_variable, and ring_buffer_ should not be moved as they
+        // represent running state, and a stream should not be moved while running
+
+        render_exception_ = other.render_exception_;
+        ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
     }
     return *this;
+}
+
+wasapi_audio_output_stream_impl::~wasapi_audio_output_stream_impl()
+{
+    if (audio_samples_ready_event_ != nullptr)
+    {
+        CloseHandle(audio_samples_ready_event_);
+    }
+
+    if (stop_render_event_ != nullptr)
+    {
+        CloseHandle(stop_render_event_);
+    }
 }
 
 #endif // WIN32
@@ -1461,11 +1534,32 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
 
     ensure_com_initialized();
 
+    // Create the audio samples ready event and the stop signaling event
+    // The audio samples ready event is used by WASAPI to signal when samples are available for capture
+    // Use unique_ptr with a custom deleter to ensure handles are closed if an exception is thrown using RAII
+
+    HANDLE audio_samples_ready_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (audio_samples_ready_event == nullptr)
+    {
+        throw std::runtime_error("Failed to create audio samples ready event");
+    }
+
+    std::unique_ptr<void, void(*)(void*)> audio_samples_ready_event_guard(audio_samples_ready_event, [](void* h) { if (h) CloseHandle(h); });
+
+    HANDLE stop_render_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (stop_render_event == nullptr)
+    {
+        throw std::runtime_error("Failed to create stop render event");
+    }
+
+    std::unique_ptr<void, void(*)(void*)> stop_render_event_guard(stop_render_event, [](void* h) { if (h) CloseHandle(h); });
+
     HRESULT hr;
 
     CComPtr<IAudioClient> audio_client;
     CComPtr<IAudioEndpointVolume> endpoint_volume;
     CComPtr<IAudioRenderClient> render_client;
+    CComPtr<IAudioClock> audio_clock;
 
     if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
     {
@@ -1494,7 +1588,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
 
     hr = audio_client->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        0,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
         2000000,  // 200ms buffer
         0,
         device_format,
@@ -1507,9 +1601,19 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
         throw std::runtime_error("Failed to initialize audio client");
     }
 
+    if (FAILED(hr = audio_client->SetEventHandle(audio_samples_ready_event)))
+    {
+        throw std::runtime_error("Failed to set event handle");
+    }
+
     if (FAILED(hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client)))
     {
         throw std::runtime_error("Failed to get render client");
+    }
+
+    if (FAILED(hr = audio_client->GetService(__uuidof(IAudioClock), (void**)&audio_clock)))
+    {
+        throw std::runtime_error("Failed to get audio clock");
     }
 
     if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
@@ -1517,9 +1621,17 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
         throw std::runtime_error("Failed to get buffer size");
     }
 
+    // Initialize ring buffer to hold ~5 second of audio
+    size_t ring_buffer_size = sample_rate_ * channels_ * impl_->ring_buffer_size_seconds_;
+    impl_->ring_buffer_.set_capacity(ring_buffer_size);
+
     impl_->audio_client_.Attach(audio_client.Detach());
     impl_->endpoint_volume_.Attach(endpoint_volume.Detach());
     impl_->render_client_.Attach(render_client.Detach());
+    impl_->audio_clock_.Attach(audio_clock.Detach());
+
+    impl_->audio_samples_ready_event_ = audio_samples_ready_event_guard.release();
+    impl_->stop_render_event_ = stop_render_event_guard.release();
 }
 
 wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept
@@ -1551,11 +1663,15 @@ void wasapi_audio_output_stream::close()
 {
     stop();
 
-    impl_->render_client_.Release();
-    impl_->endpoint_volume_.Release();
-    impl_->audio_client_.Release();
+    if (impl_)
+    {
+        impl_->render_client_.Release();
+        impl_->endpoint_volume_.Release();
+        impl_->audio_client_.Release();
+        impl_->audio_clock_.Release();
 
-    impl_.reset();
+        impl_.reset();
+    }
 }
 
 std::string wasapi_audio_output_stream::name()
@@ -1623,6 +1739,7 @@ bool wasapi_audio_output_stream::mute()
     {
         throw std::runtime_error("Failed to get mute state");
     }
+
     return muted == TRUE;
 }
 
@@ -1684,7 +1801,7 @@ size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
     }
 
     // Convert mono to interleaved (duplicate to all channels)
-    std::vector<double> interleaved(count * channels_);
+    std::vector<double> interleaved_buffer(count * channels_);
 
     for (size_t i = 0; i < count; i++)
     {
@@ -1701,18 +1818,20 @@ size_t wasapi_audio_output_stream::write(const double* samples, size_t count)
             //  L0 R0    L1 R1    L2 R2
             // [s0,s0], [s1,s1], [s2,s2] for 2 channels
 
-            interleaved[i * channels_ + channel] = samples[i];
+            interleaved_buffer[i * channels_ + channel] = samples[i];
         }
     }
 
-    size_t samples_written = write_interleaved(interleaved.data(), interleaved.size());
+    size_t samples_written = write_interleaved(interleaved_buffer.data(), interleaved_buffer.size());
 
-    return samples_written / channels_;
+    size_t samples_written_mono = samples_written / channels_;
+
+    return samples_written_mono;
 }
 
 size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size_t count)
 {
-    if (!impl_ || !impl_->audio_client_ || !impl_->render_client_)
+    if (!impl_)
     {
         throw std::runtime_error("Stream not initialized");
     }
@@ -1722,81 +1841,35 @@ size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size
         return 0;
     }
 
-    if (count % channels_ != 0)
+    size_t samples_to_write = count;
+
+    std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
+
+    // Wait until more data is consumed or stopped
+    impl_->buffer_cv_.wait(lock, [&]() {
+        return !impl_->ring_buffer_.full() || !started_ || impl_->render_exception_ != nullptr;
+    });
+
+    if (impl_->render_exception_)
     {
-        throw std::invalid_argument("Sample count must be a multiple of channel count");
+        std::exception_ptr ex = impl_->render_exception_;
+        impl_->render_exception_ = nullptr;
+        std::rethrow_exception(ex);
     }
 
-    ensure_com_initialized();
-
-    HRESULT hr;
-
-    size_t total_frames = count / channels_;
-    size_t frames_written = 0;
-
-    while (frames_written < total_frames)
+    if (!started_ || impl_->ring_buffer_.full())
     {
-        // Check available space in buffer
-        // GetCurrentPadding gives the number of frames that are queued up to play
-        // Wait until buffer space is available
-
-        UINT32 padding;
-        if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
-        {
-            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
-            {
-                throw std::runtime_error("Audio device disconnected");
-            }
-            throw std::runtime_error("Failed to get current padding");
-        }
-
-        UINT32 available_frames = static_cast<UINT32>(buffer_size_) - padding;
-        if (available_frames == 0)
-        {
-            SwitchToThread();
-            continue;
-        }
-
-        UINT32 frames_to_write = (std::min)(available_frames, static_cast<UINT32>(total_frames - frames_written));
-
-        BYTE* buffer;
-        if (FAILED(hr = impl_->render_client_->GetBuffer(frames_to_write, &buffer)))
-        {
-            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
-            {
-                throw std::runtime_error("Audio device disconnected");
-            }
-            throw std::runtime_error("Failed to get buffer");
-        }
-
-        if (buffer == nullptr)
-        {
-            throw std::runtime_error("Received null buffer from render client");
-        }
-
-        float* float_buffer = reinterpret_cast<float*>(buffer);
-
-        size_t offset = frames_written * channels_;
-        size_t samples_to_copy = static_cast<size_t>(frames_to_write) * channels_;
-
-        for (size_t i = 0; i < samples_to_copy; i++)
-        {
-            float_buffer[i] = static_cast<float>(samples[offset + i]);
-        }
-
-        if (FAILED(hr = impl_->render_client_->ReleaseBuffer(frames_to_write, 0)))
-        {
-            if (hr == AUDCLNT_E_DEVICE_INVALIDATED)
-            {
-                throw std::runtime_error("Audio device disconnected");
-            }
-            throw std::runtime_error("Failed to release buffer");
-        }
-
-        frames_written += frames_to_write;
+        return 0;
     }
 
-    return frames_written * channels_;  // Return total samples written
+    size_t samples_available_to_write = (std::min)(impl_->ring_buffer_.capacity() - impl_->ring_buffer_.size(), samples_to_write);
+
+    for (size_t i = 0; i < samples_available_to_write; i++)
+    {
+        impl_->ring_buffer_.push_back(static_cast<float>(samples[i]));
+    }
+
+    return samples_available_to_write;
 }
 
 size_t wasapi_audio_output_stream::read(double* samples, size_t count)
@@ -1824,21 +1897,72 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 
     ensure_com_initialized();
 
+    // Wait for the ring buffer to empty
+
+    {
+        std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
+
+        if (timeout_ms < 0)
+        {
+            impl_->buffer_cv_.wait(lock, [&]() {
+                return impl_->ring_buffer_.empty() || !started_ || impl_->render_exception_ != nullptr;
+            });
+        }
+        else
+        {
+            if (!impl_->buffer_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&]() {
+                return impl_->ring_buffer_.empty() || !started_ || impl_->render_exception_ != nullptr;
+            }))
+            {
+                return false; // Timeout waiting for ring buffer
+            }
+        }
+
+        if (impl_->render_exception_)
+        {
+            std::exception_ptr ex = impl_->render_exception_;
+            impl_->render_exception_ = nullptr;
+            std::rethrow_exception(ex);
+        }
+
+        if (!started_)
+        {
+            return impl_->ring_buffer_.empty();
+        }
+    }
+
+    uint64_t target_frames = impl_->total_frames_written_.load();
+
+    if (target_frames == 0)
+    {
+        return true;
+    }
+
+    HRESULT hr;
+
+    UINT64 clock_frequency;
+    if (FAILED(hr = impl_->audio_clock_->GetFrequency(&clock_frequency)))
+    {
+        return false;
+    }
+
+    UINT64 target_position = (target_frames * clock_frequency) / sample_rate_;
+
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
 
-    INT64 timeout_ticks = (static_cast<INT64>(timeout_ms) * freq.QuadPart) / 1000;
+    INT64 timeout_ticks = (timeout_ms >= 0) ? (static_cast<INT64>(timeout_ms) * freq.QuadPart) / 1000 : LLONG_MAX;
 
     while (true)
     {
-        UINT32 padding;
-        if (FAILED(impl_->audio_client_->GetCurrentPadding(&padding)))
+        UINT64 current_position;
+        if (FAILED(hr = impl_->audio_clock_->GetPosition(&current_position, nullptr)))
         {
             return false;
         }
 
-        if (padding == 0)
+        if (current_position >= target_position)
         {
             return true;
         }
@@ -1852,8 +1976,14 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
             }
         }
 
-        SwitchToThread();
+        UINT64 remaining_units = target_position - current_position;
+        DWORD sleep_ms = static_cast<DWORD>((remaining_units * 1000) / clock_frequency);
+        sleep_ms = (std::max)(1UL, sleep_ms / 2);
+        
+        Sleep(sleep_ms);
     }
+
+    return true;
 }
 
 void wasapi_audio_output_stream::start()
@@ -1870,10 +2000,21 @@ void wasapi_audio_output_stream::start()
 
     ensure_com_initialized();
 
+    // Start the render thread
+    // The render thread will write audio data to the WASAPI render client from a ring buffer
+    // After we start the render thread, we start the audio client to begin rendering audio
+
+    impl_->render_thread_ = std::jthread(std::bind(&wasapi_audio_output_stream::run, this, std::placeholders::_1));
+
+    // The render thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
+   
     HRESULT hr;
 
     if (FAILED(hr = impl_->audio_client_->Start()))
     {
+        impl_->render_thread_.request_stop();
+        SetEvent(impl_->stop_render_event_);
+        impl_->render_thread_.join();
         throw std::runtime_error("Failed to start audio client");
     }
 
@@ -1891,12 +2032,193 @@ void wasapi_audio_output_stream::stop()
     {
         ensure_com_initialized();
 
+        impl_->render_thread_.request_stop();
+
+        // Signal the stop event to unblock any waiting read operations
+        if (impl_->stop_render_event_ != nullptr)
+        {
+            SetEvent(impl_->stop_render_event_);
+        }
+
+        impl_->buffer_cv_.notify_all();
+
+        impl_->render_thread_.join();
+
         if (impl_->audio_client_)
         {
             impl_->audio_client_->Stop();
         }
 
         started_ = false;
+    }
+}
+
+bool wasapi_audio_output_stream::faulted()
+{
+    if (!impl_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+    return impl_->render_exception_ != nullptr;
+}
+
+void wasapi_audio_output_stream::throw_if_faulted()
+{
+    if (!impl_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+    if (impl_->render_exception_)
+    {
+        std::exception_ptr ex = impl_->render_exception_;
+        impl_->render_exception_ = nullptr;
+        std::rethrow_exception(ex);
+    }
+}
+
+void wasapi_audio_output_stream::flush()
+{
+    if (impl_)
+    {
+        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        impl_->ring_buffer_.clear();
+        impl_->total_frames_written_ = 0;
+    }
+}
+
+void wasapi_audio_output_stream::run(std::stop_token stop_token)
+{
+    try
+    {
+        run_internal(stop_token);
+    }
+    catch (...)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        impl_->render_exception_ = std::current_exception();
+        impl_->buffer_cv_.notify_all();
+    }
+}
+
+void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
+{
+    ensure_com_initialized();
+
+    // Enable MMCSS for low-latency audio
+    // Multimedia Class Scheduler Service (MMCSS) allows us to prioritize the audio render thread
+    // to reduce latency and improve audio quality
+    // If we fail to set MMCSS, we proceed without it
+
+    DWORD task_index = 0;
+    HANDLE mmcss_handle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+    assert(mmcss_handle != nullptr);
+    if (mmcss_handle != nullptr)
+    {
+        BOOL result = AvSetMmThreadPriority(mmcss_handle, AVRT_PRIORITY_CRITICAL);
+        assert(result != FALSE);
+        (void)result;
+    }
+
+    // MMCSS is used for the lifetime of the render thread
+    // When the thread exits, we free the MMCSS handle using the unique_ptr custom deleter
+    std::unique_ptr<void, void(*)(void*)> mmcss_guard(mmcss_handle, [](void* h) { if (h) AvRevertMmThreadCharacteristics(h); });
+    (void)mmcss_guard;
+
+    HRESULT hr;
+
+    HANDLE wait_handles[2] = { impl_->stop_render_event_, impl_->audio_samples_ready_event_ };
+
+    while (!stop_token.stop_requested())
+    {
+        DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+
+        switch (wait_result)
+        {
+            case WAIT_OBJECT_0: // Stop event signaled
+                return;
+
+            case WAIT_OBJECT_0 + 1: // Buffer ready event signaled
+                break;
+
+            case WAIT_FAILED:
+            default:
+                throw std::runtime_error("WaitForMultipleObjects failed");
+        }
+
+        UINT32 padding;
+        if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
+        {
+            throw std::runtime_error("Failed to get current padding");
+        }
+
+        UINT32 frames_available_to_write = static_cast<UINT32>(buffer_size_) - padding;
+
+        if (frames_available_to_write == 0)
+        {
+            continue;
+        }
+
+        BYTE* buffer;
+
+        if (FAILED(hr = impl_->render_client_->GetBuffer(frames_available_to_write, &buffer)))
+        {
+            throw std::runtime_error("Failed to get buffer");
+        }
+
+        float* float_buffer = reinterpret_cast<float*>(buffer);
+
+        size_t samples_available_to_write = frames_available_to_write * channels_;
+        size_t samples_written = 0;
+        DWORD flags = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+
+            size_t samples_available_to_read = impl_->ring_buffer_.size();
+
+            if (samples_available_to_read == 0)
+            {
+                // No data available, write silence
+                flags = AUDCLNT_BUFFERFLAGS_SILENT;
+            }
+            else
+            {
+                // Write as much as we can from the ring buffer
+                samples_written = (std::min)(samples_available_to_read, samples_available_to_write);
+
+                for (size_t i = 0; i < samples_written; i++)
+                {
+                    float_buffer[i] = impl_->ring_buffer_.front();
+                    impl_->ring_buffer_.pop_front();
+                }
+
+                // Fill remaining with silence if we don't have enough data
+                for (size_t i = samples_written; i < samples_available_to_write; i++)
+                {
+                    float_buffer[i] = 0.0f;
+                }
+            }
+        }
+
+        // Notify writers that there's space in the buffer
+        impl_->buffer_cv_.notify_one();
+
+        // If we partially filled, we still need to release the full buffer we requested
+        // but only mark the frames we actually wrote
+        if (FAILED(hr = impl_->render_client_->ReleaseBuffer(frames_available_to_write, flags)))
+        {
+            throw std::runtime_error("Failed to release buffer");
+        }
+
+        if (flags != AUDCLNT_BUFFERFLAGS_SILENT)
+        {
+            impl_->total_frames_written_ += frames_available_to_write;
+        }
     }
 }
 
@@ -2188,7 +2510,7 @@ int wasapi_audio_input_stream::sample_rate()
 
 int wasapi_audio_input_stream::channels()
 {
-    return static_cast<int>(channels_);
+    return channels_;
 }
 
 size_t wasapi_audio_input_stream::write(const double* samples, size_t count)
@@ -2207,6 +2529,11 @@ size_t wasapi_audio_input_stream::write_interleaved(const double* samples, size_
 
 size_t wasapi_audio_input_stream::read(double* samples, size_t count)
 {
+    // Read mono by reading interleaved and taking first channel
+    // Output samples are always mono
+    // Count denotes the size of the buffer
+    // The function returns the number of samples read
+
     if (samples == nullptr || count == 0)
     {
         return 0;
@@ -2214,14 +2541,16 @@ size_t wasapi_audio_input_stream::read(double* samples, size_t count)
 
     std::vector<double> interleaved_buffer(count * channels_);
 
-    size_t frames_read = read_interleaved(interleaved_buffer.data(), count);
+    size_t interleaved_samples_read = read_interleaved(interleaved_buffer.data(), interleaved_buffer.size());
 
-    for (size_t i = 0; i < frames_read; i++)
+    size_t samples_read = interleaved_samples_read / channels_;
+
+    for (size_t i = 0; i < samples_read; i++)
     {
-        samples[i] = interleaved_buffer[i * channels_]; // Always take the first channel
+        samples[i] = interleaved_buffer[i * channels_ + 0]; // Always take the first channel
     }
 
-    return frames_read;
+    return samples_read;
 }
 
 size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count)
@@ -2236,7 +2565,7 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
         return 0;
     }
 
-    size_t samples_needed = count * channels_;
+    size_t samples_needed = count;
     size_t samples_read = 0;
 
     std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
@@ -2259,14 +2588,14 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
     }
 
     // Read available samples (up to requested amount)
-    size_t available = (std::min)(impl_->ring_buffer_.size(), samples_needed);
-    for (size_t i = 0; i < available; i++)
+    size_t samples_available = (std::min)(impl_->ring_buffer_.size(), samples_needed);
+    for (size_t i = 0; i < samples_available; i++)
     {
         samples[i] = static_cast<double>(impl_->ring_buffer_.front());
         impl_->ring_buffer_.pop_front();
     }
 
-    return available / channels_;
+    return samples_available;
 }
 
 bool wasapi_audio_input_stream::wait_write_completed(int timeout_ms)
@@ -2422,7 +2751,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
     HRESULT hr;
 
-    HANDLE wait_array[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
+    HANDLE wait_handles[2] = { impl_->stop_capture_event_, impl_->audio_samples_ready_event_ };
 
     // The capture thread runs continuously, until stop is requested
     // Or if we encounter an error
@@ -2433,7 +2762,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
     while (!stop_token.stop_requested())
     {
-        DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
+        DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
 
         switch (wait_result)
         {
@@ -2448,15 +2777,16 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
                 throw std::runtime_error("WaitForMultipleObjects failed");
         }
 
-        // Drain all available packets
-        UINT32 packet_size = 0;
+        // Drain all available frames
 
-        if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+        UINT32 frames_maybe_available = 0;
+
+        if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
         {
-            throw std::runtime_error("Failed to get next packet size");
+            throw std::runtime_error("Failed to get next frame size");
         }
 
-        while (packet_size > 0)
+        while (frames_maybe_available > 0)
         {
             BYTE* buffer = nullptr;
             UINT32 frames_available = 0;
@@ -2473,7 +2803,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
             {
                 impl_->capture_client_->ReleaseBuffer(frames_available);
 
-                if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+                if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
                 {
                     throw std::runtime_error("Failed to get next packet size");
                 }
@@ -2494,6 +2824,9 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
             size_t samples_count = frames_available * channels_;
 
             {
+                // Push the captured samples into the ring buffer
+                // The buffer contains samples for all channels interleaved
+
                 std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
 
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
@@ -2525,7 +2858,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
                 break;
             }
 
-            if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&packet_size)))
+            if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
             {
                 throw std::runtime_error("Failed to get next packet size");
             }

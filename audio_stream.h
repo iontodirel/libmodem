@@ -451,7 +451,15 @@ public:
     void start() override;
     void stop() override;
 
+    bool faulted();
+    void throw_if_faulted();
+
+    void flush();
+
 private:
+    void run(std::stop_token stop_token);
+    void run_internal(std::stop_token stop_token);
+
     int buffer_size_ = 0;
     int sample_rate_ = 0;
     int channels_ = 0;
