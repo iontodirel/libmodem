@@ -52,104 +52,138 @@ LIBMODEM_NAMESPACE_BEGIN
 
 bool try_parse_address(std::string_view address_string, struct address& address)
 {
-    std::string_view address_text = address_string;
+    // This function is a wrapper around try_parse_address
+    // it will parse the address and ssid from the address_string
+    // and create an address type.
 
-    address.text = address_text;
-    address.mark = false;
-    address.ssid = 0;
-    address.n = 0;
-    address.N = 0;
+    std::string address_no_ssid;
+    int ssid = 0;
+    bool mark = false;
 
-    // Check to see if the address is used (ending with *)
-    if (!address_text.empty() && address_text.back() == '*')
+    if (!try_parse_address_with_used_flag(address_string, address_no_ssid, ssid, mark))
     {
-        address.mark = true;
-        address_text.remove_suffix(1); // remove the *
-        address.text = address_text; // set the text to the address without the *
+        return false;
     }
 
-    auto sep_position = address_text.find('-');
+    address.text = address_no_ssid;
+    address.ssid = ssid;
+    address.mark = mark;
 
-    // No separator found
-    if (sep_position == std::string::npos)
+    return true;
+}
+
+bool try_parse_address(std::string_view address, std::string& address_no_ssid, int& ssid)
+{
+    // Try parse an address like: ADDRESS[-SSID]
+    //
+    // Example:
+    //
+    // CALL1-10
+    // ~~~~~ ~~
+    // ^     ssid = 10
+    // |
+    // address_no_ssid = CALL1
+    //
+    // This functions expects a valid AX.25 address,
+    // and will return false if the address is not valid.
+    // An address with a non numeric ssid will be rejected, ex: CALL-AB
+
+    ssid = 0;
+
+    if (address.empty() || address.size() > 9)
     {
-        if (!address_text.empty() && isdigit(static_cast<unsigned char>(address_text.back())))
-        {
-            address.n = address_text.back() - '0'; // get the last character as a number
-            address_text.remove_suffix(1); // remove the digit from the address text
-
-            // Validate the n is in the range 1-7
-            if (address.n > 0 && address.n <= 7)
-            {
-                address.text = address_text;
-            }
-            else
-            {
-                address.n = 0;
-            }
-        }
-
-        return true;
+        return false;
     }
 
-    // Separator found, check if we have exactly one digit on both sides of the separator, ex WIDE1-1
-    // If the address does not match the n-N format, we will treat it as a regular address ex address with SSID
-    if (sep_position != std::string::npos && sep_position > 0 &&
-        std::isdigit(static_cast<unsigned char>(address_text[sep_position - 1])) &&
-        (sep_position + 1) < address_text.size() && std::isdigit(static_cast<unsigned char>(address_text[sep_position + 1])) &&
-        (sep_position + 2 == address_text.size()))
+    auto sep_position = address.find("-");
+
+    if (sep_position != std::string_view::npos)
     {
-        address.n = address_text[sep_position - 1] - '0';
-        address.N = address_text[sep_position + 1] - '0';
-
-        if (address.N >= 0 && address.N <= 7 && address.n > 0 && address.n <= 7)
+        // Check few error conditions
+        // If packet ends with a separator but no ssid, ex: "CALL-"
+        // If there are more than 2 character after the separator, ex: CALL-123
+        if ((sep_position == (address.size() - 1)) || ((sep_position + 3) < address.size()))
         {
-            address.text = address_text.substr(0, sep_position - 1); // remove the separator and both digits from the address text
-        }
-        else
-        {
-            address.n = 0;
-            address.N = 0;
+            return false;
         }
 
-        return true;
+        address_no_ssid.assign(address.begin(), address.begin() + sep_position);
+
+        std::string ssid_string;
+        ssid_string.assign(address.begin() + sep_position + 1, address.end());
+
+        if (ssid_string[0] == '0')
+        {
+            return false;
+        }
+
+        // Ensure the ssid is a number
+        if (!std::isdigit(static_cast<unsigned char>(ssid_string[0])) ||
+            (ssid_string.size() > 1 && !std::isdigit(static_cast<unsigned char>(ssid_string[1]))))
+        {
+            return false;
+        }
+
+        if (!try_parse_int({ ssid_string.data(), ssid_string.size() }, ssid))
+        {
+            return false;
+        }
+
+        if (ssid < 0 || ssid > 15)
+        {
+            ssid = 0;
+            return false;
+        }
+    }
+    else
+    {
+        address_no_ssid.assign(address.begin(), address.end());
+        ssid = 0;
     }
 
-    // Handle SSID parsing
-    // Expecting the separator to be followed by a digit, ex: CALL-1
-    if ((sep_position + 1) < address_text.size() && std::isdigit(static_cast<unsigned char>(address_text[sep_position + 1])))
+    if (address_no_ssid.size() > 6)
     {
-        std::string ssid_str = std::string(address_text.substr(sep_position + 1));
+        return false;
+    }
 
-        // Check for a single digit or two digits, ex: CALL-1 or CALL-12
-        if (ssid_str.size() == 1 || (ssid_str.size() == 2 && std::isdigit(static_cast<unsigned char>(ssid_str[1]))))
+    for (char c : address_no_ssid)
+    {
+        // The address has to be alphanumeric and uppercase, or a digit
+        if ((!std::isalnum(static_cast<unsigned char>(c)) || !std::isdigit(static_cast<unsigned char>(c))) &&
+            !std::isupper(static_cast<unsigned char>(c)))
         {
-            int ssid;
-            try
-            {
-                ssid = std::stoi(ssid_str);
-            }
-            catch (const std::invalid_argument&)
-            {
-                return true;
-            }
-            catch (const std::out_of_range&)
-            {
-                return true;
-            }
-
-            if (ssid >= 0 && ssid <= 15)
-            {
-                address.ssid = ssid;
-                address.text = address_text.substr(0, sep_position);
-            }
+            return false;
         }
     }
 
     return true;
 }
 
+bool try_parse_address_with_used_flag(std::string_view address, std::string& address_no_ssid, int& ssid, bool& mark)
+{
+    ssid = 0;
+    mark = false;
+
+    if (address.empty())
+    {
+        return false;
+    }
+
+    if (address.back() == '*')
+    {
+        mark = true;
+        address.remove_suffix(1);
+    }
+
+    return try_parse_address(address, address_no_ssid, ssid);
+}
+
 std::string to_string(const struct address& address)
+{
+    return to_string(address, false);
+}
+
+std::string to_string(const struct address& address, bool ignore_mark)
 {
     if (address.text.empty())
     {
@@ -157,17 +191,6 @@ std::string to_string(const struct address& address)
     }
 
     std::string result = address.text;
-
-    if (address.n > 0)
-    {
-        result += char('0' + address.n);
-    }
-
-    if (address.N > 0)
-    {
-        result += '-';
-        result += char('0' + address.N);
-    }
 
     if (address.ssid > 0)
     {
@@ -184,12 +207,33 @@ std::string to_string(const struct address& address)
         }
     }
 
-    if (address.mark)
+    if (address.mark && !ignore_mark)
     {
         result += '*';
     }
 
     return result;
+}
+
+bool try_parse_int(std::string_view string, int& value)
+{
+    // Attempt to parse an integer from the given string_view.
+    // Returns true if parsing is successful, false otherwise.
+    // If parsing fails, the value is set to 0.
+
+    auto result = std::from_chars(string.data(), string.data() + string.size(), value);
+
+    // Check if the parsing was successful and if the entire string was consumed
+    // The result.ec should be std::errc() and result.ptr should point to the end of the string
+    bool success = (result.ec == std::errc()) && (result.ptr == (string.data() + string.size()));
+
+    // If parsing fails, set value to 0
+    if (!success)
+    {
+        value = 0;
+    }
+
+    return success;
 }
 
 // **************************************************************** //
@@ -206,8 +250,8 @@ packet_type to_packet(const struct frame& frame)
 {
     packet_type p;
 
-    p.from = to_string(frame.from);
-    p.to = to_string(frame.to);
+    p.from = to_string(frame.from, true); // ignore mark in from address
+    p.to = to_string(frame.to, true); // ignore mark in to address
 
     p.path.clear();
     for (const auto& path_address : frame.path)
@@ -241,8 +285,18 @@ void bitstream_state::reset()
     last_nrzi_level = 0;
     frame_start_index = 0;
     bitstream.clear();
-    frame_start = 0;
-    frame_end = 0;
+    frame = {};
+    global_preamble_start = 0;
+    global_postamble_end = 0;
+    frame_nrzi_level = 0;
+    frame_size_bits = 0;
+    global_bit_count = 0;
+    global_preamble_start_pending = 0;
+    frame_nrzi_level_pending = 0;
+    preamble_count = 0;
+    postamble_count = 0;
+    preamble_count_pending = 0;
+    postamble_count_pending = 0;
 }
 
 LIBMODEM_AX25_NAMESPACE_END
@@ -652,30 +706,20 @@ std::vector<uint8_t> encode_addresses(const std::vector<address>& path)
 
 std::array<uint8_t, 7> encode_address(const struct address& address, bool last)
 {
-    std::string address_text = address.text;
-    int ssid = 0;
-
-    if (address.n > 0)
-    {
-        address_text += std::to_string(address.n);
-    }
-
-    if (address.N > 0)
-    {
-        ssid = address.N;
-    }
-
-    if (address.ssid > 0)
-    {
-        ssid = address.ssid;
-    }
-
-    return encode_address(address_text, ssid, address.mark, last);
+    return encode_address(address.text, address.ssid, address.mark, last, address.reserved_bits);
 }
 
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last)
 {
+    // Typical reserved bits for AX.25 address encoding is 0b01100000 (0x60)
+    return encode_address(address, ssid, mark, last, {1, 1});
+}
+
+std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last, std::array<uint8_t, 2> reserved_bits)
+{
     assert(ssid >= 0 && ssid <= 15);
+    assert(reserved_bits[0] == 0 || reserved_bits[0] == 1);
+    assert(reserved_bits[1] == 0 || reserved_bits[1] == 1);
 
     std::array<uint8_t, 7> data = {};
 
@@ -745,7 +789,9 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
     //   1 1 1 0 1 0 1 1 = 0x60 | (ssid + '0') << 1 | 0x01 | 0x80 = 0xEB   mark address as used
     //   ~
 
-    data[6] = 0b01100000; // 0 1 1 0 0 0 0 0, 0x60
+    // Typical reserved bits for AX.25 address encoding is 0b01100000 (0x60)
+    // We provide a setter for testing purposes
+    data[6] = (reserved_bits[0] << 6) | (reserved_bits[1] << 5);
 
     data[6] |= (ssid << 1);
 
@@ -767,9 +813,29 @@ std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_f
     return encode_basic_bitstream(encode_frame(p), preamble_flags, postamble_flags);
 }
 
+std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags)
+{
+    return encode_basic_bitstream(encode_frame(p), initial_nrzi_level, preamble_flags, postamble_flags);
+}
+
+std::vector<uint8_t> encode_basic_bitstream(const frame& f, int preamble_flags, int postamble_flags)
+{
+    return encode_basic_bitstream(encode_frame(f), preamble_flags, postamble_flags);
+}
+
+std::vector<uint8_t> encode_basic_bitstream(const frame& f, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags)
+{
+    return encode_basic_bitstream(encode_frame(f), initial_nrzi_level, preamble_flags, postamble_flags);
+}
+
 std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(frame.begin(), frame.end(), preamble_flags, postamble_flags);
+}
+
+std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags)
+{
+    return encode_basic_bitstream(frame.begin(), frame.end(), initial_nrzi_level, preamble_flags, postamble_flags);
 }
 
 bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
@@ -777,7 +843,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
     // Process one bit at a time through the AX.25 bitstream decoding pipeline:
     //
     // 1. NRZI decode the incoming raw bit
-    // 2. Add to internal buffer
+    // 2. Add decoded bit to internal buffer
     // 3. Check for HDLC flag patterns (0x7E = 01111110)
     // 4. State machine:
     //    - searching: Looking for first preamble flag
@@ -818,11 +884,13 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
             state.searching = false;
             state.in_preamble = true;
             state.frame_start_index = state.bitstream.size(); // Frame starts after this flag
+            state.preamble_count_pending = 1;
+            state.postamble_count_pending = 0;
 
             if (state.enable_diagnostics)
             {
                 // Track where preamble started (first bit of this flag)
-                state.preamble_start_bit = state.global_bit_count - 7;
+                state.global_preamble_start_pending = state.global_bit_count - 7;
 
                 // Compute NRZI level before the preamble by working backwards through the 8 flag bits
                 uint8_t level = state.last_nrzi_level;
@@ -833,9 +901,9 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
                         level = level ? 0 : 1;
                     }
                 }
-                state.preamble_initial_nrzi = level;
+                state.frame_nrzi_level_pending = level;
             }
-        }       
+        }
         else if (state.bitstream.size() > 16)
         {
             // Optimization: prevent buffer from growing indefinitely while searching
@@ -851,6 +919,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
         {
             // Another consecutive flag - update frame start position
             state.frame_start_index = state.bitstream.size();
+            state.preamble_count_pending++;
         }
         else
         {
@@ -868,6 +937,8 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
         // Collecting frame data. Check for postamble flag.
         if (found_hdlc_flag)
         {
+            state.postamble_count_pending = 1;
+
             // Found postamble! Extract frame bits (excluding the 8-bit postamble flag)
             size_t frame_end = state.bitstream.size() - 8;
 
@@ -880,9 +951,9 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
                 bool result = try_decode_frame(frame_bits.begin(), frame_bits.end(), state.frame);
 
                 // Set the global bit positions for the successfully found frame
-                state.frame_start = state.preamble_start_bit;
-                state.frame_end = state.global_bit_count;
-                state.frame_nrzi_level = state.preamble_initial_nrzi;
+                state.global_preamble_start = state.global_preamble_start_pending;
+                state.global_postamble_end = state.global_bit_count;
+                state.frame_nrzi_level = state.frame_nrzi_level_pending;
 
                 // Prepare for next packet - the postamble can be the preamble of the next
                 // Keep only the last 8 bits (the flag) for potential reuse as preamble
@@ -892,13 +963,17 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
                 state.in_frame = false;
                 // If we found a valid frame, set complete flag regardless whether the packet was decoded successfully
                 state.complete = true;
+                state.preamble_count = state.preamble_count_pending;
+                state.postamble_count = state.postamble_count_pending;
+                state.preamble_count_pending = 1;
+                state.postamble_count_pending = 0;
 
                 state.frame_size_bits = frame_bits.size();
 
                 if (state.enable_diagnostics)
                 {
                     // Set up tracking for potential next frame using the shared flag
-                    state.preamble_start_bit = state.global_bit_count - 7;
+                    state.global_preamble_start_pending = state.global_bit_count - 7;
 
                     // Compute NRZI level before this shared flag
                     uint8_t level = state.last_nrzi_level;
@@ -910,7 +985,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
                         }
                     }
 
-                    state.preamble_initial_nrzi = level;
+                    state.frame_nrzi_level_pending = level;
                 }
 
                 return result;
@@ -937,8 +1012,10 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
             state.in_frame = false;
             state.bitstream.clear();
             state.frame_start_index = 0;
-            state.preamble_start_bit = 0;
-            state.preamble_initial_nrzi = 0;
+            state.global_preamble_start_pending = 0;
+            state.frame_nrzi_level_pending = 0;
+            state.preamble_count_pending = 0;
+            state.postamble_count_pending = 0;
         }
     }
 

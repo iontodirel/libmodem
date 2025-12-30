@@ -66,6 +66,21 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// audio_stream_type                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class audio_stream_type : int
+{
+    unknown = 0,
+    output = 1,
+    input = 2
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // audio_stream_base                                                //
 //                                                                  //
 //                                                                  //
@@ -75,7 +90,10 @@ struct audio_stream_base
 {
     virtual ~audio_stream_base() = default;
 
+    virtual void close() = 0;
+
     virtual std::string name() = 0;
+    virtual audio_stream_type type() = 0;
 
     virtual void volume(int percent) = 0;
     virtual int volume() = 0;
@@ -103,8 +121,8 @@ struct audio_stream_base
 
     virtual void start() = 0;
     virtual void stop() = 0;
+};
 
-    virtual void close() = 0;
 };
 
 // **************************************************************** //
@@ -129,6 +147,7 @@ public:
     void close() override;
 
     std::string name() override;
+    audio_stream_type type() override;
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
@@ -183,6 +202,7 @@ public:
     void close() override;
 
     std::string name() override;
+    audio_stream_type type() override;
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
@@ -228,6 +248,7 @@ public:
     void close() override;
 
     std::string name() override;
+    audio_stream_type type() override;
     void volume(int percent) override;
     int volume() override;
     int sample_rate() override;
@@ -259,8 +280,11 @@ public:
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
-    int sample_size = 1024;
+    int duration_s = 10;
+    int sample_size = 0;
     std::vector<std::vector<double>> write_buffers_;
+    std::vector<bool> ready_flags_;
+    std::vector<std::pair<size_t, size_t>> stream_positions_; // [begin, end]
     std::shared_timed_mutex write_mutex_;
 };
 
@@ -418,10 +442,13 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 
 struct wasapi_audio_output_stream_impl;
 struct audio_device_impl;
+struct wav_audio_input_stream;
 
 class wasapi_audio_output_stream : public audio_stream_base
 {
 public:
+    using audio_stream_base::wait_write_completed;
+
     wasapi_audio_output_stream();
     wasapi_audio_output_stream(audio_device_impl* impl);
     wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
@@ -433,6 +460,7 @@ public:
     void close();
 
     std::string name();
+    audio_stream_type type() override;
 
     void mute(bool);
     bool mute();
@@ -482,8 +510,11 @@ private:
 struct wasapi_audio_input_stream_impl;
 struct audio_device_impl;
 
-struct wasapi_audio_input_stream : public audio_stream_base
+class wasapi_audio_input_stream : public audio_stream_base
 {
+public:
+    using audio_stream_base::wait_write_completed;
+
     wasapi_audio_input_stream();
     wasapi_audio_input_stream(audio_device_impl* impl);
     wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
@@ -495,6 +526,7 @@ struct wasapi_audio_input_stream : public audio_stream_base
     void close();
 
     std::string name();
+    audio_stream_type type() override;
 
     void mute(bool);
     bool mute();
@@ -601,7 +633,10 @@ public:
     wav_audio_input_stream& operator=(wav_audio_input_stream&&) noexcept;
     virtual ~wav_audio_input_stream();
 
+    void close() override;
+
     std::string name() override;
+    audio_stream_type type() override;
 
     void volume(int percent) override;
     int volume() override;
@@ -615,7 +650,6 @@ public:
     bool wait_write_completed(int timeout_ms) override;
 
     void flush();
-    void close() override;
 
     void start() override;
     void stop() override;
@@ -645,9 +679,13 @@ public:
     wav_audio_output_stream& operator=(const wav_audio_output_stream&) = delete;
     wav_audio_output_stream(wav_audio_output_stream&&) noexcept;
     wav_audio_output_stream& operator=(wav_audio_output_stream&&) noexcept;
+    wav_audio_output_stream& operator=(wav_audio_input_stream& rhs);
     virtual ~wav_audio_output_stream();
 
+    void close() override;
+
     std::string name() override;
+    audio_stream_type type() override;
 
     void volume(int percent) override;
     int volume() override;
@@ -661,7 +699,6 @@ public:
     bool wait_write_completed(int timeout_ms) override;
 
     void flush();
-    void close() override;
 
     void start() override;
     void stop() override;

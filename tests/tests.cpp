@@ -46,6 +46,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <filesystem>
+#include <list>
 
 #ifdef WIN32
 
@@ -455,29 +456,23 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("WIDE2-1", s));
-        EXPECT_TRUE(s.text == "WIDE");
-        EXPECT_TRUE(s.n == 2);
-        EXPECT_TRUE(s.N == 1);
-        EXPECT_TRUE(s.ssid == 0);
+        EXPECT_TRUE(s.text == "WIDE2");
+        EXPECT_TRUE(s.ssid == 1);
     }
 
     {
         address s;
         EXPECT_TRUE(s.mark == false);
         EXPECT_TRUE(try_parse_address("WIDE2-1*", s));
-        EXPECT_TRUE(s.text == "WIDE");
-        EXPECT_TRUE(s.n == 2);
-        EXPECT_TRUE(s.N == 1);
+        EXPECT_TRUE(s.text == "WIDE2");
+        EXPECT_TRUE(s.ssid == 1);
         EXPECT_TRUE(s.mark == true);
-        EXPECT_TRUE(s.ssid == 0);
     }
 
     {
         address s;
         EXPECT_TRUE(try_parse_address("WIDE2*", s));
-        EXPECT_TRUE(s.text == "WIDE");
-        EXPECT_TRUE(s.n == 2);
-        EXPECT_TRUE(s.N == 0);
+        EXPECT_TRUE(s.text == "WIDE2");
         EXPECT_TRUE(s.mark == true);
         EXPECT_TRUE(s.ssid == 0);
     }
@@ -486,8 +481,6 @@ TEST(address, try_parse_address)
         address s;
         EXPECT_TRUE(try_parse_address("WIDE*", s));
         EXPECT_TRUE(s.text == "WIDE");
-        EXPECT_TRUE(s.n == 0);
-        EXPECT_TRUE(s.N == 0);
         EXPECT_TRUE(s.mark == true);
         EXPECT_TRUE(s.ssid == 0);
     }
@@ -498,8 +491,6 @@ TEST(address, try_parse_address)
         EXPECT_TRUE(s.text == "N0CALL");
         EXPECT_TRUE(s.ssid == 10);
         EXPECT_TRUE(s.mark == false);
-        EXPECT_TRUE(s.n == 0);
-        EXPECT_TRUE(s.N == 0);
     }
 
     {
@@ -508,17 +499,14 @@ TEST(address, try_parse_address)
         EXPECT_TRUE(s.text == "N0CALL");
         EXPECT_TRUE(s.ssid == 10);
         EXPECT_TRUE(s.mark == true);
-        EXPECT_TRUE(s.n == 0);
-        EXPECT_TRUE(s.N == 0);
     }
 }
 
 TEST(address, to_string)
 {
     address s;
-    s.text = "WIDE";
-    s.n = 2;
-    s.N = 1;
+    s.text = "WIDE2";
+    s.ssid = 1;
     s.mark = false;
     EXPECT_TRUE(to_string(s) == "WIDE2-1");
 
@@ -526,11 +514,11 @@ TEST(address, to_string)
     EXPECT_TRUE(to_string(s) == "WIDE2-1*");
 
     s.mark = true;
-    s.N = 0;
+    s.ssid = 0;
     EXPECT_TRUE(to_string(s) == "WIDE2*");
 
-    s.N = 0;
-    s.n = 0;
+    s.text = "WIDE";
+    s.ssid = 0;
     EXPECT_TRUE(to_string(s) == "WIDE*");
 
     s = address{};
@@ -555,11 +543,11 @@ TEST(ax25, encode_header)
 LIBMODEM_AX25_USING_NAMESPACE
 
     {
-        address from = { "N0CALL", 0, 0, 10, false };
-        address to = { "APZ001", 0, 0, 0, false };
+        address from = { "N0CALL", 10, false };
+        address to = { "APZ001", 0, false };
         std::vector<address> path = {
-            { "WIDE1", 0, 1, 0, false },
-            { "WIDE2", 0, 2, 0, false }
+            { "WIDE1", 1, false },
+            { "WIDE2", 2, false }
         };
 
         std::vector<uint8_t> header = encode_header(from, to, path);
@@ -581,8 +569,8 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         // Source address is set as set becuase the path is empty
 
-        address from = { "N0CALL", 0, 0, 10, false };
-        address to = { "APZ001", 0, 0, 0, false };
+        address from = { "N0CALL", 10, false };
+        address to = { "APZ001", 0, false };
 
         std::vector<uint8_t> header = encode_header(from, to, {});
 
@@ -656,11 +644,11 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
         struct frame frame {
-            { "N0CALL", 0, 0, 10, false },
-            { "APZ001", 0, 0, 0, false },
+            { "N0CALL", 10, false },
+            { "APZ001", 0, false },
             {
-                { "WIDE1", 0, 1, 0, false },
-                { "WIDE2", 0, 2, 0, false }
+                { "WIDE1", 1, false },
+                { "WIDE2", 2, false }
             },
             { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
         };
@@ -717,11 +705,11 @@ LIBMODEM_AX25_USING_NAMESPACE
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     struct frame frame
     {
-        { "N0CALL", 0, 0, 10, false },
-        { "APZ001", 0, 0, 0, false },
+        { "N0CALL", 10, false },
+        { "APZ001", 0, false },
             {
-                { "WIDE1", 0, 1, 0, false },
-                { "WIDE2", 0, 2, 0, false }
+                { "WIDE1", 1, false },
+                { "WIDE2", 2, false }
             },
         { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
     };
@@ -761,11 +749,11 @@ LIBMODEM_AX25_USING_NAMESPACE
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     struct frame frame
     {
-        { "N0CALL", 0, 0, 10, false },
-        { "APZ001", 0, 0, 0, false },
+        { "N0CALL", 10, false },
+        { "APZ001", 0, false },
             {
-                { "WIDE1", 0, 1, 0, false },
-                { "WIDE2", 0, 2, 0, false }
+                { "WIDE1", 1, false },
+                { "WIDE2", 2, false }
             },
         { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
     };
@@ -803,11 +791,11 @@ LIBMODEM_AX25_USING_NAMESPACE
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     struct frame frame
     {
-        { "N0CALL", 0, 0, 10, false },
-        { "APZ001", 0, 0, 0, false },
+        { "N0CALL", 10, false },
+        { "APZ001", 0, false },
             {
-                { "WIDE1", 0, 1, 0, false },
-                { "WIDE2", 0, 2, 0, false }
+                { "WIDE1", 1, false },
+                { "WIDE2", 2, false }
             },
         { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
     };
@@ -1226,7 +1214,10 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
-        EXPECT_TRUE(to_string(p) == "N6XQY-12>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73\r");
+        // try_decode_frame will preserve the address mark in from and to addresses
+        // to_string will append the address set marker "*"" to the address string representation
+
+        EXPECT_TRUE(to_string(p) == "N6XQY-12*>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73\r");
     }
 
     {
@@ -1272,7 +1263,10 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
-        EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
+        // try_decode_frame will preserve the address mark in from and to addresses
+        // to_string will append the address set marker "*"" to the address string representation
+
+        EXPECT_TRUE(to_string(p) == "KD7FNO-5*>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
     }
 
     {
@@ -1689,9 +1683,9 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     uint16_t crc16 = compute_crc_using_lut_init();
 
-    for (auto b : frame)
+    for (auto byte : frame)
     {
-        crc16 = compute_crc_using_lut_update(b, crc16);
+        crc16 = compute_crc_using_lut_update(byte, crc16);
     }
 
     std::array<uint8_t, 2> crc = compute_crc_using_lut_finalize(crc16);
@@ -1900,6 +1894,35 @@ TEST(bitstream, encode_basic_bitstream)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
+    // Bit-level verification of AX.25 frame encoding
+    //
+    // This test validates the complete encoding pipeline by comparing the
+    // output against a manually verified reference bitstream. The test packet
+    // "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!" exercises:
+    //
+    //   - Source and destination address encoding
+    //   - Digipeater path with two hops (WIDE1-1, WIDE2-2)
+    //   - Extension bit handling (set only on final address)
+    //   - Control field (UI frame, 0x03) and PID (no layer 3, 0xF0)
+    //   - Payload encoding
+    //   - CRC-16-CCITT computation and little-endian byte order
+    //   - HDLC framing with 0x7E flags
+    //
+    // Frame structure (368 bits = 46 bytes):
+    //   - 1 byte   : Preamble flag (0x7E)
+    //   - 7 bytes  : Destination address (APZ001, SSID 0)
+    //   - 7 bytes  : Source address (N0CALL, SSID 10)
+    //   - 7 bytes  : Path address 1 (WIDE1, SSID 1)
+    //   - 7 bytes  : Path address 2 (WIDE2, SSID 2, extension bit set)
+    //   - 1 byte   : Control field (0x03, UI frame)
+    //   - 1 byte   : Protocol ID (0xF0, no layer 3)
+    //   - 12 bytes : Payload ("Hello, APRS!")
+    //   - 2 bytes  : FCS (CRC-16-CCITT, little-endian)
+    //   - 1 byte   : Postamble flag (0x7E)
+    //
+    // This test uses minimal preamble/postamble (1 flag each) to keep
+    // the expected output concise.
+
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
@@ -1958,6 +1981,178 @@ LIBMODEM_AX25_USING_NAMESPACE
         0, 0, 1, 0, 0, 1, 1, 0, 
         0, 0, 1, 0, 0, 1, 1, 0,
         0, 1, 0, 1, 0, 0, 1, 0,  
+TEST(bitstream, encode_basic_bitstream_output_iterator_stack)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    struct frame frame
+    {
+        { "N0CALL", 10, false }, // N0CALL-10
+        { "APZ001", 0, false }, // APZ001
+            {
+                { "WIDE1", 1, false }, // WIDE1-1
+                { "WIDE2", 2, false } // WIDE2-2
+            },
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 } // Hello, APRS!
+    };
+
+    uint8_t frame_bytes[100] = { 0 }; // 100 bytes stack buffer
+
+    // AX.25 frame
+    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), std::begin(frame_bytes));
+
+    uint8_t bitstream[500] = { 0 }; // 500 bytes stack buffer
+
+    // AX.25 to final bitstream
+    auto bitstream_end_it = encode_basic_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, std::begin(bitstream));
+
+    size_t bitstream_size = std::distance(std::begin(bitstream), bitstream_end_it);
+
+    EXPECT_TRUE(bitstream_size == 368);
+
+    // Heap and vector used purely for convenience in the comparison
+    EXPECT_TRUE(std::vector<uint8_t>(bitstream, bitstream + bitstream_size) == (std::vector<uint8_t>{
+        // Preamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: APZ001
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        // Source: N0CALL-10
+        0, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 1, 0,
+        // Path 1: WIDE1-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        // Path 2: WIDE2-2
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        // Control, PID
+        1, 1, 0, 1, 0, 1, 0, 1,
+        0, 1, 0, 1, 1, 1, 1, 1,
+        // Data: "Hello, APRS!"
+        0, 1, 0, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 1, 0,
+        1, 0, 1, 0, 1, 1, 0, 1,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 1, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 0, 1, 0, 0, 1, 0,
+        // CRC (FCS), little-endian
+        1, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 1, 1, 1, 1, 0,
+        // Postamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+    }));
+}
+
+TEST(bitstream, encode_basic_bitstream_output_iterator_linked_list)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    struct frame frame
+    {
+        { "N0CALL", 10, false }, // N0CALL-10
+        { "APZ001", 0, false }, // APZ001
+            {
+                { "WIDE1", 1, false }, // WIDE1-1
+                { "WIDE2", 2, false } // WIDE2-2
+            },
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 } // Hello, APRS!
+    };
+
+    std::list<uint8_t> frame_bytes(100, 0);
+
+    // AX.25 frame
+    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), frame_bytes.begin());
+
+    std::list<uint8_t> bitstream(500, 0);
+
+    // AX.25 to final bitstream
+    auto bitstream_end_it = encode_basic_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, bitstream.begin());
+
+    size_t bitstream_size = std::distance(bitstream.begin(), bitstream_end_it);
+
+    EXPECT_TRUE(bitstream_size == 368);
+
+    // Heap and vector used purely for convenience in the comparison
+    EXPECT_TRUE(std::vector<uint8_t>(bitstream.begin(), bitstream_end_it) == (std::vector<uint8_t>{
+        // Preamble HDLC flag (0x7E)
+        1, 1, 1, 1, 1, 1, 1, 0,
+        // Destination: APZ001
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 0, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 1, 1, 0,
+        1, 1, 0, 1, 0, 0, 0, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        // Source: N0CALL-10
+        0, 1, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 1, 0, 0, 0, 1,
+        0, 0, 0, 1, 0, 1, 0, 0,
+        1, 1, 0, 1, 0, 1, 0, 0,
+        1, 0, 1, 1, 1, 0, 1, 1,
+        0, 1, 0, 0, 0, 1, 0, 0,
+        1, 0, 0, 1, 1, 1, 1, 0,
+        // Path 1: WIDE1-1
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 1, 1, 1, 0,
+        // Path 2: WIDE2-2
+        1, 1, 1, 1, 0, 0, 1, 1,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        1, 0, 1, 1, 0, 1, 0, 0,
+        1, 1, 0, 0, 1, 0, 1, 1,
+        0, 1, 1, 0, 1, 1, 1, 0,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        // Control, PID
+        1, 1, 0, 1, 0, 1, 0, 1,
+        0, 1, 0, 1, 1, 1, 1, 1,
+        // Data: "Hello, APRS!"
+        0, 1, 0, 0, 1, 0, 0, 1,
+        1, 0, 0, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 0, 1,
+        1, 1, 1, 1, 0, 0, 0, 1,
+        0, 1, 1, 1, 0, 0, 1, 0,
+        1, 0, 1, 0, 1, 1, 0, 1,
+        1, 0, 1, 0, 1, 0, 0, 1,
+        0, 1, 0, 1, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 1, 0, 1, 0, 0, 1, 0,
         // CRC (FCS), little-endian
         1, 0, 1, 0, 0, 1, 1, 0,
         0, 0, 1, 1, 1, 1, 1, 0,
@@ -2638,6 +2833,35 @@ TEST(bitstream, try_decode_basic_bitstream_1005)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
+    // Comprehensive decoder validation using 1005 real-world AX.25 packets
+    //
+    // This test validates the bitstream decoder against a reference dataset
+    // captured from Direwolf with DEBUG5 enabled. The test is structured in
+    // three phases to catch different classes of bugs:
+    //
+    //   1. Basic decode with packet output
+    //     - Feeds raw bits through try_decode_basic_bitstream(bit, packet, state)
+    //     - Verifies the decoder finds exactly 1005 packets
+    //     - Confirms state.complete is set on each successful decode
+    //     - Tests the high-level API that returns packets directly
+    //
+    //   2. Frame-level decode with explicit conversion
+    //     - Uses try_decode_basic_bitstream(bit, state) to get raw frames
+    //     - Manually converts frames to packets via to_packet()
+    //     - Verifies both API variants produce the same count
+    //     - Tests the low-level API for users who need frame access
+    //
+    //   3. Content validation against reference
+    //     - Compares decoded packet strings against packets_1d.txt
+    //     - This file contains expected output from Direwolf
+    //     - Any difference in address parsing, path handling, or payload
+    //       extraction would cause a mismatch
+    //     - Provides detailed diff output on failure for debugging
+    //
+    // Input files:
+    //   - bitstream_1.txt: Raw bits as ASCII '0'/'1' from Direwolf with the DEBUG5 macro enabled
+    //   - packets_1d.txt:  Expected packet strings, one per line
+
     std::ifstream file("bitstream_1.txt");
     if (!file.is_open())
     {
@@ -2653,7 +2877,6 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 
     {
-
         // Decode the entire bitstream into packets and expected 1005 packets
 
         std::vector<aprs::router::packet> packets;
@@ -2739,6 +2962,94 @@ LIBMODEM_AX25_USING_NAMESPACE
         }
 
         EXPECT_TRUE(actual_packets == expected_packets);
+    }
+}
+
+TEST(bitstream, encode_basic_bitstream_1005)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // Round-trip test for AX.25 bitstream encoding/decoding
+    //
+    // This test verifies that encode_basic_bitstream produces bit-for-bit identical output
+    // to a reference implementation (Direwolf) by:
+    //
+    //   1. Reading a raw bitstream captured from Direwolf with DEBUG5 enabled
+    //   2. Decoding the bitstream to extract AX.25 frames, recording for each:
+    //      - The exact preamble and postamble boundaries
+    //      - The NRZI level at frame start
+    //      - The number of preamble and postamble flag bytes
+    //   3. Re-encoding each decoded frame using the same parameters
+    //   4. Comparing the re-encoded bitstream to the original
+    //
+    // This ensures our encoder is compatible with real-world decode and that
+    // the decode/encode paths are symmetric. Any difference in bit stuffing,
+    // NRZI encoding, or flag generation would cause a mismatch.
+    //
+    // Input file format: ASCII '0' and '1' characters representing raw bits
+    // as output by Direwolf's DEBUG5 diagnostic mode.
+
+    std::vector<uint8_t> bitstream;
+
+    {
+        std::ifstream file("bitstream_1.txt");
+        if (!file.is_open())
+        {
+            FAIL() << "Failed to open bitstream_1.txt";
+        }
+
+        char c;
+        while (file.get(c))
+        {
+            if (c == '0') bitstream.push_back(0);
+            else if (c == '1') bitstream.push_back(1);
+        }
+    }
+
+    bitstream_state state;
+
+    state.enable_diagnostics = true;
+
+    std::vector<std::vector<uint8_t>> expected_packet_bitstreams;
+    std::vector<uint8_t> packet_bitstream_nrzi_levels;
+    std::vector<std::pair<size_t, size_t>> frame_preamble_postambles;
+    std::vector<bitstream_state> states;
+
+    for (uint8_t bit : bitstream)
+    {
+        aprs::router::packet packet;
+        if (try_decode_basic_bitstream(bit, packet, state))
+        {
+            std::vector<uint8_t> packet_bitstream;
+
+            // state.start and state.end are 1-based, convert to 0-based for array indexing
+            // state.start is first bit of preamble, state.end is last bit of postamble
+            packet_bitstream.insert(
+                packet_bitstream.end(),
+                bitstream.begin() + (state.global_preamble_start - 1),  // 1-based to 0-based
+                bitstream.begin() + state.global_postamble_end);        // end is exclusive in C++
+
+            expected_packet_bitstreams.push_back(packet_bitstream);
+
+            packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);  // Use output field
+
+            frame_preamble_postambles.push_back(std::make_pair(state.preamble_count, state.postamble_count));
+
+            states.push_back(state);
+        }
+    }
+
+    for (size_t i = 0; i < states.size(); i++)
+    {
+        struct frame frame = states[i].frame;
+
+        std::vector<uint8_t> encoded_bitstream = encode_basic_bitstream(
+            frame,
+            packet_bitstream_nrzi_levels[i],
+            frame_preamble_postambles[i].first,
+            frame_preamble_postambles[i].second);
+
+        EXPECT_TRUE(encoded_bitstream == expected_packet_bitstreams[i]);
     }
 }
 
@@ -2837,7 +3148,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 }
 
-TEST(bitstream, try_decode_basic_bitstream_1005_enable_diagnostics)
+TEST(bitstream, try_decode_basic_bitstream_1005_reconstruct)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -2875,11 +3186,13 @@ LIBMODEM_AX25_USING_NAMESPACE
         if (try_decode_basic_bitstream(bit, packet, state))
         {
             std::vector<uint8_t> packet_bitstream;
+
             // state.start and state.end are 1-based, convert to 0-based for array indexing
             // state.start is first bit of preamble, state.end is last bit of postamble
-            packet_bitstream.insert(packet_bitstream.end(),
-                bitstream.begin() + (state.frame_start - 1),  // 1-based to 0-based
-                bitstream.begin() + state.frame_end);          // end is exclusive in C++
+            packet_bitstream.insert(
+                packet_bitstream.end(),
+                bitstream.begin() + (state.global_preamble_start - 1),  // 1-based to 0-based
+                bitstream.begin() + state.global_postamble_end);        // end is exclusive in C++
             packet_bitstreams.push_back(packet_bitstream);
             packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);  // Use output field
 
@@ -2914,7 +3227,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     EXPECT_TRUE(packets == restored_packets);
 }
 
-TEST(bitstream, try_decode_basic_bitstream_1005_enable_diagnostics_batch)
+TEST(bitstream, try_decode_basic_bitstream_1005_reconstruct_with_buffer)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -2957,15 +3270,116 @@ LIBMODEM_AX25_USING_NAMESPACE
         {
             packets.push_back(packet);
 
-            size_t frame_total_bits = state.frame_end - state.frame_start + 1;
+            size_t frame_total_bits = (state.preamble_count * 8)
+                + state.frame_size_bits
+                + (state.postamble_count * 8);
 
-            std::vector<uint8_t> packet_bitstream(buffer.end() - frame_total_bits, buffer.end());            
+            std::vector<uint8_t> packet_bitstream(buffer.end() - frame_total_bits, buffer.end());
             packet_bitstreams.push_back(packet_bitstream);
 
             packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);
 
             buffer.erase(buffer.begin(), buffer.end() - 8);
         }
+    }
+
+    EXPECT_TRUE(packets.size() == 1005);
+
+    // Decode each saved packet bitstream again using its saved NRZI level
+    // Compare the restored packets to the original packets
+
+    std::vector<aprs::router::packet> restored_packets;
+
+    for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
+    {
+        bitstream_state packet_state;
+        packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
+        for (uint8_t bit : packet_bitstream)
+        {
+            aprs::router::packet packet;
+            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            {
+                restored_packets.push_back(packet);
+            }
+        }
+        i++;
+    }
+
+    EXPECT_TRUE(restored_packets.size() == 1005);
+
+    EXPECT_TRUE(packets == restored_packets);
+}
+
+TEST(bitstream, try_decode_basic_bitstream_1005_reconstruct_near_size_t_max)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    // Decode all packets and store their bitstreams and NRZI levels
+    // For each frame decoded, save the bitstream from preamble to postamble
+    // Also save the NRZI level at the end of the frame for use in re-decoding
+    // Store all packets in a vector for later comparison
+
+    std::vector<aprs::router::packet> packets;
+
+    bitstream_state state;
+
+    state.preamble_count = SIZE_MAX - 10;
+    state.postamble_count = SIZE_MAX - 10;
+    state.preamble_count_pending = SIZE_MAX - 10;
+    state.postamble_count_pending = SIZE_MAX - 10;
+    state.global_preamble_start = SIZE_MAX - 10;
+    state.global_postamble_end = SIZE_MAX - 10;
+    state.global_bit_count = SIZE_MAX - 10;
+    state.global_preamble_start_pending = SIZE_MAX - 10;
+
+    state.enable_diagnostics = true;
+
+    std::vector<std::vector<uint8_t>> packet_bitstreams;
+    std::vector<uint8_t> packet_bitstream_nrzi_levels;
+
+    std::vector<uint8_t> buffer;
+
+    for (size_t i = 0; uint8_t bit : bitstream)
+    {
+        buffer.push_back(bit);
+
+        if (i == 11)
+        {
+            EXPECT_TRUE(state.global_bit_count == 0);
+        }
+
+        aprs::router::packet packet;
+        if (try_decode_basic_bitstream(bit, packet, state))
+        {
+            packets.push_back(packet);
+
+            size_t frame_total_bits = (state.preamble_count * 8)
+                + state.frame_size_bits
+                + (state.postamble_count * 8);
+
+            std::vector<uint8_t> packet_bitstream(buffer.end() - frame_total_bits, buffer.end());
+            packet_bitstreams.push_back(packet_bitstream);
+
+            packet_bitstream_nrzi_levels.push_back(state.frame_nrzi_level);
+
+            buffer.erase(buffer.begin(), buffer.end() - 8);
+        }
+
+        i++;
     }
 
     EXPECT_TRUE(packets.size() == 1005);
@@ -4291,6 +4705,69 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
             }
             offset += n;
         }
+
+        wav_input_stream.close();
+        wav_output_stream.close();
+    }
+
+    {
+        // Demodulate the copied wav file with Direwolf
+
+        std::string output;
+        std::string error;
+
+        // Run Direwolf's ATEST with -B 1200 -d x
+        run_process(ATEST_EXE_PATH, output, error, "-B 1200", "-d x", "test2.wav");
+
+        // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
+    }
+}
+
+TEST(audio_stream, wav_audio_output_stream_assign_operators_end_to_end)
+{
+APRS_TRACK_NAMESPACE_USE
+APRS_TRACK_DETAIL_NAMESPACE_USE
+
+    // Modulate a packet to a wav file
+    // Open it using a wav_audio_input_stream
+    // Write back to a wav file and demodulate with Direwolf
+
+    // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
+    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+
+    EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
+
+    aprs::router::packet packet = packet_string;
+
+    {
+        // Modulate to a wav file
+
+        wav_audio_output_stream wav_stream("test.wav", 48000);
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
+        basic_bitstream_converter_adapter bitstream_converter;
+
+        modem m;
+        m.baud_rate(1200);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.start_silence(0.1);
+        m.end_silence(0.1);
+        m.gain(0.3);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(packet);
+
+        wav_stream.close();
+    }
+
+    {
+        // Copy wav file to another wav file
+
+        wav_audio_input_stream wav_input_stream("test.wav");
+        wav_audio_output_stream wav_output_stream("test2.wav", wav_input_stream.sample_rate());
+
+        wav_output_stream = wav_input_stream;
 
         wav_input_stream.close();
         wav_output_stream.close();

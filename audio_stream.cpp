@@ -203,7 +203,16 @@ std::string audio_stream::name()
     {
         throw std::runtime_error("Stream not initialized");
     }
-    return stream_->name(); 
+    return stream_->name();
+}
+
+audio_stream_type audio_stream::type()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->type();
 }
 
 void audio_stream::volume(int percent)
@@ -1707,6 +1716,11 @@ std::string wasapi_audio_output_stream::name()
     return name;
 }
 
+audio_stream_type wasapi_audio_output_stream::type()
+{
+    return audio_stream_type::output;
+}
+
 void wasapi_audio_output_stream::mute(bool mute)
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
@@ -2425,6 +2439,11 @@ std::string wasapi_audio_input_stream::name()
     PropVariantClear(&variant);
 
     return name;
+}
+
+audio_stream_type wasapi_audio_input_stream::type()
+{
+    return audio_stream_type::input;
 }
 
 void wasapi_audio_input_stream::mute(bool mute)
@@ -3549,6 +3568,11 @@ std::string wav_audio_input_stream::name()
     return filename_;
 }
 
+audio_stream_type wav_audio_input_stream::type()
+{
+    return audio_stream_type::input;
+}
+
 void wav_audio_input_stream::volume(int percent)
 {
     // Not supported
@@ -3706,6 +3730,27 @@ wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_output_str
     return *this;
 }
 
+wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_input_stream& rhs)
+{
+    if (this->sample_rate() != rhs.sample_rate())
+    {
+        throw std::runtime_error("Cannot assign wasapi_audio_input_stream to wav_audio_output_stream with different sample rate or channels");
+    }
+
+    std::vector<double> buffer(1024);
+    while (true)
+    {
+        size_t n = rhs.read(buffer.data(), buffer.size());
+        if (n == 0)
+        {
+            break;
+        }
+        this->write(buffer.data(), n);
+    }
+
+    return *this;
+}
+
 wav_audio_output_stream::~wav_audio_output_stream()
 {
     if (impl_ && impl_->sf_file_ != nullptr)
@@ -3718,6 +3763,11 @@ wav_audio_output_stream::~wav_audio_output_stream()
 std::string wav_audio_output_stream::name()
 {
     return filename_;
+}
+
+audio_stream_type wav_audio_output_stream::type()
+{
+    return audio_stream_type::output;
 }
 
 void wav_audio_output_stream::volume(int percent)
