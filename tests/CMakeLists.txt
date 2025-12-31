@@ -1,5 +1,5 @@
 ﻿# **************************************************************** #
-# modem - APRS modem                                               # 
+# libmodem - APRS modem                                            #
 # Version 0.1.0                                                    #
 # https://github.com/iontodirel/libmodem                           #
 # Copyright (c) 2025 Ion Todirel                                   #
