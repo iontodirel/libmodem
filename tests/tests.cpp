@@ -75,7 +75,15 @@ using namespace LIBMODEM_NAMESPACE;
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
 // Utilities                                                        //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -446,7 +454,31 @@ std::vector<double> generate_audio_samples(double duration_seconds, double frequ
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
 // Tests                                                            //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// address tests                                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -537,6 +569,26 @@ TEST(address, to_string)
     s.ssid = 10;
     EXPECT_TRUE(to_string(s) == "N0CALL-10-10"); // to_string preserves the text even if ssid is specified and results in an invalid address
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// ax25 tests                                                       //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 TEST(ax25, encode_header)
 {
@@ -1567,6 +1619,26 @@ LIBMODEM_FX25_USING_NAMESPACE
         0xA6, 0x03, 0x4B, 0x67, 0x45, 0x3B, 0xAB, 0x7E
     }));
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// bitstream tests                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 TEST(bitstream, nrzi_encode)
 {
@@ -3590,6 +3662,20 @@ LIBMODEM_FX25_USING_NAMESPACE
     }
 }
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// modem tests                                                      //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 TEST(modem, modulate_afsk_1200_ax25_packet)
 {
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
@@ -3766,7 +3852,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
     EXPECT_TRUE(output.find("FEC complete, fixed  8 errors in byte positions: 0 2 3 4 5 7 8 9") != std::string::npos);
 }
 
-TEST(modem, transmit_demo)
+TEST(modem, transmit_wav_demo)
 {
 APRS_TRACK_NAMESPACE_USE
 APRS_TRACK_DETAIL_NAMESPACE_USE
@@ -3804,6 +3890,20 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// dds_afsk_modulator tests                                         //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 TEST(dds_afsk_modulator, samples_per_bit)
 {
@@ -4059,7 +4159,7 @@ TEST(modem, transmit_hardware_demo)
     // The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
     // Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
     // This test is disabled by default.
-    // To enable, define ENABLE_HARDWARE_IN_THE_LOOP_TESTS during compilation.
+    // To enable, define ENABLE_HARDWARE_TESTS_1 during compilation.
 
     // Get the Digirig render audio device
     audio_device device;
@@ -4319,6 +4419,8 @@ TEST(audio_stream, render_10s_stream)
     }
 
     stream.wait_write_completed(-1);
+
+    stream.close();
 
     wav_stream.close();
 }

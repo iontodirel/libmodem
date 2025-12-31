@@ -185,6 +185,13 @@ add_custom_target(bitstream_stress_test
     USES_TERMINAL
 )
 
+add_custom_target(tests_show_deps
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/pe_imports.py --simple "$<TARGET_FILE:tests>"
+    DEPENDS tests
+    COMMENT "PE Dependencies for tests.exe"
+    VERBATIM
+)
+
 # Packet type customization
 # A packet type has to be supplied externally, and it allows sharing of the type across various projects
 # 

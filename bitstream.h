@@ -1161,6 +1161,8 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
 template<typename InputIt>
 LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc)
 {
+    // Decode an AX.25 frame from a byte range
+
     path.clear();
     data.clear();
 
@@ -1172,6 +1174,12 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, std::array<uint8_t, 2>& crc)
 {
+    // Decode an AX.25 frame from a byte range
+    //
+    // frame_it_first and frame_it_last - iterators to the start and end of the frame byte range
+    // data - contains an output iterator to the data payload of the frame
+    // path - contains an output iterator to the path addresses of the frame, each address is of the type "struct address"
+
     uint8_t control = 0;
     uint8_t pid = 0;
     return try_decode_frame(frame_it_first, frame_it_last, from, to, path, data, control, pid, crc);
@@ -1180,6 +1188,12 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc)
 {
+    // Decode an AX.25 frame from a byte range
+    //
+    // frame_it_first and frame_it_last - iterators to the start and end of the frame byte range
+    // data - contains an output iterator to the data payload of the frame
+    // path - contains an output iterator to the path addresses of the frame, each address is of the type "struct address"
+
     static constexpr uint8_t s_frame_mask = 0x03;
     static constexpr uint8_t s_frame = 0x01;  // (ctrl & 0x03) == 0x01
     static constexpr uint8_t u_frame_mask = 0x03;
