@@ -41,12 +41,8 @@
 #include <atomic>
 #include <chrono>
 #include <stop_token>
-
-#ifdef __linux__
-
-#include <alsa/asoundlib.h>
-
-#endif // __linux__
+#include <optional>
+#include <functional>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -86,8 +82,11 @@ enum class audio_stream_type : int
 //                                                                  //
 // **************************************************************** //
 
+struct wav_audio_input_stream;
+
 struct audio_stream_base
 {
+    virtual audio_stream_base& operator=(wav_audio_input_stream& rhs);
     virtual ~audio_stream_base() = default;
 
     virtual void close() = 0;
@@ -112,17 +111,12 @@ struct audio_stream_base
         return wait_write_completed(static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count()));
     }
 
-    virtual void wait_write_completed()
-    {
-        wait_write_completed(-1);
-    }
+    virtual void wait_write_completed();
 
     virtual bool wait_write_completed(int timeout_ms) = 0;
 
     virtual void start() = 0;
     virtual void stop() = 0;
-};
-
 };
 
 // **************************************************************** //
@@ -136,6 +130,8 @@ struct audio_stream_base
 class audio_stream : public audio_stream_base
 {
 public:
+    using audio_stream_base::wait_write_completed;
+
     audio_stream(std::unique_ptr<audio_stream_base> s);
 
     audio_stream(audio_stream&&) = default;
@@ -167,125 +163,6 @@ public:
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
-};
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// channelized_stream_base                                          //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-struct channelized_stream_base : public audio_stream_base
-{
-    virtual size_t write_channel(size_t channel, const double* samples, size_t count) = 0;
-    virtual size_t read_channel(size_t channel, double* samples, size_t count) = 0;
-    virtual bool write_lock(int channel, int timeout_ms) = 0;
-    virtual void write_unlock(int channel) = 0;
-};
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// channel_stream                                                   //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-class channel_stream : public audio_stream_base
-{
-public:
-    channel_stream(channelized_stream_base& stream, int channel);
-    virtual ~channel_stream();
-
-    void close() override;
-
-    std::string name() override;
-    audio_stream_type type() override;
-    void volume(int percent) override;
-    int volume() override;
-    int sample_rate() override;
-    int channels() override;
-
-    size_t write(const double* samples, size_t count) override;
-    size_t write_interleaved(const double* samples, size_t count) override;
-    size_t read(double* samples, size_t count) override;
-    size_t read_interleaved(double* samples, size_t count) override;
-
-    bool wait_write_completed(int timeout_ms) override;
-
-    void start() override;
-    void stop() override;
-
-    int channel() const;
-
-    explicit operator bool() const;
-
-private:
-    std::optional<std::reference_wrapper<channelized_stream_base>> stream;
-    int channel_ = 0;
-};
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// channelized_stream                                               //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-class channelized_stream : public channelized_stream_base
-{
-public:
-    channelized_stream(std::unique_ptr<audio_stream_base> s);
-    channelized_stream(channelized_stream&&) = default;
-    channelized_stream& operator=(channelized_stream&&) = default;
-    channelized_stream(const channelized_stream&) = delete;
-    channelized_stream& operator=(const channelized_stream&) = delete;
-    ~channelized_stream();
-
-    void close() override;
-
-    std::string name() override;
-    audio_stream_type type() override;
-    void volume(int percent) override;
-    int volume() override;
-    int sample_rate() override;
-    int channels() override;
-
-    size_t write(const double* samples, size_t count) override;
-    size_t write_interleaved(const double* samples, size_t count) override;
-    size_t read(double* samples, size_t count) override;
-    size_t read_interleaved(double* samples, size_t count) override;
-
-    bool wait_write_completed(int timeout_ms) override;
-
-    size_t write_channel(size_t channel, const double* samples, size_t count);
-    size_t read_channel(size_t channel, double* samples, size_t count);
-
-    bool write_lock(int timeout_ms);
-    void write_unlock();
-    bool write_lock(int channel, int timeout_ms) override;
-    void write_unlock(int channel) override;
-
-    void flush();
-
-    void start() override;
-    void stop() override;
-
-    std::vector<channel_stream> channel_streams();
-
-    explicit operator bool() const;
-
-private:
-    std::unique_ptr<audio_stream_base> stream_;
-    int duration_s = 10;
-    int sample_size = 0;
-    std::vector<std::vector<double>> write_buffers_;
-    std::vector<bool> ready_flags_;
-    std::vector<std::pair<size_t, size_t>> stream_positions_; // [begin, end]
-    std::shared_timed_mutex write_mutex_;
 };
 
 // **************************************************************** //
@@ -332,7 +209,7 @@ struct audio_device_impl;
 
 struct audio_device
 {
-friend std::vector<audio_device> get_audio_devices();
+    friend std::vector<audio_device> get_audio_devices();
 
     audio_device();
 
@@ -356,7 +233,7 @@ friend std::vector<audio_device> get_audio_devices();
     std::string name;
     std::string description;
     audio_device_type type = audio_device_type::unknown;
-    audio_device_state state = audio_device_state::active;
+    audio_device_state state = audio_device_state::unknown;
 
 #if WIN32
     std::string container_id;
@@ -565,6 +442,41 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// alsa_audio_stream_control                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class alsa_audio_stream_control
+{
+public:
+    alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel);
+
+    std::string id() const;
+    std::string name() const;
+    int index() const;
+
+    void volume(int percent);
+    int volume();
+
+    void mute(bool mute);
+    bool mute();
+
+    int channel() const;
+
+    bool can_mute();
+    bool can_set_volume();
+
+private:
+    int card_id_ = -1;
+    std::string name_;
+    int index_ = 0;
+    int channel_ = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // alsa_audio_stream                                                //
 //                                                                  //
 //                                                                  //
@@ -572,17 +484,25 @@ private:
 
 #if __linux__
 
-struct alsa_audio_stream : public audio_stream_base
+struct alsa_audio_output_stream_impl;
+
+class alsa_audio_output_stream : public audio_stream_base
 {
-    alsa_audio_stream();
-    alsa_audio_stream(int card_id, int device_id, audio_device_type type);
-    alsa_audio_stream(const alsa_audio_stream&);
-    alsa_audio_stream& operator=(const alsa_audio_stream&);
-    virtual ~alsa_audio_stream();
+public:
+    using audio_stream_base::wait_write_completed;
 
-    void close();
+    alsa_audio_output_stream();
+    alsa_audio_output_stream(int card_id, int device_id);
+    alsa_audio_output_stream(const alsa_audio_output_stream&) = delete;
+    alsa_audio_output_stream& operator=(const alsa_audio_output_stream&) = delete;
+    alsa_audio_output_stream(alsa_audio_output_stream&&) noexcept;
+    alsa_audio_output_stream& operator=(alsa_audio_output_stream&&) noexcept;
+    virtual ~alsa_audio_output_stream();
 
-    std::string name();
+    void close() override;
+    audio_stream_type type() override;
+
+    std::string name() override;
 
     void mute(bool);
     bool mute();
@@ -594,21 +514,26 @@ struct alsa_audio_stream : public audio_stream_base
     size_t write(const double* samples, size_t count) override;
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
-    bool wait_write_completed(int timeout_ms);
+    size_t read_interleaved(double* samples, size_t count) override;
+    bool wait_write_completed(int timeout_ms) override;
 
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
+    void enable_start_stop(bool);
+    bool enable_start_stop();
+
+    std::vector<alsa_audio_stream_control> controls();
 
 private:
-    int card_id;
-    int device_id;
-    snd_pcm_t* pcm_handle_ = nullptr;
+    size_t write_interleaved(const float* samples, size_t count);
+
+    int card_id = -1;
+    int device_id = -1;
     int sample_rate_ = 48000;
-    unsigned int num_channels_ = 1;
-    audio_device_type type;
-    snd_pcm_format_t format_;
-    std::vector<float> buffer;
-    std::vector<int16_t> s16_buffer;
+    int channels_ = 0;
+    bool started_ = false;
+    bool start_stop_enabled_ = false;
+    std::unique_ptr<alsa_audio_output_stream_impl> impl_;
 };
 
 #endif // __linux__
