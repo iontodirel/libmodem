@@ -450,7 +450,7 @@ private:
 class alsa_audio_stream_control
 {
 public:
-    alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel);
+    alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel, audio_stream_type type);
 
     std::string id() const;
     std::string name() const;
@@ -472,12 +472,13 @@ private:
     std::string name_;
     int index_ = 0;
     int channel_ = 0;
+    audio_stream_type type_ = audio_stream_type::output;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// alsa_audio_stream                                                //
+// alsa_audio_output_stream                                         //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -524,16 +525,80 @@ public:
 
     std::vector<alsa_audio_stream_control> controls();
 
+    int card_id = -1;
+    int device_id = -1;
+
 private:
     size_t write_interleaved(const float* samples, size_t count);
 
-    int card_id = -1;
-    int device_id = -1;
     int sample_rate_ = 48000;
     int channels_ = 0;
     bool started_ = false;
     bool start_stop_enabled_ = false;
     std::unique_ptr<alsa_audio_output_stream_impl> impl_;
+};
+
+#endif // __linux__
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// alsa_audio_input_stream                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if __linux__
+
+struct alsa_audio_input_stream_impl;
+
+class alsa_audio_input_stream : public audio_stream_base
+{
+public:
+    alsa_audio_input_stream();
+    alsa_audio_input_stream(int card_id, int device_id);
+    alsa_audio_input_stream(const alsa_audio_input_stream&) = delete;
+    alsa_audio_input_stream& operator=(const alsa_audio_input_stream&) = delete;
+    alsa_audio_input_stream(alsa_audio_input_stream&& other) noexcept;
+    alsa_audio_input_stream& operator=(alsa_audio_input_stream&& other) noexcept;
+    ~alsa_audio_input_stream();
+
+    void close() override;
+    audio_stream_type type() override;
+
+    std::string name() override;
+
+    void mute(bool mute);
+    bool mute();
+
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    int channels() override;
+    size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+    bool wait_write_completed(int timeout_ms) override;
+
+    void start() override;
+    void stop() override;
+    void enable_start_stop(bool enable);
+    bool enable_start_stop();
+
+    std::vector<alsa_audio_stream_control> controls();
+
+    int card_id = -1;
+    int device_id = -1;
+
+private:
+    size_t read_interleaved(float* samples, size_t count);
+
+    int sample_rate_ = 48000;
+    int channels_ = 2;
+    bool started_ = false;
+    bool start_stop_enabled_ = false;
+    std::unique_ptr<alsa_audio_input_stream_impl> impl_;
 };
 
 #endif // __linux__

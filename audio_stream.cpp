@@ -919,6 +919,7 @@ std::unique_ptr<audio_stream_base> audio_device::stream()
     }
     else if (type == audio_device_type::capture)
     {
+        return std::make_unique<alsa_audio_input_stream>(card_id, device_id);
     }
 #endif // __linux__
 
@@ -2654,7 +2655,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
 #if __linux__
 
-alsa_audio_stream_control::alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel) : card_id_(card_id), name_(name), index_(index), channel_(channel)
+alsa_audio_stream_control::alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel, audio_stream_type type) : card_id_(card_id), name_(name), index_(index), channel_(channel), type_(type)
 {
 }
 
@@ -2714,20 +2715,45 @@ void alsa_audio_stream_control::volume(int percent)
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
-    if (elem != nullptr && snd_mixer_selem_has_playback_volume(elem))
+    if (elem == nullptr)
     {
-        long min, max;
+        return;
+    }
 
-        if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+    long min, max;
+
+    if (type_ == audio_stream_type::input)
+    {
+        if (snd_mixer_selem_has_capture_volume(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+            if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+            }
+
+            long volume = min + (max - min) * percent / 100;
+
+            if ((err = snd_mixer_selem_set_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_volume: ") + snd_strerror(err));
+            }
         }
-
-        long volume = min + (max - min) * percent / 100;
-
-        if ((err = snd_mixer_selem_set_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+    }
+    else
+    {
+        if (snd_mixer_selem_has_playback_volume(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err));
+            if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+            }
+
+            long volume = min + (max - min) * percent / 100;
+
+            if ((err = snd_mixer_selem_set_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err));
+            }
         }
     }
 }
@@ -2775,23 +2801,51 @@ int alsa_audio_stream_control::volume()
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
-    if (elem != nullptr && snd_mixer_selem_has_playback_volume(elem))
+    if (elem == nullptr)
     {
-        long min, max, volume;
+        return 0;
+    }
 
-        if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+    long min, max, volume;
+
+    if (type_ == audio_stream_type::input)
+    {
+        if (snd_mixer_selem_has_capture_volume(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+            if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+            }
+
+            if ((err = snd_mixer_selem_get_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume: ") + snd_strerror(err));
+            }
+
+            if (max > min)
+            {
+                percent = static_cast<int>(100 * (volume - min) / (max - min));
+            }
         }
-
-        if ((err = snd_mixer_selem_get_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+    }
+    else
+    {
+        if (snd_mixer_selem_has_playback_volume(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err));
-        }
+            if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+            }
 
-        if (max > min)
-        {
-            percent = static_cast<int>(100 * (volume - min) / (max - min));
+            if ((err = snd_mixer_selem_get_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err));
+            }
+
+            if (max > min)
+            {
+                percent = static_cast<int>(100 * (volume - min) / (max - min));
+            }
         }
     }
 
@@ -2839,11 +2893,29 @@ void alsa_audio_stream_control::mute(bool mute)
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
-    if (elem != nullptr && snd_mixer_selem_has_playback_switch(elem))
+    if (elem == nullptr)
     {
-        if ((err = snd_mixer_selem_set_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), mute ? 0 : 1)) != 0)
+        return;
+    }
+
+    if (type_ == audio_stream_type::input)
+    {
+        if (snd_mixer_selem_has_capture_switch(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_set_playback_switch: ") + snd_strerror(err));
+            if ((err = snd_mixer_selem_set_capture_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), mute ? 0 : 1)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_switch: ") + snd_strerror(err));
+            }
+        }
+    }
+    else
+    {
+        if (snd_mixer_selem_has_playback_switch(elem))
+        {
+            if ((err = snd_mixer_selem_set_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), mute ? 0 : 1)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_switch: ") + snd_strerror(err));
+            }
         }
     }
 }
@@ -2891,16 +2963,36 @@ bool alsa_audio_stream_control::mute()
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
-    if (elem != nullptr && snd_mixer_selem_has_playback_switch(elem))
+    if (elem == nullptr)
     {
-        int switch_value = 1;
+        return false;
+    }
 
-        if ((err = snd_mixer_selem_get_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &switch_value)) != 0)
+    int switch_value = 1;
+
+    if (type_ == audio_stream_type::input)
+    {
+        if (snd_mixer_selem_has_capture_switch(elem))
         {
-            throw std::runtime_error(std::string("snd_mixer_selem_get_playback_switch: ") + snd_strerror(err));
-        }
+            if ((err = snd_mixer_selem_get_capture_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &switch_value)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_switch: ") + snd_strerror(err));
+            }
 
-        is_muted = (switch_value == 0);
+            is_muted = (switch_value == 0);
+        }
+    }
+    else
+    {
+        if (snd_mixer_selem_has_playback_switch(elem))
+        {
+            if ((err = snd_mixer_selem_get_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &switch_value)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_switch: ") + snd_strerror(err));
+            }
+
+            is_muted = (switch_value == 0);
+        }
     }
 
     return is_muted;
@@ -2952,8 +3044,19 @@ bool alsa_audio_stream_control::can_mute()
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
+    if (elem == nullptr)
+    {
+        return false;
+    }
 
-    return elem != nullptr && snd_mixer_selem_has_playback_switch(elem);
+    if (type_ == audio_stream_type::input)
+    {
+        return snd_mixer_selem_has_capture_switch(elem);
+    }
+    else
+    {
+        return snd_mixer_selem_has_playback_switch(elem);
+    }
 }
 
 bool alsa_audio_stream_control::can_set_volume()
@@ -2997,8 +3100,19 @@ bool alsa_audio_stream_control::can_set_volume()
     snd_mixer_selem_id_set_name(sid, name_.c_str());
 
     snd_mixer_elem_t* elem = snd_mixer_find_selem(mixer, sid);
+    if (elem == nullptr)
+    {
+        return false;
+    }
 
-    return elem != nullptr && snd_mixer_selem_has_playback_volume(elem);
+    if (type_ == audio_stream_type::input)
+    {
+        return snd_mixer_selem_has_capture_volume(elem);
+    }
+    else
+    {
+        return snd_mixer_selem_has_playback_volume(elem);
+    }
 }
 
 #endif // __linux_
@@ -3478,7 +3592,7 @@ std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
             {
                 if (snd_mixer_selem_has_playback_channel(elem, static_cast<snd_mixer_selem_channel_id_t>(channel)))
                 {
-                    controls.emplace_back(card_id, name, index, channel);
+                    controls.emplace_back(card_id, name, index, channel, audio_stream_type::output);
                 }
             }
         }
@@ -3493,6 +3607,495 @@ int alsa_audio_output_stream::sample_rate()
 }
 
 int alsa_audio_output_stream::channels()
+{
+    return channels_;
+}
+
+#endif // __linux__
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// alsa_audio_input_stream_impl                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if __linux__
+
+struct alsa_audio_input_stream_impl
+{
+    alsa_audio_input_stream_impl();
+    alsa_audio_input_stream_impl(const alsa_audio_input_stream_impl&) = delete;
+    alsa_audio_input_stream_impl& operator=(const alsa_audio_input_stream_impl&) = delete;
+    alsa_audio_input_stream_impl(alsa_audio_input_stream_impl&&) noexcept;
+    alsa_audio_input_stream_impl& operator=(alsa_audio_input_stream_impl&&) noexcept;
+    ~alsa_audio_input_stream_impl();
+
+    snd_pcm_t* pcm_handle_ = nullptr;
+    snd_pcm_format_t format_;
+};
+
+alsa_audio_input_stream_impl::alsa_audio_input_stream_impl()
+{
+}
+
+alsa_audio_input_stream_impl::alsa_audio_input_stream_impl(alsa_audio_input_stream_impl&& other) noexcept
+{
+    pcm_handle_ = other.pcm_handle_;
+    other.pcm_handle_ = nullptr;
+    format_ = other.format_;
+}
+
+alsa_audio_input_stream_impl& alsa_audio_input_stream_impl::operator=(alsa_audio_input_stream_impl&& other) noexcept
+{
+    if (this != &other)
+    {
+        pcm_handle_ = other.pcm_handle_;
+        other.pcm_handle_ = nullptr;
+        format_ = other.format_;
+    }
+    return *this;
+}
+
+alsa_audio_input_stream_impl::~alsa_audio_input_stream_impl()
+{
+    if (pcm_handle_ != nullptr)
+    {
+        snd_pcm_close(pcm_handle_);
+        pcm_handle_ = nullptr;
+    }
+}
+
+#endif // __linux__
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// alsa_audio_input_stream                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if __linux__
+
+alsa_audio_input_stream::alsa_audio_input_stream()
+{
+}
+
+alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : card_id(card_id), device_id(device_id)
+{
+    impl_ = std::make_unique<alsa_audio_input_stream_impl>();
+
+    int err = 0;
+
+    std::string device_name = "plughw:" + std::to_string(card_id) + "," + std::to_string(device_id);
+
+    if ((err = snd_pcm_open(&impl_->pcm_handle_, device_name.c_str(), SND_PCM_STREAM_CAPTURE, 0)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_open: ") + snd_strerror(err));
+    }
+
+    snd_pcm_hw_params_t* hw_params;
+    snd_pcm_hw_params_alloca(&hw_params);
+
+    if ((err = snd_pcm_hw_params_any(impl_->pcm_handle_, hw_params)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_any: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_pcm_hw_params_set_access(impl_->pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_set_access: ") + snd_strerror(err));
+    }
+
+    unsigned int sample_rate = static_cast<unsigned int>(sample_rate_);
+
+    if ((err = snd_pcm_hw_params_set_rate_near(impl_->pcm_handle_, hw_params, &sample_rate, nullptr)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_set_rate_near: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_pcm_hw_params_set_format(impl_->pcm_handle_, hw_params, SND_PCM_FORMAT_FLOAT_LE)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_set_format: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_pcm_hw_params(impl_->pcm_handle_, hw_params)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params: ") + snd_strerror(err));
+    }
+
+    unsigned int channels = 0;
+
+    if ((err = snd_pcm_hw_params_get_channels(hw_params, &channels)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_get_channels: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_pcm_hw_params_get_rate(hw_params, &sample_rate, nullptr)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_get_rate: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_pcm_hw_params_get_format(hw_params, &impl_->format_)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_hw_params_get_format: ") + snd_strerror(err));
+    }
+
+    channels_ = static_cast<int>(channels);
+    sample_rate_ = static_cast<int>(sample_rate);
+
+    if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+    }
+}
+
+alsa_audio_input_stream::alsa_audio_input_stream(alsa_audio_input_stream&& other) noexcept
+{
+    impl_ = std::move(other.impl_);
+    card_id = other.card_id;
+    device_id = other.device_id;
+    sample_rate_ = other.sample_rate_;
+    channels_ = other.channels_;
+}
+
+alsa_audio_input_stream& alsa_audio_input_stream::operator=(alsa_audio_input_stream&& other) noexcept
+{
+    if (this != &other)
+    {
+        if (impl_ && impl_->pcm_handle_)
+        {
+            snd_pcm_drop(impl_->pcm_handle_);
+            snd_pcm_close(impl_->pcm_handle_);
+            impl_->pcm_handle_ = nullptr;
+        }
+
+        impl_ = std::move(other.impl_);
+        card_id = other.card_id;
+        device_id = other.device_id;
+        sample_rate_ = other.sample_rate_;
+        channels_ = other.channels_;
+    }
+    return *this;
+}
+
+alsa_audio_input_stream::~alsa_audio_input_stream()
+{
+    close();
+}
+
+void alsa_audio_input_stream::close()
+{
+    if (impl_ && impl_->pcm_handle_)
+    {
+        snd_pcm_drop(impl_->pcm_handle_);
+        snd_pcm_close(impl_->pcm_handle_);
+        impl_->pcm_handle_ = nullptr;
+    }
+}
+
+audio_stream_type alsa_audio_input_stream::type()
+{
+    return audio_stream_type::input;
+}
+
+std::string alsa_audio_input_stream::name()
+{
+    return "hw:" + std::to_string(card_id) + "," + std::to_string(device_id);
+}
+
+void alsa_audio_input_stream::mute(bool mute)
+{
+    for (auto& control : controls())
+    {
+        if (control.can_mute())
+        {
+            control.mute(mute);
+        }
+    }
+}
+
+bool alsa_audio_input_stream::mute()
+{
+    for (auto& control : controls())
+    {
+        if (control.can_mute() && !control.mute())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void alsa_audio_input_stream::volume(int percent)
+{
+    for (auto& control : controls())
+    {
+        if (control.can_set_volume())
+        {
+            control.volume(percent);
+        }
+    }
+}
+
+int alsa_audio_input_stream::volume()
+{
+    int total = 0;
+    int count = 0;
+
+    for (auto& control : controls())
+    {
+        if (control.can_set_volume())
+        {
+            total += control.volume();
+            count++;
+        }
+    }
+
+    if (count == 0)
+    {
+        return 0;
+    }
+
+    return total / count;
+}
+
+size_t alsa_audio_input_stream::write(const double* samples, size_t count)
+{
+    // Not supported for input stream
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
+size_t alsa_audio_input_stream::write_interleaved(const double* samples, size_t count)
+{
+    // Not supported for input stream
+    (void)samples;
+    (void)count;
+    return 0;
+}
+
+size_t alsa_audio_input_stream::read(double* samples, size_t count)
+{
+    if (!impl_ || !impl_->pcm_handle_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    if (samples == nullptr || count == 0)
+    {
+        return 0;
+    }
+
+    // Read interleaved and extract first channel (mono)
+    std::vector<float> interleaved_buffer(count * channels_);
+
+    size_t samples_read = read_interleaved(interleaved_buffer.data(), interleaved_buffer.size());
+
+    size_t frames_read = samples_read / channels_;
+
+    for (size_t i = 0; i < frames_read; i++)
+    {
+        samples[i] = static_cast<double>(interleaved_buffer[i * channels_]);
+    }
+
+    return frames_read;
+}
+
+size_t alsa_audio_input_stream::read_interleaved(double* samples, size_t count)
+{
+    std::vector<float> samples_float(count);
+
+    size_t samples_read = read_interleaved(samples_float.data(), count);
+
+    for (size_t i = 0; i < samples_read; i++)
+    {
+        samples[i] = static_cast<double>(samples_float[i]);
+    }
+
+    return samples_read;
+}
+
+size_t alsa_audio_input_stream::read_interleaved(float* samples, size_t count)
+{
+    if (!impl_ || !impl_->pcm_handle_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+
+    int err = 0;
+
+    size_t frames_count = count / channels_;
+
+    size_t frames_read = 0;
+
+    while (frames_read < frames_count)
+    {
+        snd_pcm_sframes_t n = snd_pcm_readi(impl_->pcm_handle_, samples + (frames_read * channels_), frames_count - frames_read);
+
+        if (n == -EAGAIN)
+        {
+            snd_pcm_wait(impl_->pcm_handle_, 1000);
+            continue;
+        }
+
+        if (n == -EPIPE)
+        {
+            // Overrun - recover and retry
+            if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+            }
+            continue;
+        }
+
+        if (n < 0)
+        {
+            if ((err = snd_pcm_recover(impl_->pcm_handle_, static_cast<int>(n), 1)) != 0)
+            {
+                throw std::runtime_error(std::string("snd_pcm_recover: ") + snd_strerror(err));
+            }
+            continue;
+        }
+
+        frames_read += static_cast<size_t>(n);
+    }
+
+    return frames_read * channels_;
+}
+
+bool alsa_audio_input_stream::wait_write_completed(int timeout_ms)
+{
+    // Not applicable for input streams
+    (void)timeout_ms;
+    return true;
+}
+
+void alsa_audio_input_stream::start()
+{
+    if (started_ || !start_stop_enabled_)
+    {
+        return;
+    }
+
+    if (impl_ && impl_->pcm_handle_)
+    {
+        int err = 0;
+        if ((err = snd_pcm_start(impl_->pcm_handle_)) != 0)
+        {
+            throw std::runtime_error(std::string("snd_pcm_start: ") + snd_strerror(err));
+        }
+    }
+
+    started_ = true;
+}
+
+void alsa_audio_input_stream::stop()
+{
+    if (!started_ || !start_stop_enabled_)
+    {
+        return;
+    }
+
+    if (impl_ && impl_->pcm_handle_)
+    {
+        int err = 0;
+
+        if ((err = snd_pcm_drop(impl_->pcm_handle_)) != 0)
+        {
+            throw std::runtime_error(std::string("snd_pcm_drop: ") + snd_strerror(err));
+        }
+
+        if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
+        {
+            throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+        }
+    }
+
+    started_ = false;
+}
+
+void alsa_audio_input_stream::enable_start_stop(bool enable)
+{
+    start_stop_enabled_ = enable;
+}
+
+bool alsa_audio_input_stream::enable_start_stop()
+{
+    return start_stop_enabled_;
+}
+
+std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
+{
+    std::vector<alsa_audio_stream_control> controls;
+
+    if (card_id < 0)
+    {
+        return controls;
+    }
+
+    int err = 0;
+
+    snd_mixer_t* mixer;
+    if ((err = snd_mixer_open(&mixer, 0)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+    }
+
+    std::unique_ptr<snd_mixer_t, int(*)(snd_mixer_t*)> mixer_guard(mixer, snd_mixer_close);
+    (void)mixer_guard;
+
+    std::string card_name = "hw:" + std::to_string(card_id);
+
+    if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
+    {
+        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+    }
+
+    if ((err = snd_mixer_load(mixer)) != 0)
+    {
+        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+    }
+
+    for (snd_mixer_elem_t* elem = snd_mixer_first_elem(mixer); elem != nullptr; elem = snd_mixer_elem_next(elem))
+    {
+        if (!snd_mixer_selem_is_active(elem))
+        {
+            continue;
+        }
+
+        if (snd_mixer_selem_has_capture_volume(elem) || snd_mixer_selem_has_capture_switch(elem))
+        {
+            const char* name = snd_mixer_selem_get_name(elem);
+            int index = snd_mixer_selem_get_index(elem);
+
+            for (int channel = 0; channel <= SND_MIXER_SCHN_LAST; channel++)
+            {
+                if (snd_mixer_selem_has_capture_channel(elem, static_cast<snd_mixer_selem_channel_id_t>(channel)))
+                {
+                    controls.emplace_back(card_id, name, index, channel, audio_stream_type::input);
+                }
+            }
+        }
+    }
+
+    return controls;
+}
+
+int alsa_audio_input_stream::sample_rate()
+{
+    return sample_rate_;
+}
+
+int alsa_audio_input_stream::channels()
 {
     return channels_;
 }
