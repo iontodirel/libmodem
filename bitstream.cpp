@@ -477,22 +477,7 @@ uint8_t nrzi_decode(uint8_t bit, uint8_t last_nrzi_level)
 
 bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream)
 {
-    if (bitstream.size() < 8)
-    {
-        return false;
-    }
-
-    size_t start = bitstream.size() - 8;
-
-    // HDLC flag pattern: 01111110 (LSB first representation of 0x7E)
-    return bitstream[start + 0] == 0 &&
-        bitstream[start + 1] == 1 &&
-        bitstream[start + 2] == 1 &&
-        bitstream[start + 3] == 1 &&
-        bitstream[start + 4] == 1 &&
-        bitstream[start + 5] == 1 &&
-        bitstream[start + 6] == 1 &&
-        bitstream[start + 7] == 0;
+    return ends_with_hdlc_flag(bitstream.begin(), bitstream.end());
 }
 
 uint16_t compute_crc_using_lut_init()

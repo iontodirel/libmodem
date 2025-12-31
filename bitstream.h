@@ -402,6 +402,37 @@ It find_first_hdlc_flag(It first, It last);
 
 bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream);
 
+template<typename InputIt>
+bool ends_with_hdlc_flag(InputIt first, InputIt last);
+
+template<typename InputIt>
+LIBMODEM_INLINE bool ends_with_hdlc_flag(InputIt first, InputIt last)
+{
+    static constexpr std::array<uint8_t, 8> hdlc_flag = { 0, 1, 1, 1, 1, 1, 1, 0 };
+
+    if constexpr (std::random_access_iterator<InputIt>)
+    {
+        if (last - first < 8)
+        {
+            return false;
+        }
+        return std::equal(hdlc_flag.begin(), hdlc_flag.end(), last - 8);
+    }
+    else
+    {
+        auto count = std::distance(first, last);
+
+        if (count < 8)
+        {
+            return false;
+        }
+
+        std::advance(first, count - 8);
+
+        return std::equal(hdlc_flag.begin(), hdlc_flag.end(), first);
+    }
+}
+
 template<typename InputIt, typename OutputIt>
 LIBMODEM_INLINE OutputIt bytes_to_bits(InputIt first, InputIt last, OutputIt out)
 {
@@ -430,7 +461,7 @@ LIBMODEM_INLINE OutputIt bytes_to_bits_stuffed(InputIt first, InputIt last, Outp
     // Example: byte 0xFF (11111111) -> bits [1,1,1,1,1,0,1,1,1] (0 stuffed after 5th 1)
     //
     // Combines bytes_to_bits and bit_stuff into a single pass for efficiency
-    // with no intermediate storage requirements
+    // with no intermediate storage requirements, and such that it can work with an output iterator
 
     int count = 0;
 
