@@ -54,6 +54,36 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// serial_port_base                                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class serial_port_base
+{
+public:
+    virtual void rts(bool enable) = 0;
+    virtual bool rts() = 0;
+    virtual void dtr(bool enable) = 0;
+    virtual bool dtr() = 0;
+    virtual bool cts() = 0;
+    virtual bool dsr() = 0;
+    virtual bool dcd() = 0;
+
+    virtual std::size_t write(const std::vector<uint8_t>& data) = 0;
+    virtual std::size_t write(const std::string& data) = 0;
+    virtual std::vector<uint8_t> read(std::size_t size) = 0;
+    virtual std::vector<uint8_t> read_some(std::size_t max_size) = 0;
+    virtual std::string read_until(const std::string& delimiter) = 0;
+
+    virtual bool is_open() const = 0;
+    virtual std::size_t bytes_available() = 0;
+    virtual void flush() = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // serial_port                                                      //
 //                                                                  //
 //                                                                  //
@@ -82,7 +112,7 @@ enum class flow_control
 
 struct serial_port_impl;
 
-class serial_port
+class serial_port : public serial_port_base
 {
 public:
     serial_port();
@@ -90,7 +120,7 @@ public:
     serial_port& operator=(const serial_port&) = delete;
     serial_port(serial_port&&) noexcept;
     serial_port& operator=(serial_port&&) noexcept;
-    ~serial_port();
+    virtual ~serial_port();
 
     bool open(const std::string& port_name,
         unsigned int baud_rate = 9600,
@@ -101,23 +131,22 @@ public:
 
     void close();
 
-    void rts(bool enable);
-    bool rts();
-    void dtr(bool enable);
-    bool dtr();
-    bool cts();
-    bool dsr();
-    bool dcd();
+    void rts(bool enable) override;
+    bool rts() override;
+    void dtr(bool enable) override;
+    bool dtr() override;
+    bool cts() override;
+    bool dsr() override;
+    bool dcd() override;
 
-    std::size_t write(const std::vector<uint8_t>& data);
-    std::size_t write(const std::string& data);
-    std::vector<uint8_t> read(std::size_t size);
-    std::vector<uint8_t> read_some(std::size_t max_size);
-    std::string read_until(const std::string& delimiter);
-
-    bool is_open() const;
-    std::size_t bytes_available();
-    void flush();
+    std::size_t write(const std::vector<uint8_t>& data) override;
+    std::size_t write(const std::string& data) override;
+    std::vector<uint8_t> read(std::size_t size) override;
+    std::vector<uint8_t> read_some(std::size_t max_size) override;
+    std::string read_until(const std::string& delimiter) override;
+    bool is_open() const override;
+    std::size_t bytes_available() override;
+    void flush() override;
     void timeout(unsigned int milliseconds);
 
 private:

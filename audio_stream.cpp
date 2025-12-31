@@ -1200,12 +1200,10 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type)
         return false;
     }
 
-    CComPtr<IMMDevice> device_;
-
     EDataFlow flow = (type == audio_device_type::render) ? eRender : eCapture;
-    hr = enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device_);
 
-    if (FAILED(hr))
+    CComPtr<IMMDevice> device_;
+    if (FAILED(hr = enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device_)))
     {
         return false;
     }

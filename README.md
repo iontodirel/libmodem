@@ -74,3 +74,18 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
   - libcorrect is used for Reed-Solomon coding.
   - Customizable packet type support, allowing the same packet type to be used among different libraries.
   - Has no coupling to other code in the project.
+- **audio_stream.h**/**audio_stream.cpp** - Audio interface layer with support for WASAPI, ALSA, Core Audio, TCP audio transport, and WAV input and output
+  - Abstract audio stream interface with pluggable backends.
+  - Supports capture and render streams.
+  - Supports volume control.
+  - Support both mono and interleaved audio formats for read and write, enabling multi channel audio devices.
+  - Supports audio device enumeration and identification.
+  - Linux: Supports enumeration and independent control of all mixer controls
+  - Windows:
+    - Supports MMCSS for low latency audio processing
+    - Producer/consumer threading model for audio processing
+    - Uses event based buffer handling for efficient and low latency audio
+  - WAV
+    - Cross-platform WAV file read and write support
+    - Single channel support only
+  - Audio streams can be shared across pipelines and reused as needed.
