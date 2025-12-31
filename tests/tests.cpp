@@ -3020,6 +3020,8 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::string line;
         while (std::getline(file, line))
         {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
             expected_packets.push_back(line);
         }
 
@@ -3046,6 +3048,40 @@ LIBMODEM_AX25_USING_NAMESPACE
                 fmt::println("Packet {} does not match:", i);
                 fmt::println("Actual:   {}", actual_packets[i]);
                 fmt::println("Expected: {}", expected_packets[i]);
+
+                fmt::println("\n=== DETAILED DIAGNOSTICS FOR PACKET {} ===", i);
+                fmt::println("Actual length:   {}", actual_packets[i].size());
+                fmt::println("Expected length: {}", expected_packets[i].size());
+
+                // Hex dump of both strings
+                fmt::print("Actual hex:   ");
+                for (unsigned char c : actual_packets[i])
+                {
+                    fmt::print("{:02X} ", c);
+                }
+                fmt::println("");
+
+                fmt::print("Expected hex: ");
+                for (unsigned char c : expected_packets[i])
+                {
+                    fmt::print("{:02X} ", c);
+                }
+                fmt::println("");
+
+                // Character-by-character comparison
+                size_t max_len = (std::max)(actual_packets[i].size(), expected_packets[i].size());
+                for (size_t j = 0; j < max_len; j++)
+                {
+                    unsigned char a = (j < actual_packets[i].size()) ? actual_packets[i][j] : 0;
+                    unsigned char b = (j < expected_packets[i].size()) ? expected_packets[i][j] : 0;
+                    if (a != b)
+                    {
+                        fmt::println("DIFF at position {}: actual=0x{:02X} ('{}') vs expected=0x{:02X} ('{}')",
+                            j, a, (a >= 32 && a < 127) ? (char)a : '?',
+                            b, (b >= 32 && b < 127) ? (char)b : '?');
+                    }
+                }
+                fmt::println("=== END DIAGNOSTICS ===\n");
             }
         }
 
@@ -3174,10 +3210,10 @@ LIBMODEM_AX25_USING_NAMESPACE
         }
     }
 
-    std::ofstream outfile("packets_1d.txt");
+    std::ofstream outfile("packets_1d.txt.bak");
     if (!outfile.is_open())
     {
-        FAIL() << "Failed to open packets_1d.txt for writing";
+        FAIL() << "Failed to open packets_1d.txt.bak for writing";
     }
 
     for (const auto& packet_str : packets)
@@ -4835,8 +4871,6 @@ TEST(audio_stream, render_10s_stream)
     wav_stream.close();
 }
 
-#if WIN32
-
 TEST(audio_stream, modem_transmit_10_1200)
 {
     audio_device device;
@@ -4978,8 +5012,6 @@ TEST(audio_stream, capture_5s_stream)
         wav_stream.close();
     }
 }
-
-#endif // WIN32
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUN
 

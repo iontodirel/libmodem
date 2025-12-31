@@ -447,6 +447,8 @@ private:
 //                                                                  //
 // **************************************************************** //
 
+#if __linux__
+
 class alsa_audio_stream_control
 {
 public:
@@ -474,6 +476,8 @@ private:
     int channel_ = 0;
     audio_stream_type type_ = audio_stream_type::output;
 };
+
+#endif // __linux__
 
 // **************************************************************** //
 //                                                                  //
@@ -516,6 +520,7 @@ public:
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     size_t read_interleaved(double* samples, size_t count) override;
+
     bool wait_write_completed(int timeout_ms) override;
 
     void start() override;
@@ -579,6 +584,7 @@ public:
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     size_t read_interleaved(double* samples, size_t count) override;
+
     bool wait_write_completed(int timeout_ms) override;
 
     void start() override;
