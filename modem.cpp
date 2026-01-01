@@ -108,9 +108,6 @@ void modem::transmit(const std::vector<uint8_t>& bits)
         throw std::runtime_error("No audio stream");
     }
 
-    modulator_base& modulator = mod.value().get();
-    struct audio_stream_base& audio_stream = audio.value().get();
-
     // A(FSK) modulation
 
     std::vector<double> audio_buffer;
@@ -135,14 +132,12 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
 
     struct audio_stream_base& audio_stream = audio.value().get();
 
-    int silence_samples = static_cast<int>(start_silence_duration_s * audio_stream.sample_rate());
-
     if (preemphasis_enabled)
     {
-        apply_preemphasis(audio_buffer.begin() + silence_samples, audio_buffer.end(), audio_stream.sample_rate(), /*tau*/ 75e-6);
+        apply_preemphasis(audio_buffer.begin(), audio_buffer.end(), audio_stream.sample_rate(), /*tau*/ 75e-6);
     }
 
-    apply_gain(audio_buffer.begin() + silence_samples, audio_buffer.end(), gain_value);
+    apply_gain(audio_buffer.begin(), audio_buffer.end(), gain_value);
 
     insert_silence(audio_buffer.begin(), audio_stream.sample_rate(), start_silence_duration_s);
 
@@ -162,15 +157,8 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
     }
 
     modulator_base& modulator = mod.value().get();
-    struct audio_stream_base& audio_stream = audio.value().get();
 
-    int silence_samples = static_cast<int>(start_silence_duration_s * audio_stream.sample_rate());
-
-    audio_buffer.reserve(silence_samples + static_cast<int>(bitstream.size() * 1.5));
-
-    audio_buffer.insert(audio_buffer.end(), silence_samples, 0.0);
-
-    int write_pos = silence_samples;
+    audio_buffer.reserve(static_cast<int>(bitstream.size() * 1.5));
 
     for (uint8_t bit : bitstream)
     {
@@ -219,6 +207,7 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
 
 size_t modem::receive(std::vector<packet_type>& packets)
 {
+    (void)packets;
     return 0;
 }
 

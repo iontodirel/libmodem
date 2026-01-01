@@ -108,6 +108,9 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
             case parity::none: asio_parity = boost::asio::serial_port_base::parity::none; break;
             case parity::odd:  asio_parity = boost::asio::serial_port_base::parity::odd; break;
             case parity::even: asio_parity = boost::asio::serial_port_base::parity::even; break;
+            default:
+                asio_parity = boost::asio::serial_port_base::parity::none;
+                break;
         }
         impl_->serial_port.set_option(boost::asio::serial_port_base::parity(asio_parity));
 
@@ -118,6 +121,9 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
             case stop_bits::one:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::one; break;
             case stop_bits::onepointfive: asio_stop_bits = boost::asio::serial_port_base::stop_bits::onepointfive; break;
             case stop_bits::two:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::two; break;
+            default:
+                asio_stop_bits = boost::asio::serial_port_base::stop_bits::one;
+                break;
         }
         impl_->serial_port.set_option(boost::asio::serial_port_base::stop_bits(asio_stop_bits));
 
@@ -128,6 +134,9 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
             case flow_control::none:     asio_flow_control = boost::asio::serial_port_base::flow_control::none; break;
             case flow_control::software: asio_flow_control = boost::asio::serial_port_base::flow_control::software; break;
             case flow_control::hardware: asio_flow_control = boost::asio::serial_port_base::flow_control::hardware; break;
+            default:
+                asio_flow_control = boost::asio::serial_port_base::flow_control::none;
+                break;
         }
         impl_->serial_port.set_option(boost::asio::serial_port_base::flow_control(asio_flow_control));
 

@@ -925,7 +925,6 @@ bool try_get_audio_device_by_id(const std::string& id, audio_device& device)
         int id_int = std::atoi(id.c_str());
         return dev.card_id == id_int;
 #endif // __linux__
-        return false;
     });
 
     if (it != devices.end())
@@ -2283,7 +2282,6 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
     }
 
     size_t samples_needed = count;
-    size_t samples_read = 0;
 
     std::unique_lock<std::mutex> lock(buffer_mutex_);
 
@@ -4092,6 +4090,8 @@ int wav_audio_input_stream::channels()
 size_t wav_audio_input_stream::write(const double* samples, size_t count)
 {
     // Not supported, read-only stream
+    (void)samples;
+    (void)count;
     return 0;
 }
 
@@ -4321,6 +4321,8 @@ bool wav_audio_output_stream::wait_write_completed(int timeout_ms)
 
 size_t wav_audio_output_stream::read(double* samples, size_t count)
 {
+    (void)samples;
+    (void)count;
     return 0;
 }
 
