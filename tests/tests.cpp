@@ -47,6 +47,7 @@
 #include <fmt/format.h>
 #include <filesystem>
 #include <list>
+#include <numeric>
 
 #ifdef WIN32
 

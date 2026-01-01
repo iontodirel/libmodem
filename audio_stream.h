@@ -774,6 +774,7 @@ public:
 private:
     void run();
     void run_internal();
+    void handle_request();
 
     std::optional<std::reference_wrapper<audio_stream_base>> stream_;
     std::unique_ptr<tcp_audio_stream_control_server_impl> impl_;

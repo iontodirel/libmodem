@@ -4566,7 +4566,7 @@ struct tcp_audio_stream_control_client_impl
 //                                                                  //
 // **************************************************************** //
 
-nlohmann::json request(tcp_audio_stream_control_client_impl& impl, const nlohmann::json& request)
+nlohmann::json handle_request(tcp_audio_stream_control_client_impl& impl, const nlohmann::json& request)
 {
     if (!impl.connected)
     {
@@ -4640,42 +4640,42 @@ void tcp_audio_stream_control_client::disconnect()
 
 std::string tcp_audio_stream_control_client::name()
 {
-    return request(*impl_, { {"command", "get_name"} })["value"].get<std::string>();
+    return handle_request(*impl_, { {"command", "get_name"} })["value"].get<std::string>();
 }
 
 audio_stream_type tcp_audio_stream_control_client::type()
 {
-    return parse_audio_stream_type(request(*impl_, { {"command", "get_type"} })["value"].get<std::string>());
+    return parse_audio_stream_type(handle_request(*impl_, { {"command", "get_type"} })["value"].get<std::string>());
 }
 
 void tcp_audio_stream_control_client::volume(int percent)
 {
-    request(*impl_, { {"command", "set_volume"}, {"value", percent} });
+    handle_request(*impl_, { {"command", "set_volume"}, {"value", percent} });
 }
 
 int tcp_audio_stream_control_client::volume()
 {
-    return request(*impl_, { {"command", "get_volume"} })["value"].get<int>();
+    return handle_request(*impl_, { {"command", "get_volume"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::sample_rate()
 {
-    return request(*impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
+    return handle_request(*impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::channels()
 {
-    return request(*impl_, { {"command", "get_channels"} })["value"].get<int>();
+    return handle_request(*impl_, { {"command", "get_channels"} })["value"].get<int>();
 }
 
 void tcp_audio_stream_control_client::start()
 {
-    request(*impl_, { {"command", "start"} });
+    handle_request(*impl_, { {"command", "start"} });
 }
 
 void tcp_audio_stream_control_client::stop()
 {
-    request(*impl_, { {"command", "stop"} });
+    handle_request(*impl_, { {"command", "stop"} });
 }
 
 // **************************************************************** //
@@ -4795,98 +4795,111 @@ void tcp_audio_stream_control_server::run()
     }
     cv_.notify_one();
 
-    run_internal();
+    try
+    {
+        run_internal();
+    }
+    catch (const boost::system::system_error& e)
+    {
+        running_ = false;
+        if (e.code() != boost::asio::error::operation_aborted)
+        {
+            throw;
+        }
+    }
+    catch (...)
+    {
+        running_ = false;
+        throw;
+    }
+
+    running_ = false;
 }
 
 void tcp_audio_stream_control_server::run_internal()
 {
-    audio_stream_base& stream = stream_->get();
-
     while (running_)
     {
-        try
+        impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
+        impl_->acceptor->accept(*impl_->client_socket);
+
+        while (running_ && impl_->client_socket->is_open())
         {
-            impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
-            impl_->acceptor->accept(*impl_->client_socket);
-
-            while (running_ && impl_->client_socket->is_open())
+            try
             {
-                try
-                {
-                    // receive
-                    uint32_t len{};
-                    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
-                    std::string data(boost::endian::big_to_native(len), '\0');
-                    boost::asio::read(*impl_->client_socket, boost::asio::buffer(data.data(), data.size()));
-
-                    nlohmann::json req = nlohmann::json::parse(data);
-                    nlohmann::json resp;
-                    std::string cmd = req.value("command", "");
-
-                    if (cmd == "get_name")
-                    {
-                        resp["value"] = stream.name();
-                    }
-                    else if (cmd == "get_type")
-                    {
-                        resp["value"] = to_string(stream.type());
-                    }
-                    else if (cmd == "get_volume")
-                    {
-                        resp["value"] = stream.volume();
-                    }
-                    else if (cmd == "set_volume")
-                    {
-                        stream.volume(req.value("value", 0));
-                        resp["value"] = "ok";
-                    }
-                    else if (cmd == "get_sample_rate")
-                    {
-                        resp["value"] = stream.sample_rate();
-                    }
-                    else if (cmd == "get_channels")
-                    {
-                        resp["value"] = stream.channels();
-                    }
-                    else if (cmd == "start")
-                    {
-                        stream.start();
-                        resp["value"] = "ok";
-                    }
-                    else if (cmd == "stop")
-                    {
-                        stream.stop();
-                        resp["value"] = "ok";
-                    }
-                    else
-                    {
-                        resp["error"] = "unknown command: " + cmd;
-                    }
-
-                    // send
-                    data = resp.dump();
-                    len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
-                    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
-                    boost::asio::write(*impl_->client_socket, boost::asio::buffer(data));
-                }
-                catch (const boost::system::system_error& e)
-                {
-                    if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
-                    {
-                        break;
-                    }
-                    throw;
-                }
+                handle_request();
             }
-        }
-        catch (const boost::system::system_error& e)
-        {
-            if (e.code() == boost::asio::error::operation_aborted)
+            catch (const boost::system::system_error& e)
             {
-                break;
+                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
+                {
+                    break;
+                }
+                throw;
             }
         }
     }
+}
+
+void tcp_audio_stream_control_server::handle_request()
+{
+    audio_stream_base& stream = stream_->get();
+
+    // receive
+    uint32_t len{};
+    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
+    std::string data(boost::endian::big_to_native(len), '\0');
+    boost::asio::read(*impl_->client_socket, boost::asio::buffer(data.data(), data.size()));
+
+    nlohmann::json req = nlohmann::json::parse(data);
+    nlohmann::json res;
+    std::string cmd = req.value("command", "");
+
+    if (cmd == "get_name")
+    {
+        res["value"] = stream.name();
+    }
+    else if (cmd == "get_type")
+    {
+        res["value"] = to_string(stream.type());
+    }
+    else if (cmd == "get_volume")
+    {
+        res["value"] = stream.volume();
+    }
+    else if (cmd == "set_volume")
+    {
+        stream.volume(req.value("value", 0));
+        res["value"] = "ok";
+    }
+    else if (cmd == "get_sample_rate")
+    {
+        res["value"] = stream.sample_rate();
+    }
+    else if (cmd == "get_channels")
+    {
+        res["value"] = stream.channels();
+    }
+    else if (cmd == "start")
+    {
+        stream.start();
+        res["value"] = "ok";
+    }
+    else if (cmd == "stop")
+    {
+        stream.stop();
+        res["value"] = "ok";
+    }
+    else
+    {
+        res["error"] = "unknown command: " + cmd;
+    }
+
+    // send
+    data = res.dump();
+    len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
+    boost::asio::write(*impl_->client_socket, boost::asio::buffer(data));
 }
 
 LIBMODEM_NAMESPACE_END
