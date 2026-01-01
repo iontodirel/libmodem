@@ -42,6 +42,7 @@
 #include <functional>
 #include <thread>
 #include <condition_variable>
+#include <exception>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -372,6 +373,11 @@ private:
     int channels_ = 0;
     bool started_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
+    std::jthread render_thread_; std::mutex buffer_mutex_;
+    std::condition_variable buffer_cv_;
+    std::exception_ptr render_exception_;
+    size_t ring_buffer_size_seconds_ = 5;
+    std::atomic<uint64_t> total_frames_written_ = 0;
 };
 
 #endif // WIN32
@@ -437,6 +443,12 @@ private:
     int channels_ = 1;
     std::atomic<bool> started_ = false;
     std::unique_ptr<wasapi_audio_input_stream_impl> impl_;
+    std::jthread capture_thread_;
+    std::mutex buffer_mutex_;
+    std::condition_variable buffer_cv_;
+    std::exception_ptr capture_exception_;
+    size_t discontinuity_count_ = 0;
+    size_t ring_buffer_size_seconds_ = 5;
 };
 
 #endif // WIN32
@@ -731,6 +743,8 @@ public:
     bool connect(const std::string& host, int port);
     void disconnect();
 
+    bool connected() const;
+
     std::string name();
     audio_stream_type type();
 
@@ -745,6 +759,7 @@ public:
 
 private:
     std::unique_ptr<tcp_audio_stream_control_client_impl> impl_;
+    bool connected_ = false;
 };
 
 // **************************************************************** //

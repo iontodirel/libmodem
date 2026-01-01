@@ -533,13 +533,6 @@ audio_device_impl& audio_device_impl::operator=(audio_device_impl&& other)
 
 struct wasapi_audio_output_stream_impl
 {
-    wasapi_audio_output_stream_impl() = default;
-    wasapi_audio_output_stream_impl(const wasapi_audio_output_stream_impl&) = delete;
-    wasapi_audio_output_stream_impl& operator=(const wasapi_audio_output_stream_impl& other) = delete;
-    wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&&);
-    wasapi_audio_output_stream_impl& operator=(wasapi_audio_output_stream_impl&& other);
-    ~wasapi_audio_output_stream_impl();
-
     CComPtr<IMMDevice> device_;
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioRenderClient> render_client_;
@@ -553,96 +546,9 @@ struct wasapi_audio_output_stream_impl
     // Event used to signal the capture loop to stop.
     HANDLE stop_render_event_ = nullptr;
 
-    // Render thread
-    std::jthread render_thread_;
-
     // Ring buffer and synchronization
     boost::circular_buffer<float> ring_buffer_;
-    std::mutex buffer_mutex_;
-    std::condition_variable buffer_cv_;
-
-    std::exception_ptr render_exception_;
-
-    size_t ring_buffer_size_seconds_ = 5;
-
-    std::atomic<uint64_t> total_frames_written_ = 0;
 };
-
-wasapi_audio_output_stream_impl::wasapi_audio_output_stream_impl(wasapi_audio_output_stream_impl&& other)
-{
-    device_.Attach(other.device_.Detach());
-    audio_client_.Attach(other.audio_client_.Detach());
-    render_client_.Attach(other.render_client_.Detach());
-    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-    audio_clock_.Attach(other.audio_clock_.Detach());
-
-    audio_samples_ready_event_ = other.audio_samples_ready_event_;
-    other.audio_samples_ready_event_ = nullptr;
-
-    stop_render_event_ = other.stop_render_event_;
-    other.stop_render_event_ = nullptr;
-
-    // Note: render_thread_ cannot be moved while running
-    // the mutex, condition_variable, and ring_buffer_ should not be moved as they
-    // represent running state, and a stream should not be moved while running
-
-    render_exception_ = other.render_exception_;
-    ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
-}
-
-wasapi_audio_output_stream_impl& wasapi_audio_output_stream_impl::operator=(wasapi_audio_output_stream_impl&& other)
-{
-    if (this != &other)
-    {
-        render_client_.Release();
-        endpoint_volume_.Release();
-        audio_client_.Release();
-        device_.Release();
-        audio_clock_.Release();
-
-        device_.Attach(other.device_.Detach());
-        audio_client_.Attach(other.audio_client_.Detach());
-        render_client_.Attach(other.render_client_.Detach());
-        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-        audio_clock_.Attach(other.audio_clock_.Detach());
-
-        if (audio_samples_ready_event_ != nullptr)
-        {
-            CloseHandle(audio_samples_ready_event_);
-        }
-        if (stop_render_event_ != nullptr)
-        {
-            CloseHandle(stop_render_event_);
-        }
-
-        audio_samples_ready_event_ = other.audio_samples_ready_event_;
-        other.audio_samples_ready_event_ = nullptr;
-
-        stop_render_event_ = other.stop_render_event_;
-        other.stop_render_event_ = nullptr;
-
-        // Note: render_thread_ cannot be moved while running
-        // the mutex, condition_variable, and ring_buffer_ should not be moved as they
-        // represent running state, and a stream should not be moved while running
-
-        render_exception_ = other.render_exception_;
-        ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
-    }
-    return *this;
-}
-
-wasapi_audio_output_stream_impl::~wasapi_audio_output_stream_impl()
-{
-    if (audio_samples_ready_event_ != nullptr)
-    {
-        CloseHandle(audio_samples_ready_event_);
-    }
-
-    if (stop_render_event_ != nullptr)
-    {
-        CloseHandle(stop_render_event_);
-    }
-}
 
 #endif // WIN32
 
@@ -658,13 +564,6 @@ wasapi_audio_output_stream_impl::~wasapi_audio_output_stream_impl()
 
 struct wasapi_audio_input_stream_impl
 {
-    wasapi_audio_input_stream_impl() = default;
-    wasapi_audio_input_stream_impl(const wasapi_audio_input_stream_impl&) = delete;
-    wasapi_audio_input_stream_impl& operator=(const wasapi_audio_input_stream_impl& other) = delete;
-    wasapi_audio_input_stream_impl(wasapi_audio_input_stream_impl&&);
-    wasapi_audio_input_stream_impl& operator=(wasapi_audio_input_stream_impl&& other);
-    ~wasapi_audio_input_stream_impl();
-
     CComPtr<IMMDevice> device_;
     CComPtr<IAudioClient> audio_client_;
     CComPtr<IAudioCaptureClient> capture_client_;
@@ -677,97 +576,9 @@ struct wasapi_audio_input_stream_impl
     // Event used to signal the capture loop to stop.
     HANDLE stop_capture_event_ = nullptr;
 
-    // Capture thread
-    std::jthread capture_thread_;
-
     // Ring buffer and synchronization
     boost::circular_buffer<float> ring_buffer_;
-    std::mutex buffer_mutex_;
-    std::condition_variable buffer_cv_;
-
-    std::exception_ptr capture_exception_;
-
-    size_t discontinuity_count_ = 0;
-
-    size_t ring_buffer_size_seconds_ = 5;
 };
-
-wasapi_audio_input_stream_impl::wasapi_audio_input_stream_impl(wasapi_audio_input_stream_impl&& other)
-{
-    device_.Attach(other.device_.Detach());
-    audio_client_.Attach(other.audio_client_.Detach());
-    capture_client_.Attach(other.capture_client_.Detach());
-    endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-
-    audio_samples_ready_event_ = other.audio_samples_ready_event_;
-    other.audio_samples_ready_event_ = nullptr;
-
-    stop_capture_event_ = other.stop_capture_event_;
-    other.stop_capture_event_ = nullptr;
-
-    // Note: capture_thread_ cannot be moved while running
-    // the mutex, condition_variable, and ring_buffer_ should not be moved as they
-    // represent running state, and a stream should not be moved while running
-
-    capture_exception_ = other.capture_exception_;
-    discontinuity_count_ = other.discontinuity_count_;
-    ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
-}
-
-wasapi_audio_input_stream_impl& wasapi_audio_input_stream_impl::operator=(wasapi_audio_input_stream_impl&& other)
-{
-    if (this != &other)
-    {
-        capture_client_.Release();
-        endpoint_volume_.Release();
-        audio_client_.Release();
-        device_.Release();
-
-        device_.Attach(other.device_.Detach());
-        audio_client_.Attach(other.audio_client_.Detach());
-        capture_client_.Attach(other.capture_client_.Detach());
-        endpoint_volume_.Attach(other.endpoint_volume_.Detach());
-
-        if (audio_samples_ready_event_ != nullptr)
-        {
-            CloseHandle(audio_samples_ready_event_);
-        }
-        if (stop_capture_event_ != nullptr)
-        {
-            CloseHandle(stop_capture_event_);
-        }
-
-        audio_samples_ready_event_ = other.audio_samples_ready_event_;
-        other.audio_samples_ready_event_ = nullptr;
-
-        stop_capture_event_ = other.stop_capture_event_;
-        other.stop_capture_event_ = nullptr;
-
-        // Note: capture_thread_ cannot be moved while running
-        // the mutex, condition_variable, and ring_buffer_ should not be moved as they
-        // represent running state, and a stream should not be moved while running
-
-        capture_exception_ = other.capture_exception_;
-        discontinuity_count_ = other.discontinuity_count_;
-        ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
-    }
-    return *this;
-}
-
-wasapi_audio_input_stream_impl::~wasapi_audio_input_stream_impl()
-{
-    if (audio_samples_ready_event_ != nullptr)
-    {
-        CloseHandle(audio_samples_ready_event_);
-        audio_samples_ready_event_ = nullptr;
-    }
-
-    if (stop_capture_event_ != nullptr)
-    {
-        CloseHandle(stop_capture_event_);
-        stop_capture_event_ = nullptr;
-    }
-}
 
 #endif // WIN32
 
@@ -1328,7 +1139,7 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type)
 
 #if WIN32
 
-wasapi_audio_output_stream::wasapi_audio_output_stream()
+wasapi_audio_output_stream::wasapi_audio_output_stream() : impl_(std::make_unique<wasapi_audio_output_stream_impl>())
 {
 }
 
@@ -1431,7 +1242,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
     }
 
     // Initialize ring buffer to hold ~5 second of audio
-    size_t ring_buffer_size = sample_rate_ * channels_ * impl_->ring_buffer_size_seconds_;
+    size_t ring_buffer_size = sample_rate_ * channels_ * ring_buffer_size_seconds_;
     impl_->ring_buffer_.set_capacity(ring_buffer_size);
 
     impl_->audio_client_.Attach(audio_client.Detach());
@@ -1443,9 +1254,27 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
     impl_->stop_render_event_ = stop_render_event_guard.release();
 }
 
-wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept
+wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept : impl_(std::make_unique<wasapi_audio_output_stream_impl>())
 {
-    impl_ = std::move(other.impl_);
+    impl_->device_.Attach(other.impl_->device_.Detach());
+    impl_->audio_client_.Attach(other.impl_->audio_client_.Detach());
+    impl_->render_client_.Attach(other.impl_->render_client_.Detach());
+    impl_->endpoint_volume_.Attach(other.impl_->endpoint_volume_.Detach());
+    impl_->audio_clock_.Attach(other.impl_->audio_clock_.Detach());
+
+    impl_->audio_samples_ready_event_ = other.impl_->audio_samples_ready_event_;
+    other.impl_->audio_samples_ready_event_ = nullptr;
+
+    impl_->stop_render_event_ = other.impl_->stop_render_event_;
+    other.impl_->stop_render_event_ = nullptr;
+
+    // Note: render_thread_ cannot be moved while running
+    // the mutex, condition_variable, and ring_buffer_ should not be moved as they
+    // represent running state, and a stream should not be moved while running
+
+    render_exception_ = other.render_exception_;
+    ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
+
     buffer_size_ = other.buffer_size_;
     sample_rate_ = other.sample_rate_;
     channels_ = other.channels_;
@@ -1455,7 +1284,40 @@ wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_o
 {
     if (this != &other)
     {
-        impl_ = std::move(other.impl_);
+        impl_->render_client_.Release();
+        impl_->endpoint_volume_.Release();
+        impl_->audio_client_.Release();
+        impl_->device_.Release();
+        impl_->audio_clock_.Release();
+
+        impl_->device_.Attach(other.impl_->device_.Detach());
+        impl_->audio_client_.Attach(other.impl_->audio_client_.Detach());
+        impl_->render_client_.Attach(other.impl_->render_client_.Detach());
+        impl_->endpoint_volume_.Attach(other.impl_->endpoint_volume_.Detach());
+        impl_->audio_clock_.Attach(other.impl_->audio_clock_.Detach());
+
+        if (impl_->audio_samples_ready_event_ != nullptr)
+        {
+            CloseHandle(impl_->audio_samples_ready_event_);
+        }
+        if (impl_->stop_render_event_ != nullptr)
+        {
+            CloseHandle(impl_->stop_render_event_);
+        }
+
+        impl_->audio_samples_ready_event_ = other.impl_->audio_samples_ready_event_;
+        other.impl_->audio_samples_ready_event_ = nullptr;
+
+        impl_->stop_render_event_ = other.impl_->stop_render_event_;
+        other.impl_->stop_render_event_ = nullptr;
+
+        // Note: render_thread_ cannot be moved while running
+        // the mutex, condition_variable, and ring_buffer_ should not be moved as they
+        // represent running state, and a stream should not be moved while running
+
+        render_exception_ = other.render_exception_;
+        ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
+
         buffer_size_ = other.buffer_size_;
         sample_rate_ = other.sample_rate_;
         channels_ = other.channels_;
@@ -1478,6 +1340,16 @@ void wasapi_audio_output_stream::close()
         impl_->endpoint_volume_.Release();
         impl_->audio_client_.Release();
         impl_->audio_clock_.Release();
+
+        if (impl_->audio_samples_ready_event_ != nullptr)
+        {
+            CloseHandle(impl_->audio_samples_ready_event_);
+        }
+
+        if (impl_->stop_render_event_ != nullptr)
+        {
+            CloseHandle(impl_->stop_render_event_);
+        }
 
         impl_.reset();
     }
@@ -1657,17 +1529,17 @@ size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size
 
     size_t samples_to_write = count;
 
-    std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
+    std::unique_lock<std::mutex> lock(buffer_mutex_);
 
     // Wait until more data is consumed or stopped
-    impl_->buffer_cv_.wait(lock, [&]() {
-        return !impl_->ring_buffer_.full() || !started_ || impl_->render_exception_ != nullptr;
+    buffer_cv_.wait(lock, [&]() {
+        return !impl_->ring_buffer_.full() || !started_ || render_exception_ != nullptr;
     });
 
-    if (impl_->render_exception_)
+    if (render_exception_)
     {
-        std::exception_ptr ex = impl_->render_exception_;
-        impl_->render_exception_ = nullptr;
+        std::exception_ptr ex = render_exception_;
+        render_exception_ = nullptr;
         std::rethrow_exception(ex);
     }
 
@@ -1714,28 +1586,28 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
     // Wait for the ring buffer to empty
 
     {
-        std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
+        std::unique_lock<std::mutex> lock(buffer_mutex_);
 
         if (timeout_ms < 0)
         {
-            impl_->buffer_cv_.wait(lock, [&]() {
-                return impl_->ring_buffer_.empty() || !started_ || impl_->render_exception_ != nullptr;
+            buffer_cv_.wait(lock, [&]() {
+                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr;
             });
         }
         else
         {
-            if (!impl_->buffer_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&]() {
-                return impl_->ring_buffer_.empty() || !started_ || impl_->render_exception_ != nullptr;
+            if (!buffer_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&]() {
+                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr;
             }))
             {
                 return false; // Timeout waiting for ring buffer
             }
         }
 
-        if (impl_->render_exception_)
+        if (render_exception_)
         {
-            std::exception_ptr ex = impl_->render_exception_;
-            impl_->render_exception_ = nullptr;
+            std::exception_ptr ex = render_exception_;
+            render_exception_ = nullptr;
             std::rethrow_exception(ex);
         }
 
@@ -1745,7 +1617,7 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
         }
     }
 
-    uint64_t target_frames = impl_->total_frames_written_.load();
+    uint64_t target_frames = total_frames_written_.load();
 
     if (target_frames == 0)
     {
@@ -1818,7 +1690,7 @@ void wasapi_audio_output_stream::start()
     // The render thread will write audio data to the WASAPI render client from a ring buffer
     // After we start the render thread, we start the audio client to begin rendering audio
 
-    impl_->render_thread_ = std::jthread(std::bind(&wasapi_audio_output_stream::run, this, std::placeholders::_1));
+    render_thread_ = std::jthread(std::bind(&wasapi_audio_output_stream::run, this, std::placeholders::_1));
 
     // The render thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
 
@@ -1826,9 +1698,9 @@ void wasapi_audio_output_stream::start()
 
     if (FAILED(hr = impl_->audio_client_->Start()))
     {
-        impl_->render_thread_.request_stop();
+        render_thread_.request_stop();
         SetEvent(impl_->stop_render_event_);
-        impl_->render_thread_.join();
+        render_thread_.join();
         throw std::runtime_error("Failed to start audio client");
     }
 
@@ -1846,7 +1718,7 @@ void wasapi_audio_output_stream::stop()
     {
         ensure_com_initialized();
 
-        impl_->render_thread_.request_stop();
+        render_thread_.request_stop();
 
         // Signal the stop event to unblock any waiting read operations
         if (impl_->stop_render_event_ != nullptr)
@@ -1854,9 +1726,9 @@ void wasapi_audio_output_stream::stop()
             SetEvent(impl_->stop_render_event_);
         }
 
-        impl_->buffer_cv_.notify_all();
+        buffer_cv_.notify_all();
 
-        impl_->render_thread_.join();
+        render_thread_.join();
 
         if (impl_->audio_client_)
         {
@@ -1874,8 +1746,8 @@ bool wasapi_audio_output_stream::faulted()
         throw std::runtime_error("Stream not initialized");
     }
 
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    return impl_->render_exception_ != nullptr;
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    return render_exception_ != nullptr;
 }
 
 void wasapi_audio_output_stream::throw_if_faulted()
@@ -1885,11 +1757,11 @@ void wasapi_audio_output_stream::throw_if_faulted()
         throw std::runtime_error("Stream not initialized");
     }
 
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    if (impl_->render_exception_)
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (render_exception_)
     {
-        std::exception_ptr ex = impl_->render_exception_;
-        impl_->render_exception_ = nullptr;
+        std::exception_ptr ex = render_exception_;
+        render_exception_ = nullptr;
         std::rethrow_exception(ex);
     }
 }
@@ -1898,9 +1770,9 @@ void wasapi_audio_output_stream::flush()
 {
     if (impl_)
     {
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
         impl_->ring_buffer_.clear();
-        impl_->total_frames_written_ = 0;
+        total_frames_written_ = 0;
     }
 }
 
@@ -1913,9 +1785,9 @@ void wasapi_audio_output_stream::run(std::stop_token stop_token)
     catch (...)
     {
         // Swallow exceptions to prevent std::terminate from being called
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-        impl_->render_exception_ = std::current_exception();
-        impl_->buffer_cv_.notify_all();
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        render_exception_ = std::current_exception();
+        buffer_cv_.notify_all();
     }
 }
 
@@ -1991,7 +1863,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
         DWORD flags = 0;
 
         {
-            std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
 
             size_t samples_available_to_read = impl_->ring_buffer_.size();
 
@@ -2020,7 +1892,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
         }
 
         // Notify writers that there's space in the buffer
-        impl_->buffer_cv_.notify_one();
+        buffer_cv_.notify_one();
 
         // If we partially filled, we still need to release the full buffer we requested
         // but only mark the frames we actually wrote
@@ -2031,7 +1903,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
 
         if (flags != AUDCLNT_BUFFERFLAGS_SILENT)
         {
-            impl_->total_frames_written_ += frames_available_to_write;
+            total_frames_written_ += frames_available_to_write;
         }
     }
 }
@@ -2048,7 +1920,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
 
 #if WIN32
 
-wasapi_audio_input_stream::wasapi_audio_input_stream()
+wasapi_audio_input_stream::wasapi_audio_input_stream() : impl_(std::make_unique<wasapi_audio_input_stream_impl>())
 {
 }
 
@@ -2159,7 +2031,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
     }
 
     // Initialize ring buffer to hold ~5 second of audio
-    size_t ring_buffer_size = sample_rate_ * channels_ * impl_->ring_buffer_size_seconds_;
+    size_t ring_buffer_size = sample_rate_ * channels_ * ring_buffer_size_seconds_;
     impl_->ring_buffer_.set_capacity(ring_buffer_size);
 
     impl_->audio_client_.Attach(audio_client.Detach());
@@ -2170,22 +2042,63 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
     impl_->stop_capture_event_ = stop_capture_event_guard.release();
 }
 
-wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other) noexcept
+wasapi_audio_input_stream::wasapi_audio_input_stream(wasapi_audio_input_stream&& other) noexcept : impl_(std::make_unique<wasapi_audio_input_stream_impl>())
 {
-    impl_ = std::move(other.impl_);
+    impl_->device_.Attach(other.impl_->device_.Detach());
+    impl_->audio_client_.Attach(other.impl_->audio_client_.Detach());
+    impl_->capture_client_.Attach(other.impl_->capture_client_.Detach());
+    impl_->endpoint_volume_.Attach(other.impl_->endpoint_volume_.Detach());
+
+    impl_->audio_samples_ready_event_ = other.impl_->audio_samples_ready_event_;
+    other.impl_->audio_samples_ready_event_ = nullptr;
+
+    impl_->stop_capture_event_ = other.impl_->stop_capture_event_;
+    other.impl_->stop_capture_event_ = nullptr;
+
     buffer_size_ = other.buffer_size_;
     sample_rate_ = other.sample_rate_;
     channels_ = other.channels_;
+
+    capture_exception_ = other.capture_exception_;
+    discontinuity_count_ = other.discontinuity_count_;
+    ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
 }
 
 wasapi_audio_input_stream& wasapi_audio_input_stream::operator=(wasapi_audio_input_stream&& other) noexcept
 {
     if (this != &other)
     {
-        impl_ = std::move(other.impl_);
+        impl_->capture_client_.Release();
+        impl_->endpoint_volume_.Release();
+        impl_->audio_client_.Release();
+        impl_->device_.Release();
+
+        impl_->device_.Attach(other.impl_->device_.Detach());
+        impl_->audio_client_.Attach(other.impl_->audio_client_.Detach());
+        impl_->capture_client_.Attach(other.impl_->capture_client_.Detach());
+        impl_->endpoint_volume_.Attach(other.impl_->endpoint_volume_.Detach());
+
+        if (impl_->audio_samples_ready_event_ != nullptr)
+        {
+            CloseHandle(impl_->audio_samples_ready_event_);
+        }
+        if (impl_->stop_capture_event_ != nullptr)
+        {
+            CloseHandle(impl_->stop_capture_event_);
+        }
+
+        impl_->audio_samples_ready_event_ = other.impl_->audio_samples_ready_event_;
+        other.impl_->audio_samples_ready_event_ = nullptr;
+        impl_->stop_capture_event_ = other.impl_->stop_capture_event_;
+        other.impl_->stop_capture_event_ = nullptr;
+
         buffer_size_ = other.buffer_size_;
         sample_rate_ = other.sample_rate_;
         channels_ = other.channels_;
+
+        capture_exception_ = other.capture_exception_;
+        discontinuity_count_ = other.discontinuity_count_;
+        ring_buffer_size_seconds_ = other.ring_buffer_size_seconds_;
     }
     return *this;
 }
@@ -2204,6 +2117,19 @@ void wasapi_audio_input_stream::close()
         impl_->capture_client_.Release();
         impl_->endpoint_volume_.Release();
         impl_->audio_client_.Release();
+
+        if (impl_->audio_samples_ready_event_ != nullptr)
+        {
+            CloseHandle(impl_->audio_samples_ready_event_);
+            impl_->audio_samples_ready_event_ = nullptr;
+        }
+
+        if (impl_->stop_capture_event_ != nullptr)
+        {
+            CloseHandle(impl_->stop_capture_event_);
+            impl_->stop_capture_event_ = nullptr;
+        }
+
         impl_.reset();
     }
 }
@@ -2387,17 +2313,17 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
     size_t samples_needed = count;
     size_t samples_read = 0;
 
-    std::unique_lock<std::mutex> lock(impl_->buffer_mutex_);
+    std::unique_lock<std::mutex> lock(buffer_mutex_);
 
     // Wait until we have enough data or stopped
-    impl_->buffer_cv_.wait(lock, [&]() {
-        return !impl_->ring_buffer_.empty() || !started_ || impl_->capture_exception_ != nullptr;
+    buffer_cv_.wait(lock, [&]() {
+        return !impl_->ring_buffer_.empty() || !started_ || capture_exception_ != nullptr;
     });
 
-    if (impl_->capture_exception_)
+    if (capture_exception_)
     {
-        std::exception_ptr ex = impl_->capture_exception_;
-        impl_->capture_exception_ = nullptr;
+        std::exception_ptr ex = capture_exception_;
+        capture_exception_ = nullptr;
         std::rethrow_exception(ex);
     }
 
@@ -2442,7 +2368,7 @@ void wasapi_audio_input_stream::start()
     // The capture thread will read audio data from the WASAPI capture client and place it in a ring buffer
     // After we start the capture thread, we start the audio client to begin capturing audio
 
-    impl_->capture_thread_ = std::jthread(std::bind(&wasapi_audio_input_stream::run, this, std::placeholders::_1));
+    capture_thread_ = std::jthread(std::bind(&wasapi_audio_input_stream::run, this, std::placeholders::_1));
 
     // The capture thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
     // It does not matter if the audio client is started after the thread is started
@@ -2452,9 +2378,9 @@ void wasapi_audio_input_stream::start()
 
     if (FAILED(hr = impl_->audio_client_->Start()))
     {
-        impl_->capture_thread_.request_stop();
+        capture_thread_.request_stop();
         SetEvent(impl_->stop_capture_event_);
-        impl_->capture_thread_.join();
+        capture_thread_.join();
         throw std::runtime_error("Failed to start");
     }
 
@@ -2472,7 +2398,7 @@ void wasapi_audio_input_stream::stop()
     {
         ensure_com_initialized();
 
-        impl_->capture_thread_.request_stop();
+        capture_thread_.request_stop();
 
         // Signal the stop event to unblock any waiting read operations
         if (impl_->stop_capture_event_ != nullptr)
@@ -2480,9 +2406,9 @@ void wasapi_audio_input_stream::stop()
             SetEvent(impl_->stop_capture_event_);
         }
 
-        impl_->buffer_cv_.notify_all();
+        buffer_cv_.notify_all();
 
-        impl_->capture_thread_.join();
+        capture_thread_.join();
 
         if (impl_->audio_client_)
         {
@@ -2500,8 +2426,8 @@ bool wasapi_audio_input_stream::faulted()
         throw std::runtime_error("Stream not initialized");
     }
 
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    return impl_->capture_exception_ != nullptr;
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    return capture_exception_ != nullptr;
 }
 
 void wasapi_audio_input_stream::throw_if_faulted()
@@ -2511,11 +2437,11 @@ void wasapi_audio_input_stream::throw_if_faulted()
         throw std::runtime_error("Stream not initialized");
     }
 
-    std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-    if (impl_->capture_exception_)
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (capture_exception_)
     {
-        std::exception_ptr ex = impl_->capture_exception_;
-        impl_->capture_exception_ = nullptr;
+        std::exception_ptr ex = capture_exception_;
+        capture_exception_ = nullptr;
         std::rethrow_exception(ex);
     }
 }
@@ -2524,7 +2450,7 @@ void wasapi_audio_input_stream::flush()
 {
     if (impl_)
     {
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
         impl_->ring_buffer_.clear();
     }
 }
@@ -2538,9 +2464,9 @@ void wasapi_audio_input_stream::run(std::stop_token stop_token)
     catch (...)
     {
         // Swallow exceptions to prevent std::terminate from being called
-        std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
-        impl_->capture_exception_ = std::current_exception();
-        impl_->buffer_cv_.notify_all();
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        capture_exception_ = std::current_exception();
+        buffer_cv_.notify_all();
     }
 }
 
@@ -2637,7 +2563,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
             {
-                impl_->discontinuity_count_++;
+                discontinuity_count_++;
             }
 
             size_t samples_count = frames_available * channels_;
@@ -2646,7 +2572,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
                 // Push the captured samples into the ring buffer
                 // The buffer contains samples for all channels interleaved
 
-                std::lock_guard<std::mutex> lock(impl_->buffer_mutex_);
+                std::lock_guard<std::mutex> lock(buffer_mutex_);
 
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT)
                 {
@@ -2665,7 +2591,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
                 }
             }
 
-            impl_->buffer_cv_.notify_one();
+            buffer_cv_.notify_one();
 
             if (FAILED(impl_->capture_client_->ReleaseBuffer(frames_available)))
             {
@@ -4555,7 +4481,6 @@ struct tcp_audio_stream_control_client_impl
 {
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::socket socket { io_context };
-    bool connected = false;
 };
 
 // **************************************************************** //
@@ -4566,28 +4491,33 @@ struct tcp_audio_stream_control_client_impl
 //                                                                  //
 // **************************************************************** //
 
-nlohmann::json handle_request(tcp_audio_stream_control_client_impl& impl, const nlohmann::json& request)
+nlohmann::json handle_request(tcp_audio_stream_control_client& client, tcp_audio_stream_control_client_impl& impl, const nlohmann::json& request)
 {
-    if (!impl.connected)
+    if (!client.connected())
     {
-        throw std::runtime_error("not connected");
+        throw std::runtime_error("Client not connected");
     }
 
-    // send
+    // Send the request
+
     std::string data = request.dump();
-    uint32_t len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
-    boost::asio::write(impl.socket, boost::asio::buffer(&len, sizeof(len)));
+    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+
+    boost::asio::write(impl.socket, boost::asio::buffer(&length, sizeof(length)));
     boost::asio::write(impl.socket, boost::asio::buffer(data));
 
-    // receive
-    boost::asio::read(impl.socket, boost::asio::buffer(&len, sizeof(len)));
-    data.resize(boost::endian::big_to_native(len));
+    // Receive the response
+
+    boost::asio::read(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+    data.resize(boost::endian::big_to_native(length));
     boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
 
     nlohmann::json response = nlohmann::json::parse(data);
+
     if (response.contains("error"))
     {
-        throw std::runtime_error(response["error"].get<std::string>());
+        std::string error_message = response["error"].get<std::string>();
+        throw std::runtime_error(error_message);
     }
 
     return response;
@@ -4607,9 +4537,31 @@ tcp_audio_stream_control_client::tcp_audio_stream_control_client() : impl_(std::
 
 tcp_audio_stream_control_client::~tcp_audio_stream_control_client() = default;
 
-tcp_audio_stream_control_client::tcp_audio_stream_control_client(tcp_audio_stream_control_client&&) noexcept = default;
+tcp_audio_stream_control_client::tcp_audio_stream_control_client(tcp_audio_stream_control_client&& other) noexcept : impl_(std::move(other.impl_)), connected_(other.connected_)
+{
+    other.connected_ = false;
+}
 
-tcp_audio_stream_control_client& tcp_audio_stream_control_client::operator=(tcp_audio_stream_control_client&&) noexcept = default;
+tcp_audio_stream_control_client& tcp_audio_stream_control_client::operator=(tcp_audio_stream_control_client&& other) noexcept
+{
+    if (this != &other)
+    {
+        try
+        {
+            disconnect();
+        }
+        catch (...)
+        {
+            // Ignore
+        }
+
+        impl_ = std::move(other.impl_);
+        connected_ = other.connected_;
+        other.connected_ = false;
+    }
+
+    return *this;
+}
 
 bool tcp_audio_stream_control_client::connect(const std::string& host, int port)
 {
@@ -4618,7 +4570,7 @@ bool tcp_audio_stream_control_client::connect(const std::string& host, int port)
         boost::asio::ip::tcp::resolver resolver(impl_->io_context);
         auto endpoints = resolver.resolve(host, std::to_string(port));
         boost::asio::connect(impl_->socket, endpoints);
-        impl_->connected = true;
+        connected_ = true;
         return true;
     }
     catch (const std::exception&)
@@ -4629,53 +4581,58 @@ bool tcp_audio_stream_control_client::connect(const std::string& host, int port)
 
 void tcp_audio_stream_control_client::disconnect()
 {
-    if (impl_->connected)
+    if (connected_)
     {
         boost::system::error_code ec;
         impl_->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
         impl_->socket.close(ec);
-        impl_->connected = false;
+        connected_ = false;
     }
+}
+
+bool tcp_audio_stream_control_client::connected() const
+{
+    return connected_;
 }
 
 std::string tcp_audio_stream_control_client::name()
 {
-    return handle_request(*impl_, { {"command", "get_name"} })["value"].get<std::string>();
+    return handle_request(*this, *impl_, { {"command", "get_name"} })["value"].get<std::string>();
 }
 
 audio_stream_type tcp_audio_stream_control_client::type()
 {
-    return parse_audio_stream_type(handle_request(*impl_, { {"command", "get_type"} })["value"].get<std::string>());
+    return parse_audio_stream_type(handle_request(*this, *impl_, { {"command", "get_type"} })["value"].get<std::string>());
 }
 
 void tcp_audio_stream_control_client::volume(int percent)
 {
-    handle_request(*impl_, { {"command", "set_volume"}, {"value", percent} });
+    handle_request(*this, *impl_, { {"command", "set_volume"}, {"value", percent} });
 }
 
 int tcp_audio_stream_control_client::volume()
 {
-    return handle_request(*impl_, { {"command", "get_volume"} })["value"].get<int>();
+    return handle_request(*this, *impl_, { {"command", "get_volume"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::sample_rate()
 {
-    return handle_request(*impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
+    return handle_request(*this, *impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::channels()
 {
-    return handle_request(*impl_, { {"command", "get_channels"} })["value"].get<int>();
+    return handle_request(*this, *impl_, { {"command", "get_channels"} })["value"].get<int>();
 }
 
 void tcp_audio_stream_control_client::start()
 {
-    handle_request(*impl_, { {"command", "start"} });
+    handle_request(*this, *impl_, { {"command", "start"} });
 }
 
 void tcp_audio_stream_control_client::stop()
 {
-    handle_request(*impl_, { {"command", "stop"} });
+    handle_request(*this, *impl_, { {"command", "stop"} });
 }
 
 // **************************************************************** //
@@ -4709,26 +4666,22 @@ tcp_audio_stream_control_server::tcp_audio_stream_control_server(audio_stream_ba
 {
 }
 
-tcp_audio_stream_control_server::tcp_audio_stream_control_server(tcp_audio_stream_control_server&& other) noexcept : stream_(std::move(other.stream_)), impl_(std::move(other.impl_)), thread_(std::move(other.thread_)), running_(other.running_.load()), ready_(other.ready_)
+tcp_audio_stream_control_server::tcp_audio_stream_control_server(tcp_audio_stream_control_server&& other) noexcept : stream_(std::move(other.stream_)), impl_(std::make_unique<tcp_audio_stream_control_server_impl>())
 {
-    other.running_ = false;
-    other.ready_ = false;
+    assert(!other.running_);
 }
 
 tcp_audio_stream_control_server& tcp_audio_stream_control_server::operator=(tcp_audio_stream_control_server&& other) noexcept
 {
     if (this != &other)
     {
-        stop();
+        assert(!running_);
+        assert(!other.running_);
 
         stream_ = std::move(other.stream_);
-        impl_ = std::move(other.impl_);
-        thread_ = std::move(other.thread_);
-        running_ = other.running_.load();
-        ready_ = other.ready_;
-        other.running_ = false;
-        other.ready_ = false;
+        impl_ = std::make_unique<tcp_audio_stream_control_server_impl>();
     }
+
     return *this;
 }
 
@@ -4768,14 +4721,14 @@ void tcp_audio_stream_control_server::stop()
 {
     running_ = false;
 
-    if (impl_->client_socket && impl_->client_socket->is_open())
+    if (impl_ != nullptr && impl_->client_socket != nullptr && impl_->client_socket->is_open())
     {
         boost::system::error_code ec;
         impl_->client_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
         impl_->client_socket->close(ec);
     }
 
-    if (impl_->acceptor && impl_->acceptor->is_open())
+    if (impl_ != nullptr && impl_->acceptor != nullptr && impl_->acceptor->is_open())
     {
         boost::system::error_code ec;
         impl_->acceptor->close(ec);
@@ -4845,60 +4798,70 @@ void tcp_audio_stream_control_server::handle_request()
 {
     audio_stream_base& stream = stream_->get();
 
-    // receive
-    uint32_t len{};
-    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
-    std::string data(boost::endian::big_to_native(len), '\0');
+    // Read the request
+    // Read the length of the request
+    // Read the request data
+
+    uint32_t length;
+    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&length, sizeof(length)));
+
+    std::string data(boost::endian::big_to_native(length), '\0');
     boost::asio::read(*impl_->client_socket, boost::asio::buffer(data.data(), data.size()));
 
-    nlohmann::json req = nlohmann::json::parse(data);
-    nlohmann::json res;
-    std::string cmd = req.value("command", "");
+    // Parse the request data
 
-    if (cmd == "get_name")
+    nlohmann::json request = nlohmann::json::parse(data);
+
+    std::string command = request.value("command", "");
+
+    nlohmann::json response;
+
+    if (command == "get_name")
     {
-        res["value"] = stream.name();
+        response["value"] = stream.name();
     }
-    else if (cmd == "get_type")
+    else if (command == "get_type")
     {
-        res["value"] = to_string(stream.type());
+        response["value"] = to_string(stream.type());
     }
-    else if (cmd == "get_volume")
+    else if (command == "get_volume")
     {
-        res["value"] = stream.volume();
+        response["value"] = stream.volume();
     }
-    else if (cmd == "set_volume")
+    else if (command == "set_volume")
     {
-        stream.volume(req.value("value", 0));
-        res["value"] = "ok";
+        stream.volume(request.value("value", 0));
+        response["value"] = "ok";
     }
-    else if (cmd == "get_sample_rate")
+    else if (command == "get_sample_rate")
     {
-        res["value"] = stream.sample_rate();
+        response["value"] = stream.sample_rate();
     }
-    else if (cmd == "get_channels")
+    else if (command == "get_channels")
     {
-        res["value"] = stream.channels();
+        response["value"] = stream.channels();
     }
-    else if (cmd == "start")
+    else if (command == "start")
     {
         stream.start();
-        res["value"] = "ok";
+        response["value"] = "ok";
     }
-    else if (cmd == "stop")
+    else if (command == "stop")
     {
         stream.stop();
-        res["value"] = "ok";
+        response["value"] = "ok";
     }
     else
     {
-        res["error"] = "unknown command: " + cmd;
+        response["error"] = "unknown command: " + command;
     }
 
-    // send
-    data = res.dump();
-    len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
-    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
+    // Send the response
+
+    data = response.dump();
+    length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+
+    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&length, sizeof(length)));
     boost::asio::write(*impl_->client_socket, boost::asio::buffer(data));
 }
 
