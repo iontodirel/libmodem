@@ -503,7 +503,7 @@ private:
 
 #if __linux__
 
-struct alsa_audio_output_stream_impl;
+struct alsa_audio_stream_impl;
 
 class alsa_audio_output_stream : public audio_stream_base
 {
@@ -554,7 +554,7 @@ private:
     int channels_ = 0;
     bool started_ = false;
     bool start_stop_enabled_ = false;
-    std::unique_ptr<alsa_audio_output_stream_impl> impl_;
+    std::unique_ptr<alsa_audio_stream_impl> impl_;
 };
 
 #endif // __linux__
@@ -569,7 +569,7 @@ private:
 
 #if __linux__
 
-struct alsa_audio_input_stream_impl;
+struct alsa_audio_stream_impl;
 
 class alsa_audio_input_stream : public audio_stream_base
 {
@@ -618,7 +618,7 @@ private:
     int channels_ = 2;
     bool started_ = false;
     bool start_stop_enabled_ = false;
-    std::unique_ptr<alsa_audio_input_stream_impl> impl_;
+    std::unique_ptr<alsa_audio_stream_impl> impl_;
 };
 
 #endif // __linux__

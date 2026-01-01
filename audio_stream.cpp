@@ -3088,56 +3088,18 @@ bool alsa_audio_stream_control::can_set_volume()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// alsa_audio_output_stream_impl                                    //
+// alsa_audio_stream_impl                                           //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 #if __linux__
 
-struct alsa_audio_output_stream_impl
+struct alsa_audio_stream_impl
 {
-    alsa_audio_output_stream_impl();
-    alsa_audio_output_stream_impl(const alsa_audio_output_stream_impl&) = delete;
-    alsa_audio_output_stream_impl& operator=(const alsa_audio_output_stream_impl&) = delete;
-    alsa_audio_output_stream_impl(alsa_audio_output_stream_impl&&) noexcept;
-    alsa_audio_output_stream_impl& operator=(alsa_audio_output_stream_impl&&) noexcept;
-    ~alsa_audio_output_stream_impl();
-
     snd_pcm_t* pcm_handle_ = nullptr;
     snd_pcm_format_t format_;
 };
-
-alsa_audio_output_stream_impl::alsa_audio_output_stream_impl()
-{
-}
-
-alsa_audio_output_stream_impl::alsa_audio_output_stream_impl(alsa_audio_output_stream_impl&& other) noexcept
-{
-    pcm_handle_ = other.pcm_handle_;
-    other.pcm_handle_ = nullptr;
-    format_ = other.format_;
-}
-
-alsa_audio_output_stream_impl& alsa_audio_output_stream_impl::operator=(alsa_audio_output_stream_impl&& other) noexcept
-{
-    if (this != &other)
-    {
-        pcm_handle_ = other.pcm_handle_;
-        other.pcm_handle_ = nullptr;
-        format_ = other.format_;
-    }
-    return *this;
-}
-
-alsa_audio_output_stream_impl::~alsa_audio_output_stream_impl()
-{
-    if (pcm_handle_ != nullptr)
-    {
-        snd_pcm_close(pcm_handle_);
-        pcm_handle_ = nullptr;
-    }
-}
 
 #endif // __linux__
 
@@ -3151,13 +3113,13 @@ alsa_audio_output_stream_impl::~alsa_audio_output_stream_impl()
 
 #if __linux__
 
-alsa_audio_output_stream::alsa_audio_output_stream()
+alsa_audio_output_stream::alsa_audio_output_stream() : impl_(std::make_unique<alsa_audio_stream_impl>())
 {
 }
 
 alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) : card_id(card_id), device_id(device_id)
 {
-    impl_ = std::make_unique<alsa_audio_output_stream_impl>();
+    impl_ = std::make_unique<alsa_audio_stream_impl>();
 
     int err = 0;
 
@@ -3231,9 +3193,12 @@ alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) :
     }
 }
 
-alsa_audio_output_stream::alsa_audio_output_stream(alsa_audio_output_stream&& other) noexcept
+alsa_audio_output_stream::alsa_audio_output_stream(alsa_audio_output_stream&& other) noexcept : impl_(std::make_unique<alsa_audio_stream_impl>())
 {
-    impl_ = std::move(other.impl_);
+    impl_->pcm_handle_ = other.impl_->pcm_handle_;
+    other.impl_->pcm_handle_ = nullptr;
+    impl_->format_ = other.impl_->format_;
+
     card_id = other.card_id;
     device_id = other.device_id;
     sample_rate_ = other.sample_rate_;
@@ -3244,14 +3209,17 @@ alsa_audio_output_stream& alsa_audio_output_stream::operator=(alsa_audio_output_
 {
     if (this != &other)
     {
-        if (impl_ && impl_->pcm_handle_)
+        if (impl_ && impl_->pcm_handle_ != nullptr)
         {
             snd_pcm_drain(impl_->pcm_handle_);
             snd_pcm_close(impl_->pcm_handle_);
             impl_->pcm_handle_ = nullptr;
         }
 
-        impl_ = std::move(other.impl_);
+        impl_->pcm_handle_ = other.impl_->pcm_handle_;
+        other.impl_->pcm_handle_ = nullptr;
+        impl_->format_ = other.impl_->format_;
+
         card_id = other.card_id;
         device_id = other.device_id;
         sample_rate_ = other.sample_rate_;
@@ -3267,7 +3235,7 @@ alsa_audio_output_stream::~alsa_audio_output_stream()
 
 void alsa_audio_output_stream::close()
 {
-    if (impl_ && impl_->pcm_handle_)
+    if (impl_ && impl_->pcm_handle_ != nullptr)
     {
         snd_pcm_drain(impl_->pcm_handle_);
         snd_pcm_close(impl_->pcm_handle_);
@@ -3584,62 +3552,6 @@ int alsa_audio_output_stream::channels()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// alsa_audio_input_stream_impl                                     //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-#if __linux__
-
-struct alsa_audio_input_stream_impl
-{
-    alsa_audio_input_stream_impl();
-    alsa_audio_input_stream_impl(const alsa_audio_input_stream_impl&) = delete;
-    alsa_audio_input_stream_impl& operator=(const alsa_audio_input_stream_impl&) = delete;
-    alsa_audio_input_stream_impl(alsa_audio_input_stream_impl&&) noexcept;
-    alsa_audio_input_stream_impl& operator=(alsa_audio_input_stream_impl&&) noexcept;
-    ~alsa_audio_input_stream_impl();
-
-    snd_pcm_t* pcm_handle_ = nullptr;
-    snd_pcm_format_t format_;
-};
-
-alsa_audio_input_stream_impl::alsa_audio_input_stream_impl()
-{
-}
-
-alsa_audio_input_stream_impl::alsa_audio_input_stream_impl(alsa_audio_input_stream_impl&& other) noexcept
-{
-    pcm_handle_ = other.pcm_handle_;
-    other.pcm_handle_ = nullptr;
-    format_ = other.format_;
-}
-
-alsa_audio_input_stream_impl& alsa_audio_input_stream_impl::operator=(alsa_audio_input_stream_impl&& other) noexcept
-{
-    if (this != &other)
-    {
-        pcm_handle_ = other.pcm_handle_;
-        other.pcm_handle_ = nullptr;
-        format_ = other.format_;
-    }
-    return *this;
-}
-
-alsa_audio_input_stream_impl::~alsa_audio_input_stream_impl()
-{
-    if (pcm_handle_ != nullptr)
-    {
-        snd_pcm_close(pcm_handle_);
-        pcm_handle_ = nullptr;
-    }
-}
-
-#endif // __linux__
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
 // alsa_audio_input_stream                                          //
 //                                                                  //
 //                                                                  //
@@ -3647,13 +3559,13 @@ alsa_audio_input_stream_impl::~alsa_audio_input_stream_impl()
 
 #if __linux__
 
-alsa_audio_input_stream::alsa_audio_input_stream()
+alsa_audio_input_stream::alsa_audio_input_stream() : impl_(std::make_unique<alsa_audio_stream_impl>())
 {
 }
 
 alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : card_id(card_id), device_id(device_id)
 {
-    impl_ = std::make_unique<alsa_audio_input_stream_impl>();
+    impl_ = std::make_unique<alsa_audio_stream_impl>();
 
     int err = 0;
 
@@ -3720,9 +3632,12 @@ alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : c
     }
 }
 
-alsa_audio_input_stream::alsa_audio_input_stream(alsa_audio_input_stream&& other) noexcept
+alsa_audio_input_stream::alsa_audio_input_stream(alsa_audio_input_stream&& other) noexcept : impl_(std::make_unique<alsa_audio_stream_impl>())
 {
-    impl_ = std::move(other.impl_);
+    impl_->pcm_handle_ = other.impl_->pcm_handle_;
+    other.impl_->pcm_handle_ = nullptr;
+    impl_->format_ = other.impl_->format_;
+
     card_id = other.card_id;
     device_id = other.device_id;
     sample_rate_ = other.sample_rate_;
@@ -3740,7 +3655,10 @@ alsa_audio_input_stream& alsa_audio_input_stream::operator=(alsa_audio_input_str
             impl_->pcm_handle_ = nullptr;
         }
 
-        impl_ = std::move(other.impl_);
+        impl_->pcm_handle_ = other.impl_->pcm_handle_;
+        other.impl_->pcm_handle_ = nullptr;
+        impl_->format_ = other.impl_->format_;
+        
         card_id = other.card_id;
         device_id = other.device_id;
         sample_rate_ = other.sample_rate_;
