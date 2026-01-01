@@ -488,38 +488,10 @@ static void ensure_com_initialized()
 
 struct audio_device_impl
 {
-    audio_device_impl() = default;
-    audio_device_impl(const audio_device_impl&) = delete;
-    audio_device_impl& operator=(const audio_device_impl& other) = delete;
-    audio_device_impl(audio_device_impl&&);
-    audio_device_impl& operator=(audio_device_impl&& other);
-    ~audio_device_impl() = default;
-
 #if WIN32
     CComPtr<IMMDevice> device_;
 #endif // WIN32
 };
-
-audio_device_impl::audio_device_impl(audio_device_impl&& other)
-{
-    if (this != &other)
-    {
-#if WIN32
-        device_.Attach(other.device_.Detach()); // Release old, take new
-#endif // WIN32
-    }
-}
-
-audio_device_impl& audio_device_impl::operator=(audio_device_impl&& other)
-{
-    if (this != &other)
-    {
-#if WIN32
-        device_.Attach(other.device_.Detach());  // Release old, take new
-#endif // WIN32
-    }
-    return *this;
-}
 
 // **************************************************************** //
 //                                                                  //
@@ -590,7 +562,7 @@ struct wasapi_audio_input_stream_impl
 //                                                                  //
 // **************************************************************** //
 
-audio_device::audio_device()
+audio_device::audio_device() : impl_(std::make_unique<audio_device_impl>())
 {
 }
 
@@ -708,16 +680,16 @@ audio_device::audio_device(int card_id, int device_id, audio_device_type type) :
 
 #endif // __linux__
 
-audio_device::audio_device(audio_device&& other) noexcept
+audio_device::audio_device(audio_device&& other) noexcept : impl_(std::make_unique<audio_device_impl>())
 {
     id = std::move(other.id);
     name = std::move(other.name);
     description = std::move(other.description);
     type = other.type;
     state = other.state;
-    impl_ = std::move(other.impl_);
 
 #if WIN32
+    impl_->device_.Attach(other.impl_->device_.Detach()); // Release old, take new
     container_id = std::move(other.container_id);
 #endif // WIN32
 
@@ -736,9 +708,9 @@ audio_device& audio_device::operator=(audio_device&& other) noexcept
         description = std::move(other.description);
         type = other.type;
         state = other.state;
-        impl_ = std::move(other.impl_);
 
 #if WIN32
+        impl_->device_.Attach(other.impl_->device_.Detach()); // Release old, take new
         container_id = std::move(other.container_id);
 #endif // WIN32
 #if __linux__
