@@ -34,15 +34,14 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <cstdint>
-#include <numeric>
 #include <mutex>
-#include <shared_mutex>
 #include <atomic>
 #include <chrono>
 #include <stop_token>
 #include <optional>
 #include <functional>
+#include <thread>
+#include <condition_variable>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -73,6 +72,9 @@ enum class audio_stream_type : int
     output = 1,
     input = 2
 };
+
+audio_stream_type parse_audio_stream_type(const std::string& type_string);
+std::string to_string(audio_stream_type type);
 
 // **************************************************************** //
 //                                                                  //
@@ -704,6 +706,82 @@ private:
     std::string filename_;
     int sample_rate_ = 0;
     const int channels_ = 1;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_client                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_audio_stream_control_client_impl;
+
+class tcp_audio_stream_control_client
+{
+public:
+    tcp_audio_stream_control_client();
+    tcp_audio_stream_control_client& operator=(const tcp_audio_stream_control_client&) = delete;
+    tcp_audio_stream_control_client(const tcp_audio_stream_control_client&) = delete;
+    tcp_audio_stream_control_client& operator=(tcp_audio_stream_control_client&&) noexcept;
+    tcp_audio_stream_control_client(tcp_audio_stream_control_client&&) noexcept;
+    ~tcp_audio_stream_control_client();
+
+    bool connect(const std::string& host, int port);
+    void disconnect();
+
+    std::string name();
+    audio_stream_type type();
+
+    void volume(int percent);
+    int volume();
+
+    int sample_rate();
+    int channels();
+
+    void start();
+    void stop();
+
+private:
+    std::unique_ptr<tcp_audio_stream_control_client_impl> impl_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_server                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_audio_stream_control_server_impl;
+
+class tcp_audio_stream_control_server
+{
+public:
+    tcp_audio_stream_control_server();
+    tcp_audio_stream_control_server(audio_stream_base&);
+    tcp_audio_stream_control_server& operator=(const tcp_audio_stream_control_server&) = delete;
+    tcp_audio_stream_control_server(const tcp_audio_stream_control_server&) = delete;
+    tcp_audio_stream_control_server& operator=(tcp_audio_stream_control_server&&) noexcept;
+    tcp_audio_stream_control_server(tcp_audio_stream_control_server&&) noexcept;
+    ~tcp_audio_stream_control_server();
+
+    bool start(const std::string& host, int port);
+    void stop();
+
+private:
+    void run();
+    void run_internal();
+
+    std::optional<std::reference_wrapper<audio_stream_base>> stream_;
+    std::unique_ptr<tcp_audio_stream_control_server_impl> impl_;
+    std::jthread thread_;
+    std::atomic<bool> running_ = false;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool ready_ = false;
 };
 
 LIBMODEM_NAMESPACE_END

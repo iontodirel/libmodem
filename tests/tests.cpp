@@ -4569,6 +4569,55 @@ TEST(audio_device, audio_stream)
     }
 }
 
+TEST(audio_stream, tcp_audio_stream_control)
+{
+    // Get the default playback audio device
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    audio_stream stream = device.stream();
+
+    // Start a stream control server
+
+    tcp_audio_stream_control_server control_server(stream);
+
+    EXPECT_TRUE(control_server.start("127.0.0.1", 1234));
+
+    // Start a stream control client
+
+    tcp_audio_stream_control_client control_client;
+
+    EXPECT_TRUE(control_client.connect("127.0.0.1", 1234));
+
+    EXPECT_TRUE(control_client.name() == stream.name());
+    EXPECT_TRUE(control_client.type() == stream.type());
+    EXPECT_TRUE(control_client.sample_rate() == stream.sample_rate());
+    EXPECT_TRUE(control_client.channels() == stream.channels());
+
+    for (int volume = 0; volume < 100; volume += 10)
+    {
+        control_client.volume(volume);
+
+        EXPECT_NEAR(control_client.volume(), volume, 15);
+        EXPECT_TRUE(stream.volume() == control_client.volume());
+    }
+
+    // Start and stop the stream
+
+    control_client.start();
+    control_client.stop();
+
+    control_client.disconnect();
+
+    EXPECT_TRUE(control_client.connect("127.0.0.1", 1234));
+    EXPECT_TRUE(control_client.name() == stream.name());
+
+    control_client.disconnect();
+
+    control_server.stop();
+}
+
 #if WIN32
 
 TEST(audio_stream, wasapi_audio_input_stream)

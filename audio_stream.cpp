@@ -71,6 +71,10 @@
 #include <sndfile.h>
 
 #include <boost/circular_buffer.hpp>
+#include <boost/asio.hpp>
+#include <boost/endian/conversion.hpp>
+
+#include <nlohmann/json.hpp>
 
 LIBMODEM_NAMESPACE_BEGIN
 
@@ -173,6 +177,46 @@ bool is_float32_format(WAVEFORMATEX* device_format)
 }
 
 #endif
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_type                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+audio_stream_type parse_audio_stream_type(const std::string& type_string)
+{
+    if (type_string == "input")
+    {
+        return audio_stream_type::input;
+    }
+    else if (type_string == "output")
+    {
+        return audio_stream_type::output;
+    }
+    else
+    {
+        return audio_stream_type::unknown;
+    }
+}
+
+std::string to_string(audio_stream_type type)
+{
+    if (type == audio_stream_type::input)
+    {
+        return "input";
+    }
+    else if (type == audio_stream_type::output)
+    {
+        return "output";
+    }
+    else
+    {
+        return "unknown";
+    }
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -4497,6 +4541,352 @@ void wav_audio_output_stream::start()
 void wav_audio_output_stream::stop()
 {
     // Not supported
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_client_impl                             //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_audio_stream_control_client_impl
+{
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::socket socket { io_context };
+    bool connected = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// request                                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+nlohmann::json request(tcp_audio_stream_control_client_impl& impl, const nlohmann::json& request)
+{
+    if (!impl.connected)
+    {
+        throw std::runtime_error("not connected");
+    }
+
+    // send
+    std::string data = request.dump();
+    uint32_t len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+    boost::asio::write(impl.socket, boost::asio::buffer(&len, sizeof(len)));
+    boost::asio::write(impl.socket, boost::asio::buffer(data));
+
+    // receive
+    boost::asio::read(impl.socket, boost::asio::buffer(&len, sizeof(len)));
+    data.resize(boost::endian::big_to_native(len));
+    boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
+
+    nlohmann::json response = nlohmann::json::parse(data);
+    if (response.contains("error"))
+    {
+        throw std::runtime_error(response["error"].get<std::string>());
+    }
+
+    return response;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_client                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_audio_stream_control_client::tcp_audio_stream_control_client() : impl_(std::make_unique<tcp_audio_stream_control_client_impl>())
+{
+}
+
+tcp_audio_stream_control_client::~tcp_audio_stream_control_client() = default;
+
+tcp_audio_stream_control_client::tcp_audio_stream_control_client(tcp_audio_stream_control_client&&) noexcept = default;
+
+tcp_audio_stream_control_client& tcp_audio_stream_control_client::operator=(tcp_audio_stream_control_client&&) noexcept = default;
+
+bool tcp_audio_stream_control_client::connect(const std::string& host, int port)
+{
+    try
+    {
+        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
+        auto endpoints = resolver.resolve(host, std::to_string(port));
+        boost::asio::connect(impl_->socket, endpoints);
+        impl_->connected = true;
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void tcp_audio_stream_control_client::disconnect()
+{
+    if (impl_->connected)
+    {
+        boost::system::error_code ec;
+        impl_->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        impl_->socket.close(ec);
+        impl_->connected = false;
+    }
+}
+
+std::string tcp_audio_stream_control_client::name()
+{
+    return request(*impl_, { {"command", "get_name"} })["value"].get<std::string>();
+}
+
+audio_stream_type tcp_audio_stream_control_client::type()
+{
+    return parse_audio_stream_type(request(*impl_, { {"command", "get_type"} })["value"].get<std::string>());
+}
+
+void tcp_audio_stream_control_client::volume(int percent)
+{
+    request(*impl_, { {"command", "set_volume"}, {"value", percent} });
+}
+
+int tcp_audio_stream_control_client::volume()
+{
+    return request(*impl_, { {"command", "get_volume"} })["value"].get<int>();
+}
+
+int tcp_audio_stream_control_client::sample_rate()
+{
+    return request(*impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
+}
+
+int tcp_audio_stream_control_client::channels()
+{
+    return request(*impl_, { {"command", "get_channels"} })["value"].get<int>();
+}
+
+void tcp_audio_stream_control_client::start()
+{
+    request(*impl_, { {"command", "start"} });
+}
+
+void tcp_audio_stream_control_client::stop()
+{
+    request(*impl_, { {"command", "stop"} });
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_server_impl                             //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_audio_stream_control_server_impl
+{
+    boost::asio::io_context io_context;
+    std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor;
+    std::unique_ptr<boost::asio::ip::tcp::socket> client_socket;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_audio_stream_control_server                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_audio_stream_control_server::tcp_audio_stream_control_server() : impl_(std::make_unique<tcp_audio_stream_control_server_impl>())
+{
+}
+
+tcp_audio_stream_control_server::tcp_audio_stream_control_server(audio_stream_base& stream) : stream_(stream), impl_(std::make_unique<tcp_audio_stream_control_server_impl>())
+{
+}
+
+tcp_audio_stream_control_server::tcp_audio_stream_control_server(tcp_audio_stream_control_server&& other) noexcept : stream_(std::move(other.stream_)), impl_(std::move(other.impl_)), thread_(std::move(other.thread_)), running_(other.running_.load()), ready_(other.ready_)
+{
+    other.running_ = false;
+    other.ready_ = false;
+}
+
+tcp_audio_stream_control_server& tcp_audio_stream_control_server::operator=(tcp_audio_stream_control_server&& other) noexcept
+{
+    if (this != &other)
+    {
+        stop();
+
+        stream_ = std::move(other.stream_);
+        impl_ = std::move(other.impl_);
+        thread_ = std::move(other.thread_);
+        running_ = other.running_.load();
+        ready_ = other.ready_;
+        other.running_ = false;
+        other.ready_ = false;
+    }
+    return *this;
+}
+
+tcp_audio_stream_control_server::~tcp_audio_stream_control_server()
+{
+    stop();
+}
+
+bool tcp_audio_stream_control_server::start(const std::string& host, int port)
+{
+    if (!stream_.has_value())
+    {
+        return false;
+    }
+
+    try
+    {
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
+        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context, endpoint);
+        impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        running_ = true;
+
+        thread_ = std::jthread(&tcp_audio_stream_control_server::run, this);
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this]() { return ready_; });
+
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void tcp_audio_stream_control_server::stop()
+{
+    running_ = false;
+
+    if (impl_->client_socket && impl_->client_socket->is_open())
+    {
+        boost::system::error_code ec;
+        impl_->client_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        impl_->client_socket->close(ec);
+    }
+
+    if (impl_->acceptor && impl_->acceptor->is_open())
+    {
+        boost::system::error_code ec;
+        impl_->acceptor->close(ec);
+    }
+
+    if (thread_.joinable())
+    {
+        thread_.join();
+    }
+}
+
+void tcp_audio_stream_control_server::run()
+{
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ready_ = true;
+    }
+    cv_.notify_one();
+
+    run_internal();
+}
+
+void tcp_audio_stream_control_server::run_internal()
+{
+    audio_stream_base& stream = stream_->get();
+
+    while (running_)
+    {
+        try
+        {
+            impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
+            impl_->acceptor->accept(*impl_->client_socket);
+
+            while (running_ && impl_->client_socket->is_open())
+            {
+                try
+                {
+                    // receive
+                    uint32_t len{};
+                    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
+                    std::string data(boost::endian::big_to_native(len), '\0');
+                    boost::asio::read(*impl_->client_socket, boost::asio::buffer(data.data(), data.size()));
+
+                    nlohmann::json req = nlohmann::json::parse(data);
+                    nlohmann::json resp;
+                    std::string cmd = req.value("command", "");
+
+                    if (cmd == "get_name")
+                    {
+                        resp["value"] = stream.name();
+                    }
+                    else if (cmd == "get_type")
+                    {
+                        resp["value"] = to_string(stream.type());
+                    }
+                    else if (cmd == "get_volume")
+                    {
+                        resp["value"] = stream.volume();
+                    }
+                    else if (cmd == "set_volume")
+                    {
+                        stream.volume(req.value("value", 0));
+                        resp["value"] = "ok";
+                    }
+                    else if (cmd == "get_sample_rate")
+                    {
+                        resp["value"] = stream.sample_rate();
+                    }
+                    else if (cmd == "get_channels")
+                    {
+                        resp["value"] = stream.channels();
+                    }
+                    else if (cmd == "start")
+                    {
+                        stream.start();
+                        resp["value"] = "ok";
+                    }
+                    else if (cmd == "stop")
+                    {
+                        stream.stop();
+                        resp["value"] = "ok";
+                    }
+                    else
+                    {
+                        resp["error"] = "unknown command: " + cmd;
+                    }
+
+                    // send
+                    data = resp.dump();
+                    len = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+                    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&len, sizeof(len)));
+                    boost::asio::write(*impl_->client_socket, boost::asio::buffer(data));
+                }
+                catch (const boost::system::system_error& e)
+                {
+                    if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
+                    {
+                        break;
+                    }
+                    throw;
+                }
+            }
+        }
+        catch (const boost::system::system_error& e)
+        {
+            if (e.code() == boost::asio::error::operation_aborted)
+            {
+                break;
+            }
+        }
+    }
 }
 
 LIBMODEM_NAMESPACE_END
