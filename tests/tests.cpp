@@ -4426,10 +4426,11 @@ TEST(modem, transmit_hardware_demo)
     {
         return;
     }
+#endif // __linux__
+
     // Turns out opening the port asserts the RTS line to on
     // Disable it, if we do it fast it will never be asserted high
     port.rts(false);
-#endif // __linux__
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
@@ -4719,6 +4720,45 @@ TEST(audio_stream, tcp_audio_stream_control)
     control_server.stop();
 }
 
+TEST(audio_stream, nullptr_t_test)
+{
+    audio_stream stream = nullptr;
+
+    EXPECT_TRUE(!stream);
+
+    EXPECT_ANY_THROW({
+        stream.name();
+    });
+
+    stream = audio_stream(nullptr);
+
+    EXPECT_TRUE(!stream);
+
+    EXPECT_ANY_THROW({
+        stream.name();
+    });
+}
+
+TEST(audio_stream, null_audio_stream)
+{
+    null_audio_stream stream;
+
+    stream.close();
+    stream.name();
+    EXPECT_TRUE(stream.type() == audio_stream_type::null);
+    stream.volume(100);
+    stream.volume();
+    stream.sample_rate();
+    stream.channels();
+    stream.write(nullptr, 0);
+    stream.write_interleaved(nullptr, 0);
+    stream.read(nullptr, 0);
+    stream.read_interleaved(nullptr, 0);
+    stream.wait_write_completed(0);
+    stream.start();
+    stream.stop();
+}
+
 #if WIN32
 
 TEST(audio_stream, wasapi_audio_input_stream)
@@ -4726,30 +4766,28 @@ TEST(audio_stream, wasapi_audio_input_stream)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::capture));
 
-    std::unique_ptr<audio_stream_base> stream = device.stream();
+    audio_stream stream = device.stream();
 
-    wasapi_audio_input_stream* wasapi_stream = dynamic_cast<wasapi_audio_input_stream*>(stream.get());
+    wasapi_audio_input_stream& wasapi_stream = dynamic_cast<wasapi_audio_input_stream&>(stream.get());
 
-    EXPECT_TRUE(wasapi_stream != nullptr);
+    wasapi_stream.stop();
 
-    wasapi_stream->stop();
+    wasapi_stream.start();
 
-    wasapi_stream->start();
+    wasapi_stream.mute(true);
 
-    wasapi_stream->mute(true);
+    EXPECT_TRUE(wasapi_stream.mute() == true);
 
-    EXPECT_TRUE(wasapi_stream->mute() == true);
+    wasapi_stream.mute(false);
 
-    wasapi_stream->mute(false);
-
-    EXPECT_TRUE(wasapi_stream->mute() == false);
+    EXPECT_TRUE(wasapi_stream.mute() == false);
 
     bool mute = true;
 
     for (int i = 0; i < 10; i++)
     {
-        wasapi_stream->mute(mute);
-        EXPECT_TRUE(wasapi_stream->mute() == mute);
+        wasapi_stream.mute(mute);
+        EXPECT_TRUE(wasapi_stream.mute() == mute);
         // Mute is fast enough that we won't observe it in the system controls
         // If we don't have add a small delay
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
@@ -4762,30 +4800,30 @@ TEST(audio_stream, wasapi_audio_output_stream)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    std::unique_ptr<audio_stream_base> stream = device.stream();
+    audio_stream stream = device.stream();
 
-    wasapi_audio_output_stream* wasapi_stream = dynamic_cast<wasapi_audio_output_stream*>(stream.get());
+    wasapi_audio_output_stream& wasapi_stream = dynamic_cast<wasapi_audio_output_stream&>(stream.get());
 
-    EXPECT_TRUE(wasapi_stream != nullptr);
+    EXPECT_TRUE(&wasapi_stream != nullptr);
 
-    wasapi_stream->stop();
+    wasapi_stream.stop();
 
-    wasapi_stream->start();
+    wasapi_stream.start();
 
-    wasapi_stream->mute(true);
+    wasapi_stream.mute(true);
 
-    EXPECT_TRUE(wasapi_stream->mute() == true);
+    EXPECT_TRUE(wasapi_stream.mute() == true);
 
-    wasapi_stream->mute(false);
+    wasapi_stream.mute(false);
 
-    EXPECT_TRUE(wasapi_stream->mute() == false);
+    EXPECT_TRUE(wasapi_stream.mute() == false);
 
     bool mute = true;
 
     for (int i = 0; i < 10; i++)
     {
-        wasapi_stream->mute(mute);
-        EXPECT_TRUE(wasapi_stream->mute() == mute);
+        wasapi_stream.mute(mute);
+        EXPECT_TRUE(wasapi_stream.mute() == mute);
         // Mute is fast enough that we won't observe it in the system controls
         // If we don't have add a small delay
         std::this_thread::sleep_for(std::chrono::milliseconds(80));

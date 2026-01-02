@@ -69,9 +69,10 @@ LIBMODEM_NAMESPACE_BEGIN
 
 enum class audio_stream_type : int
 {
-    unknown = 0,
-    output = 1,
-    input = 2
+    unknown,
+    output,
+    input,
+    null
 };
 
 audio_stream_type parse_audio_stream_type(const std::string& type_string);
@@ -135,12 +136,12 @@ class audio_stream : public audio_stream_base
 public:
     using audio_stream_base::wait_write_completed;
 
-    audio_stream(std::unique_ptr<audio_stream_base> s);
-
-    audio_stream(audio_stream&&) = default;
-    audio_stream& operator=(audio_stream&&) = default;
+    audio_stream(std::nullptr_t);
+    explicit audio_stream(std::unique_ptr<audio_stream_base> s);
     audio_stream(const audio_stream&) = delete;
     audio_stream& operator=(const audio_stream&) = delete;
+    audio_stream(audio_stream&&) = default;
+    audio_stream& operator=(audio_stream&&) = default;
     virtual ~audio_stream();
 
     void close() override;
@@ -162,10 +163,45 @@ public:
     void start() override;
     void stop() override;
 
+    audio_stream_base& get();
+
     explicit operator bool() const;
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// null_audio_stream                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class null_audio_stream : public audio_stream_base
+{
+public:
+    using audio_stream_base::wait_write_completed;
+
+    void close() override;
+
+    std::string name() override;
+    audio_stream_type type() override;
+    void volume(int percent) override;
+    int volume() override;
+    int sample_rate() override;
+    int channels() override;
+
+    size_t write(const double* samples, size_t count) override;
+    size_t write_interleaved(const double* samples, size_t count) override;
+    size_t read(double* samples, size_t count) override;
+    size_t read_interleaved(double* samples, size_t count) override;
+
+    bool wait_write_completed(int timeout_ms) override;
+
+    void start() override;
+    void stop() override;
 };
 
 // **************************************************************** //
@@ -230,7 +266,7 @@ struct audio_device
     audio_device& operator=(audio_device&& other) noexcept;
     virtual ~audio_device();
 
-    std::unique_ptr<audio_stream_base> stream();
+    audio_stream stream();
 
     std::string id;
     std::string name;

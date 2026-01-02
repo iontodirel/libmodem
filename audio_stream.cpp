@@ -265,6 +265,10 @@ void audio_stream_base::wait_write_completed()
 //                                                                  //
 // **************************************************************** //
 
+audio_stream::audio_stream(std::nullptr_t)
+{
+}
+
 audio_stream::audio_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::move(s))
 {
 }
@@ -396,9 +400,92 @@ void audio_stream::stop()
     stream_->stop();
 }
 
+audio_stream_base& audio_stream::get()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return *stream_;
+}
+
 audio_stream::operator bool() const
 {
     return stream_ != nullptr;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// null_audio_stream                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void null_audio_stream::close()
+{
+}
+
+std::string null_audio_stream::name()
+{
+    return "null";
+}
+
+audio_stream_type null_audio_stream::type()
+{
+    return audio_stream_type::null;
+}
+
+void null_audio_stream::volume(int)
+{
+}
+
+int null_audio_stream::volume()
+{
+    return 0;
+}
+
+int null_audio_stream::sample_rate()
+{
+    return 0;
+}
+
+int null_audio_stream::channels()
+{
+    return 0;
+}
+
+size_t null_audio_stream::write(const double*, size_t)
+{
+    return 0;
+}
+
+size_t null_audio_stream::write_interleaved(const double*, size_t)
+{
+    return 0;
+}
+
+size_t null_audio_stream::read(double*, size_t)
+{
+    return 0;
+}
+
+size_t null_audio_stream::read_interleaved(double*, size_t)
+{
+    return 0;
+}
+
+bool null_audio_stream::wait_write_completed(int)
+{
+    return true;
+}
+
+void null_audio_stream::start()
+{
+}
+
+void null_audio_stream::stop()
+{
 }
 
 // **************************************************************** //
@@ -721,7 +808,7 @@ audio_device& audio_device::operator=(audio_device&& other) noexcept
     return *this;
 }
 
-std::unique_ptr<audio_stream_base> audio_device::stream()
+audio_stream audio_device::stream()
 {
 #if WIN32
     if (!impl_)
@@ -731,26 +818,26 @@ std::unique_ptr<audio_stream_base> audio_device::stream()
 
     if (type == audio_device_type::render)
     {
-        return std::make_unique<wasapi_audio_output_stream>(impl_.get());
+        return audio_stream(std::make_unique<wasapi_audio_output_stream>(impl_.get()));
     }
     else if (type == audio_device_type::capture)
     {
-        return std::make_unique<wasapi_audio_input_stream>(impl_.get());
+        return audio_stream(std::make_unique<wasapi_audio_input_stream>(impl_.get()));
     }
 #endif // WIN32
 
 #if __linux__
     if (type == audio_device_type::render)
     {
-        return std::make_unique<alsa_audio_output_stream>(card_id, device_id);
+        return audio_stream(std::make_unique<alsa_audio_output_stream>(card_id, device_id));
     }
     else if (type == audio_device_type::capture)
     {
-        return std::make_unique<alsa_audio_input_stream>(card_id, device_id);
+        return audio_stream(std::make_unique<alsa_audio_input_stream>(card_id, device_id));
     }
 #endif // __linux__
 
-    return nullptr;
+    return audio_stream(nullptr);
 }
 
 audio_device::~audio_device()
