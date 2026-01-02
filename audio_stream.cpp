@@ -579,7 +579,7 @@ audio_device::audio_device(audio_device_impl* impl)
     EDataFlow flow;
     if (FAILED(impl_->device_->QueryInterface(__uuidof(IMMEndpoint), reinterpret_cast<void**>(&endpoint))) || FAILED(endpoint->GetDataFlow(&flow)))
     {
-        throw std::runtime_error("Failed to get data flow");
+        throw std::runtime_error("Failed to get request_data flow");
     }
 
     type = (flow == eRender) ? audio_device_type::render : audio_device_type::capture;
@@ -4672,7 +4672,24 @@ void tcp_audio_stream_control_server::run_internal()
         {
             try
             {
-                handle_request();
+                // Read the request from the client
+                // Read the request length, then read the request data
+                // Parse the request, identify the command and handle it, encode the response as a string
+                // Write the response length, then write the response data to the client
+
+                uint32_t request_length;
+                boost::asio::read(*impl_->client_socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+
+                std::string request_data(boost::endian::big_to_native(request_length), '\0');
+                boost::asio::read(*impl_->client_socket, boost::asio::buffer(request_data.data(), request_data.size()));
+
+                std::string response_data = handle_request(request_data);
+
+                uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
+
+                boost::asio::write(*impl_->client_socket, boost::asio::buffer(&response_length, sizeof(response_length)));
+                boost::asio::write(*impl_->client_socket, boost::asio::buffer(response_data));
+
             }
             catch (const boost::system::system_error& e)
             {
@@ -4686,21 +4703,9 @@ void tcp_audio_stream_control_server::run_internal()
     }
 }
 
-void tcp_audio_stream_control_server::handle_request()
+std::string tcp_audio_stream_control_server::handle_request(const std::string& data)
 {
     audio_stream_base& stream = stream_->get();
-
-    // Read the request
-    // Read the length of the request
-    // Read the request data
-
-    uint32_t length;
-    boost::asio::read(*impl_->client_socket, boost::asio::buffer(&length, sizeof(length)));
-
-    std::string data(boost::endian::big_to_native(length), '\0');
-    boost::asio::read(*impl_->client_socket, boost::asio::buffer(data.data(), data.size()));
-
-    // Parse the request data
 
     nlohmann::json request = nlohmann::json::parse(data);
 
@@ -4748,13 +4753,9 @@ void tcp_audio_stream_control_server::handle_request()
         response["error"] = "unknown command: " + command;
     }
 
-    // Send the response
+    std::string response_string = response.dump();
 
-    data = response.dump();
-    length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
-
-    boost::asio::write(*impl_->client_socket, boost::asio::buffer(&length, sizeof(length)));
-    boost::asio::write(*impl_->client_socket, boost::asio::buffer(data));
+    return response_string;
 }
 
 LIBMODEM_NAMESPACE_END

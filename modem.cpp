@@ -139,9 +139,19 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
 
     apply_gain(audio_buffer.begin(), audio_buffer.end(), gain_value);
 
-    insert_silence(audio_buffer.begin(), audio_stream.sample_rate(), start_silence_duration_s);
-
     insert_silence(std::back_inserter(audio_buffer), audio_stream.sample_rate(), end_silence_duration_s);
+
+    std::vector<double> audio_buffer_with_start_silence;
+
+    size_t start_silence_samples = static_cast<size_t>(start_silence_duration_s * audio_stream.sample_rate());
+
+    audio_buffer_with_start_silence.reserve(start_silence_samples + audio_buffer.size());
+
+    insert_silence(std::back_inserter(audio_buffer_with_start_silence), audio_stream.sample_rate(), start_silence_duration_s);
+
+    audio_buffer_with_start_silence.insert(audio_buffer_with_start_silence.end(), audio_buffer.begin(), audio_buffer.end());
+
+    audio_buffer = std::move(audio_buffer_with_start_silence);
 }
 
 void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer)
