@@ -31,6 +31,8 @@
 
 #include "io.h"
 
+#include <cassert>
+
 #ifdef WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -48,8 +50,74 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>
+#include <boost/endian/conversion.hpp>
+#include <boost/beast/core/detail/base64.hpp>
+
+#include <nlohmann/json.hpp>
 
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// base64                                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+std::string base64_encode(const std::vector<uint8_t>& data)
+{
+    if (data.empty())
+    {
+        return "";
+    }
+
+    std::string result;
+    result.resize(boost::beast::detail::base64::encoded_size(data.size()));
+    result.resize(boost::beast::detail::base64::encode(result.data(), data.data(), data.size()));
+    return result;
+}
+
+std::string base64_encode(const std::string& data)
+{
+    if (data.empty())
+    {
+        return "";
+    }
+
+    std::string result;
+    result.resize(boost::beast::detail::base64::encoded_size(data.size()));
+    result.resize(boost::beast::detail::base64::encode(result.data(), data.data(), data.size()));
+    return result;
+}
+
+std::vector<uint8_t> base64_decode(const std::string& encoded)
+{
+    if (encoded.empty())
+    {
+        return {};
+    }
+
+    std::vector<uint8_t> result;
+    result.resize(boost::beast::detail::base64::decoded_size(encoded.size()));
+    auto decoded = boost::beast::detail::base64::decode(result.data(), encoded.data(), encoded.size());
+    result.resize(decoded.first);
+    return result;
+}
+
+std::string base64_decode_string(const std::string& encoded)
+{
+    if (encoded.empty())
+    {
+        return "";
+    }
+
+    std::string result;
+    result.resize(boost::beast::detail::base64::decoded_size(encoded.size()));
+    auto decoded = boost::beast::detail::base64::decode(result.data(), encoded.data(), encoded.size());
+    result.resize(decoded.first);
+    return result;
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -174,6 +242,7 @@ void serial_port::rts(bool enable)
         {
             ::EscapeCommFunction(impl_->serial_port.native_handle(), CLRRTS);
         }
+        rts_ = enable;
 #endif // WIN32
 #if __linux__
         int status;
@@ -201,12 +270,8 @@ bool serial_port::rts()
     try
     {
 #ifdef WIN32
-        DWORD status;
-        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return RTS state directly
-        // RTS is an output signal we control, not an input we read
-        // You might need to track this state separately if needed
-        return false; // Or maintain internal state
+        return rts_;
 #endif // WIN32
 #ifdef __linux__
         int status;
@@ -235,6 +300,7 @@ void serial_port::dtr(bool enable)
         {
             ::EscapeCommFunction(impl_->serial_port.native_handle(), CLRDTR);
         }
+        dtr_ = enable;
 #endif // WIN32
 #ifdef __linux__
         int status;
@@ -262,12 +328,8 @@ bool serial_port::dtr()
     try
     {
 #ifdef WIN32
-        DWORD status;
-        ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         // Note: GetCommModemStatus doesn't return DTR state directly
-        // DTR is an output signal we control, not an input we read
-        // You might need to track this state separately if needed
-        return false; // Or maintain internal state
+        return dtr_;
 #endif // WIN32
 #ifdef __linux__
         int status;
@@ -435,7 +497,7 @@ std::string serial_port::read_until(const std::string& delimiter)
     }
 }
 
-bool serial_port::is_open() const
+bool serial_port::is_open()
 {
     return is_open_;
 }
@@ -499,6 +561,479 @@ void serial_port::timeout(unsigned int milliseconds)
     tty.c_cc[VMIN] = 0;
     ::tcsetattr(impl_->serial_port.native_handle(), TCSANOW, &tty);
 #endif // __linux__
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_client_impl                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_serial_port_client_impl
+{
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::socket socket { io_context };
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// request (helper for tcp_serial_port_client)                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+nlohmann::json handle_request(tcp_serial_port_client& client, tcp_serial_port_client_impl& impl, const nlohmann::json& request)
+{
+    if (!client.connected())
+    {
+        throw std::runtime_error("Client not connected");
+    }
+
+    // Send the request
+
+    std::string data = request.dump();
+    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+
+    boost::asio::write(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+    boost::asio::write(impl.socket, boost::asio::buffer(data));
+
+    // Receive the response
+
+    boost::asio::read(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+    data.resize(boost::endian::big_to_native(length));
+    boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
+
+    nlohmann::json response = nlohmann::json::parse(data);
+
+    if (response.contains("error"))
+    {
+        std::string error_message = response["error"].get<std::string>();
+        throw std::runtime_error(error_message);
+    }
+
+    return response;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_client                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_serial_port_client::tcp_serial_port_client() : impl_(std::make_unique<tcp_serial_port_client_impl>())
+{
+}
+
+tcp_serial_port_client::~tcp_serial_port_client() = default;
+
+tcp_serial_port_client::tcp_serial_port_client(tcp_serial_port_client&& other) noexcept : impl_(std::move(other.impl_)), connected_(other.connected_)
+{
+    other.connected_ = false;
+}
+
+tcp_serial_port_client& tcp_serial_port_client::operator=(tcp_serial_port_client&& other) noexcept
+{
+    if (this != &other)
+    {
+        try
+        {
+            disconnect();
+        }
+        catch (...)
+        {
+            // Ignore
+        }
+
+        impl_ = std::move(other.impl_);
+        connected_ = other.connected_;
+        other.connected_ = false;
+    }
+
+    return *this;
+}
+
+bool tcp_serial_port_client::connect(const std::string& host, int port)
+{
+    try
+    {
+        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
+        auto endpoints = resolver.resolve(host, std::to_string(port));
+        boost::asio::connect(impl_->socket, endpoints);
+        connected_ = true;
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void tcp_serial_port_client::disconnect()
+{
+    if (connected_)
+    {
+        boost::system::error_code ec;
+        impl_->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        impl_->socket.close(ec);
+        connected_ = false;
+    }
+}
+
+bool tcp_serial_port_client::connected() const
+{
+    return connected_;
+}
+
+void tcp_serial_port_client::rts(bool enable)
+{
+    handle_request(*this, *impl_, { {"command", "set_rts"}, {"value", enable} });
+}
+
+bool tcp_serial_port_client::rts()
+{
+    return handle_request(*this, *impl_, { {"command", "get_rts"} })["value"].get<bool>();
+}
+
+void tcp_serial_port_client::dtr(bool enable)
+{
+    handle_request(*this, *impl_, { {"command", "set_dtr"}, {"value", enable} });
+}
+
+bool tcp_serial_port_client::dtr()
+{
+    return handle_request(*this, *impl_, { {"command", "get_dtr"} })["value"].get<bool>();
+}
+
+bool tcp_serial_port_client::cts()
+{
+    return handle_request(*this, *impl_, { {"command", "get_cts"} })["value"].get<bool>();
+}
+
+bool tcp_serial_port_client::dsr()
+{
+    return handle_request(*this, *impl_, { {"command", "get_dsr"} })["value"].get<bool>();
+}
+
+bool tcp_serial_port_client::dcd()
+{
+    return handle_request(*this, *impl_, { {"command", "get_dcd"} })["value"].get<bool>();
+}
+
+std::size_t tcp_serial_port_client::write(const std::vector<uint8_t>& data)
+{
+    return handle_request(*this, *impl_, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+}
+
+std::size_t tcp_serial_port_client::write(const std::string& data)
+{
+    return handle_request(*this, *impl_, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+}
+
+std::vector<uint8_t> tcp_serial_port_client::read(std::size_t size)
+{
+    return base64_decode(handle_request(*this, *impl_, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
+}
+
+std::vector<uint8_t> tcp_serial_port_client::read_some(std::size_t max_size)
+{
+    return base64_decode(handle_request(*this, *impl_, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
+}
+
+std::string tcp_serial_port_client::read_until(const std::string& delimiter)
+{
+    return base64_decode_string(handle_request(*this, *impl_, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
+}
+
+bool tcp_serial_port_client::is_open()
+{
+    if (!connected_)
+    {
+        return false;
+    }
+
+    return handle_request(*this, *impl_, { {"command", "is_open"} })["value"].get<bool>();
+}
+
+std::size_t tcp_serial_port_client::bytes_available()
+{
+    return handle_request(*this, *impl_, { {"command", "bytes_available"} })["value"].get<std::size_t>();
+}
+
+void tcp_serial_port_client::flush()
+{
+    handle_request(*this, *impl_, { {"command", "flush"} });
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_server_impl                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_serial_port_server_impl
+{
+    boost::asio::io_context io_context;
+    std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor;
+    std::unique_ptr<boost::asio::ip::tcp::socket> client_socket;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_server                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_serial_port_server::tcp_serial_port_server() : impl_(std::make_unique<tcp_serial_port_server_impl>())
+{
+}
+
+tcp_serial_port_server::tcp_serial_port_server(serial_port_base& serial_port) : serial_port_(serial_port), impl_(std::make_unique<tcp_serial_port_server_impl>())
+{
+}
+
+tcp_serial_port_server::tcp_serial_port_server(tcp_serial_port_server&& other) noexcept : serial_port_(std::move(other.serial_port_)), impl_(std::make_unique<tcp_serial_port_server_impl>())
+{
+    assert(!other.running_);
+}
+
+tcp_serial_port_server& tcp_serial_port_server::operator=(tcp_serial_port_server&& other) noexcept
+{
+    if (this != &other)
+    {
+        assert(!running_);
+        assert(!other.running_);
+
+        serial_port_ = std::move(other.serial_port_);
+        impl_ = std::make_unique<tcp_serial_port_server_impl>();
+    }
+
+    return *this;
+}
+
+tcp_serial_port_server::~tcp_serial_port_server()
+{
+    stop();
+}
+
+bool tcp_serial_port_server::start(const std::string& host, int port)
+{
+    if (!serial_port_.has_value())
+    {
+        return false;
+    }
+
+    try
+    {
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
+        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context, endpoint);
+        impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        running_ = true;
+
+        thread_ = std::jthread(&tcp_serial_port_server::run, this);
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this]() { return ready_; });
+
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void tcp_serial_port_server::stop()
+{
+    running_ = false;
+
+    if (impl_ != nullptr && impl_->client_socket != nullptr && impl_->client_socket->is_open())
+    {
+        boost::system::error_code ec;
+        impl_->client_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        impl_->client_socket->close(ec);
+    }
+
+    if (impl_ != nullptr && impl_->acceptor != nullptr && impl_->acceptor->is_open())
+    {
+        boost::system::error_code ec;
+        impl_->acceptor->close(ec);
+    }
+
+    if (thread_.joinable())
+    {
+        thread_.join();
+    }
+}
+
+void tcp_serial_port_server::run()
+{
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ready_ = true;
+    }
+    cv_.notify_one();
+
+    try
+    {
+        run_internal();
+    }
+    catch (const boost::system::system_error& e)
+    {
+        running_ = false;
+        if (e.code() != boost::asio::error::operation_aborted)
+        {
+            throw;
+        }
+    }
+    catch (...)
+    {
+        running_ = false;
+        throw;
+    }
+
+    running_ = false;
+}
+
+void tcp_serial_port_server::run_internal()
+{
+    while (running_)
+    {
+        impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
+        impl_->acceptor->accept(*impl_->client_socket);
+
+        while (running_ && impl_->client_socket->is_open())
+        {
+            try
+            {
+                // Read the request from the client
+                // Read the request length, then read the request data
+                // Parse the request, identify the command and handle it, encode the response as a string
+                // Write the response length, then write the response data to the client
+
+                uint32_t request_length;
+                boost::asio::read(*impl_->client_socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+
+                std::string request_data(boost::endian::big_to_native(request_length), '\0');
+                boost::asio::read(*impl_->client_socket, boost::asio::buffer(request_data.data(), request_data.size()));
+
+                std::string response_data = handle_request(request_data);
+
+                uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
+
+                boost::asio::write(*impl_->client_socket, boost::asio::buffer(&response_length, sizeof(response_length)));
+                boost::asio::write(*impl_->client_socket, boost::asio::buffer(response_data));
+
+            }
+            catch (const boost::system::system_error& e)
+            {
+                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
+                {
+                    break;
+                }
+                throw;
+            }
+        }
+    }
+}
+
+std::string tcp_serial_port_server::handle_request(const std::string& data)
+{
+    serial_port_base& serial_port = serial_port_->get();
+
+    nlohmann::json request = nlohmann::json::parse(data);
+
+    std::string command = request.value("command", "");
+
+    nlohmann::json response;
+
+    if (command == "set_rts")
+    {
+        serial_port.rts(request.value("value", false));
+        response["value"] = "ok";
+    }
+    else if (command == "get_rts")
+    {
+        response["value"] = serial_port.rts();
+    }
+    else if (command == "set_dtr")
+    {
+        serial_port.dtr(request.value("value", false));
+        response["value"] = "ok";
+    }
+    else if (command == "get_dtr")
+    {
+        response["value"] = serial_port.dtr();
+    }
+    else if (command == "get_cts")
+    {
+        response["value"] = serial_port.cts();
+    }
+    else if (command == "get_dsr")
+    {
+        response["value"] = serial_port.dsr();
+    }
+    else if (command == "get_dcd")
+    {
+        response["value"] = serial_port.dcd();
+    }
+    else if (command == "write")
+    {
+        std::string encoded_data = request.value("data", std::string());
+        std::vector<uint8_t> write_data = base64_decode(encoded_data);
+        response["value"] = serial_port.write(write_data);
+    }
+    else if (command == "write_string")
+    {
+        std::string encoded_data = request.value("data", std::string());
+        std::string write_data = base64_decode_string(encoded_data);
+        response["value"] = serial_port.write(write_data);
+    }
+    else if (command == "read")
+    {
+        std::size_t size = request.value("size", static_cast<std::size_t>(0));
+        response["value"] = base64_encode(serial_port.read(size));
+    }
+    else if (command == "read_some")
+    {
+        std::size_t max_size = request.value("max_size", static_cast<std::size_t>(0));
+        response["value"] = base64_encode(serial_port.read_some(max_size));
+    }
+    else if (command == "read_until")
+    {
+        std::string encoded_delimiter = request.value("delimiter", std::string());
+        std::string delimiter = base64_decode_string(encoded_delimiter);
+        response["value"] = base64_encode(serial_port.read_until(delimiter));
+    }
+    else if (command == "is_open")
+    {
+        response["value"] = serial_port.is_open();
+    }
+    else if (command == "bytes_available")
+    {
+        response["value"] = serial_port.bytes_available();
+    }
+    else if (command == "flush")
+    {
+        serial_port.flush();
+        response["value"] = "ok";
+    }
+    else
+    {
+        response["error"] = "unknown command: " + command;
+    }
+
+    std::string response_string = response.dump();
+
+    return response_string;
 }
 
 LIBMODEM_NAMESPACE_END

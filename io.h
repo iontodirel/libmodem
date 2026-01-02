@@ -35,6 +35,12 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <functional>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -76,7 +82,7 @@ public:
     virtual std::vector<uint8_t> read_some(std::size_t max_size) = 0;
     virtual std::string read_until(const std::string& delimiter) = 0;
 
-    virtual bool is_open() const = 0;
+    virtual bool is_open() = 0;
     virtual std::size_t bytes_available() = 0;
     virtual void flush() = 0;
 };
@@ -144,7 +150,7 @@ public:
     std::vector<uint8_t> read(std::size_t size) override;
     std::vector<uint8_t> read_some(std::size_t max_size) override;
     std::string read_until(const std::string& delimiter) override;
-    bool is_open() const override;
+    bool is_open() override;
     std::size_t bytes_available() override;
     void flush() override;
     void timeout(unsigned int milliseconds);
@@ -152,6 +158,96 @@ public:
 private:
     std::unique_ptr<serial_port_impl> impl_;
     bool is_open_;
+#ifdef WIN32
+    bool rts_ = false;
+    bool dtr_ = false;
+#endif // WIN32
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_client                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_serial_port_client_impl;
+
+class tcp_serial_port_client : public serial_port_base
+{
+public:
+    tcp_serial_port_client();
+    tcp_serial_port_client& operator=(const tcp_serial_port_client&) = delete;
+    tcp_serial_port_client(const tcp_serial_port_client&) = delete;
+    tcp_serial_port_client& operator=(tcp_serial_port_client&&) noexcept;
+    tcp_serial_port_client(tcp_serial_port_client&&) noexcept;
+    ~tcp_serial_port_client();
+
+    bool connect(const std::string& host, int port);
+    void disconnect();
+
+    bool connected() const;
+
+    void rts(bool enable) override;
+    bool rts() override;
+    void dtr(bool enable) override;
+    bool dtr() override;
+    bool cts() override;
+    bool dsr() override;
+    bool dcd() override;
+
+    std::size_t write(const std::vector<uint8_t>& data) override;
+    std::size_t write(const std::string& data) override;
+    std::vector<uint8_t> read(std::size_t size) override;
+    std::vector<uint8_t> read_some(std::size_t max_size) override;
+    std::string read_until(const std::string& delimiter) override;
+    bool is_open() override;
+    std::size_t bytes_available() override;
+    void flush() override;
+
+private:
+    std::unique_ptr<tcp_serial_port_client_impl> impl_;
+    std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
+    bool connected_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_server                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_serial_port_server_impl;
+
+class tcp_serial_port_server
+{
+public:
+    tcp_serial_port_server();
+    tcp_serial_port_server(serial_port_base&);
+    tcp_serial_port_server& operator=(const tcp_serial_port_server&) = delete;
+    tcp_serial_port_server(const tcp_serial_port_server&) = delete;
+    tcp_serial_port_server& operator=(tcp_serial_port_server&&) noexcept;
+    tcp_serial_port_server(tcp_serial_port_server&&) noexcept;
+    ~tcp_serial_port_server();
+
+    bool start(const std::string& host, int port);
+    void stop();
+
+private:
+    void run();
+    void run_internal();
+    std::string handle_request(const std::string& data);
+
+    std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
+    std::unique_ptr<tcp_serial_port_server_impl> impl_;
+    std::jthread thread_;
+    std::atomic<bool> running_ = false;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool ready_ = false;
 };
 
 LIBMODEM_NAMESPACE_END

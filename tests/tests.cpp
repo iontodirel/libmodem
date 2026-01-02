@@ -4438,7 +4438,7 @@ TEST(modem, transmit_hardware_demo)
     modem m;
     m.baud_rate(1200);
     m.tx_delay(300);
-    m.tx_tail(45);
+    m.tx_tail(120);
     m.start_silence(0.1);
     m.end_silence(0.1);
     m.gain(0.3);
@@ -4455,6 +4455,106 @@ TEST(modem, transmit_hardware_demo)
 
     // Turn the transmitter off
     port.rts(false);
+}
+
+TEST(modem, transmit_hardware_demo_virtual_serial_port)
+{
+    // Note: This test requires a Digirig device connected to the system
+    // Note: Windows: port COM16 is used and the audio device is named "Speakers (2- USB Audio Device)".
+    // Note: Linux: the audio device is named "USB Audio" and is connected to a serial port ex: /dev/ttyUSB0
+    // Note: the port and audio device name will vary, update accordingly
+    // The Digirig should be connected to a radio configured for 1200 baud AFSK APRS transmission.
+    // The radio will be set to transmit when the RTS line is asserted on the Digirig's serial port.
+    // The test will transmit an APRS packet over the air, which can be verified by receiving it with another APRS receiver.
+    // Ensure that the Digirig device is connected and the correct audio device name and serial port is used.
+    // This test is disabled by default.
+    // To enable, define ENABLE_HARDWARE_TESTS_1 during compilation.
+
+    // Get the Digirig render audio device
+    audio_device device;
+#if WIN32
+    if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
+    {
+        return;
+    }
+#endif // WIN32
+#if __linux__
+    if (!try_get_audio_device_by_name("USB Audio", device, audio_device_type::render, audio_device_state::active))
+    {
+        return;
+    }
+#endif // __linux__
+
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
+
+    // Connecting to a Digirig serial port, which uses the RTS line for the PTT
+    serial_port port;
+#if WIN32
+    if (!port.open("COM16"))
+    {
+        return;
+    }
+#endif // WIN32
+#if __linux__
+    if (!port.open("/dev/ttyUSB0"))
+    {
+        return;
+    }
+#endif // __linux__
+
+    // Turns out opening the port asserts the RTS line to on
+    // Disable it, if we do it fast it will never be asserted high
+    port.rts(false);
+
+    tcp_serial_port_server serial_port_server(port);
+
+    serial_port_server.start("127.0.0.1", 1234);
+
+    tcp_serial_port_client serial_port_client;
+
+    serial_port_client.connect("127.0.0.1", 1234);
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    basic_bitstream_converter_adapter bitstream_converter;
+
+    // Using a start silence of 1 second to see real-world the delay between PTT and audio being sent
+    // This is not necessary and it's only used for debugging purposes
+
+    // When used with a Baofeng UV-5RM Plus as a transmitter, it seems like the D75 really has trouble decoding
+    // the signal, but increasing the tx_tail to 120 ms seems to help a lot
+    // 45ms is way too short for real-world use anyway
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(120);
+    m.start_silence(1);
+    m.end_silence(0.1);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Turn the transmitter on
+    serial_port_client.rts(true);
+
+    EXPECT_TRUE(serial_port_client.rts() == port.rts());
+    EXPECT_TRUE(serial_port_client.rts() == true);
+
+    // Set audio stream volume to 30%
+    stream.volume(30);
+
+    // Send the modulated packet to the audio device
+    m.transmit(p);
+
+    // Turn the transmitter off
+    serial_port_client.rts(false);
+
+    EXPECT_TRUE(serial_port_client.rts() == port.rts());
+    EXPECT_TRUE(serial_port_client.rts() == false);
+
+    serial_port_client.disconnect();
+
+    serial_port_server.stop();
 }
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_DIGIRIG
