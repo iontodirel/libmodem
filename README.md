@@ -63,18 +63,18 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
 - Modular library-first design for experimenting with AFSK and FSK modulation and demodulation and for building and evaluating new demodulators
 - Readability, reuse and simplicity even at the cost of some code duplication
 - Core building blocks for a complete software modem, including AX.25 and FX.25 bitstream encode and decode
-- Full testability with test suite with 50 plus tests, including FFT based frequency checks and Direwolf and WA8LMF test vector based validation
+- Full testability with test suite with 70 plus tests, including FFT based frequency checks and Direwolf and WA8LMF validation
 - Complete end to end reference modem implementation with support for 300, 1200, 2400, and 9600 bps operation and AX.25 plus FX.25 framing
 - State of the art demulator for 1200 bps AFSK based on the WA8LMF TNC Test CD benchmark
 
 ### Project Structure
-- **bitstream.h**/**bitstream.cpp** - Bitstream encoding and decoding including AX.25 and FX.25. Contains all the routines needed to encode an APRS packet or a AX.25 frame into a bistream, or decode a bitstream into a AX.25 frame or APRS packet.
+- <u>**bitstream.h**</u>/<u>**bitstream.cpp**</u> - Bitstream encoding and decoding including AX.25 and FX.25. Contains all the routines needed to encode an APRS packet or a AX.25 frame into a bistream, or decode a bitstream into a AX.25 frame or APRS packet.
   - Contains all bitstream manipulation routines including NRZI encoding/decoding, bit stuffing/unstuffing, CRC calculation and verification, and AX.25 address field encoding/decoding, FX.25 Reed-Solomon encoding/decoding.
   - Supports bit by bit processing for streaming operation.
   - libcorrect is used for Reed-Solomon coding.
   - Customizable packet type support, allowing the same packet type to be used among different libraries.
   - Has no coupling to other code in the project.
-- **audio_stream.h**/**audio_stream.cpp** - Audio interface layer with support for WASAPI, ALSA, Core Audio, TCP audio transport, and WAV input and output
+- <u>**audio_stream.h**</u>/<u>**audio_stream.cpp**</u> - Audio interface layer with support for WASAPI, ALSA, Core Audio, TCP audio transport, and WAV input and output
   - Abstract audio stream interface with pluggable backends.
   - Supports capture and render streams.
   - Supports volume control.
@@ -89,3 +89,6 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
     - Cross-platform WAV file read and write support
     - Single channel support only
   - Audio streams can be shared across pipelines and reused as needed.
+- <u>**io.h**</u>/<u>**io.cpp**</u> - I/O routines for PTT control
+  - Serial port support with configurable baud rate, data bits, stop bits, parity, and flow control
+  - Serial port over TCP with server and client support

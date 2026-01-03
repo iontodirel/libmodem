@@ -119,6 +119,8 @@ struct audio_stream_base
 
     virtual bool wait_write_completed(int timeout_ms) = 0;
 
+    virtual bool eof() = 0;
+
     virtual void start() = 0;
     virtual void stop() = 0;
 };
@@ -135,6 +137,7 @@ class audio_stream : public audio_stream_base
 {
 public:
     using audio_stream_base::wait_write_completed;
+    using audio_stream_base::operator=;
 
     audio_stream(std::nullptr_t);
     explicit audio_stream(std::unique_ptr<audio_stream_base> s);
@@ -159,6 +162,8 @@ public:
     size_t read_interleaved(double* samples, size_t count) override;
 
     bool wait_write_completed(int timeout_ms) override;
+
+    bool eof() override;
 
     void start() override;
     void stop() override;
@@ -199,6 +204,8 @@ public:
     size_t read_interleaved(double* samples, size_t count) override;
 
     bool wait_write_completed(int timeout_ms) override;
+
+    bool eof() override;
 
     void start() override;
     void stop() override;
@@ -358,12 +365,12 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 
 struct wasapi_audio_output_stream_impl;
 struct audio_device_impl;
-struct wav_audio_input_stream;
 
 class wasapi_audio_output_stream : public audio_stream_base
 {
 public:
     using audio_stream_base::wait_write_completed;
+    using audio_stream_base::operator=;
 
     wasapi_audio_output_stream();
     wasapi_audio_output_stream(audio_device_impl* impl);
@@ -390,7 +397,9 @@ public:
     size_t read(double* samples, size_t count) override;
     size_t read_interleaved(double* samples, size_t count) override;
 
-    bool wait_write_completed(int timeout_ms);
+    bool wait_write_completed(int timeout_ms) override;
+
+    bool eof() override;
 
     void start() override;
     void stop() override;
@@ -409,7 +418,8 @@ private:
     int channels_ = 0;
     bool started_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
-    std::jthread render_thread_; std::mutex buffer_mutex_;
+    std::jthread render_thread_;
+    std::mutex buffer_mutex_;
     std::condition_variable buffer_cv_;
     std::exception_ptr render_exception_;
     size_t ring_buffer_size_seconds_ = 5;
@@ -460,7 +470,10 @@ public:
     size_t write_interleaved(const double* samples, size_t count) override;
     size_t read(double* samples, size_t count) override;
     size_t read_interleaved(double* samples, size_t count) override;
-    bool wait_write_completed(int timeout_ms);
+
+    bool wait_write_completed(int timeout_ms) override;
+
+    bool eof() override;
 
     void start() override;
     void stop() override;
@@ -573,6 +586,8 @@ public:
 
     bool wait_write_completed(int timeout_ms) override;
 
+    bool eof() override;
+
     void start() override;
     void stop() override;
     void enable_start_stop(bool);
@@ -637,6 +652,8 @@ public:
 
     bool wait_write_completed(int timeout_ms) override;
 
+    bool eof() override;
+
     void start() override;
     void stop() override;
     void enable_start_stop(bool enable);
@@ -695,6 +712,8 @@ public:
 
     bool wait_write_completed(int timeout_ms) override;
 
+    bool eof() override;
+
     void flush();
 
     void start() override;
@@ -705,6 +724,7 @@ private:
     std::string filename_;
     int sample_rate_ = 0;
     int channels_ = 0;
+    size_t total_frames_ = 0;
 };
 
 // **************************************************************** //
@@ -743,6 +763,8 @@ public:
     size_t read_interleaved(double* samples, size_t count) override;
 
     bool wait_write_completed(int timeout_ms) override;
+
+    bool eof() override;
 
     void flush();
 

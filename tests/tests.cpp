@@ -71,11 +71,10 @@
 #include <chrono>
 #include "external/aprstrack.hpp"
 
-
 #ifdef ENABLE_ALL_HARDWARE_TESTS
 #define ENABLE_HARDWARE_TESTS_REQUIRE_DIGIRIG
 #define ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
-#define ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUN
+#define ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 #define ENABLE_HARDWARE_TESTS_4
 #endif // ENABLE_ALL_HARDWARE_TESTS
 
@@ -118,6 +117,7 @@ std::string to_string(const std::vector<address>& path);
 std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25);
 static std::string replace_crlf(std::string_view s);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets);
+void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<aprs::router::packet>& packets, bool replace_hex_markers = false);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, const std::string& packets_filename);
 std::vector<double> generate_audio_samples(double duration_seconds, double frequency, double gain, double sample_rate);
 
@@ -354,7 +354,7 @@ std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns)
     return oss.str();
 }
 
-static std::string replace_crlf(std::string_view s)
+std::string replace_crlf(std::string_view s)
 {
     std::string out;
     out.reserve(s.size()); // grows as needed if many replacements
@@ -374,12 +374,28 @@ static std::string replace_crlf(std::string_view s)
     return out;
 }
 
+std::string trim_crlf_end(std::string_view s)
+{
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n'))
+    {
+        s.remove_suffix(1);
+    }
+    return std::string(s);
+}
+
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<aprs::router::packet>& packets)
 {
     std::ifstream input_file(direwolf_output_filename);
+    std::string content((std::istreambuf_iterator<char>(input_file)), std::istreambuf_iterator<char>());
+    direwolf_stdout_to_packets(content, packets);
+}
+
+void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<aprs::router::packet>& packets, bool replace_hex_markers)
+{
+    std::istringstream input(direwolf_output);
     std::string line;
 
-    while (std::getline(input_file, line))
+    while (std::getline(input, line))
     {
         // Find "[0.0] " or "[0.1] " pattern
         size_t pos = line.find("[0.");
@@ -394,26 +410,28 @@ void direwolf_output_to_packets(const std::string& direwolf_output_filename, std
             {
                 std::string packet_string = line.substr(bracket_end + 2);
 
-#ifdef REPLACE_DIREWOLF_HEX_MARKERS
                 // Replace hex markers with readable names
-                size_t p;
-                while ((p = packet_string.find("<0x0d>")) != std::string::npos)
-                    packet_string.replace(p, 6, "<CR>");
-                while ((p = packet_string.find("<0x0a>")) != std::string::npos)
-                    packet_string.replace(p, 6, "<LF>");
-
-                std::vector<std::pair<std::string, char>> control_chars = { {"<0x1c>", 0x1C}, {"<0x1d>", 0x1D}, {"<0x7f>", 0x7F}, {"<0x1f>", 0x1F}, {"<0x1e>", 0x1E}, {"<0x20>", 0x20} };
-                for (const auto& [marker, ch] : control_chars)
+                if (replace_hex_markers)
                 {
-                    while ((p = packet_string.find(marker)) != std::string::npos)
+                    size_t p;
+                    while ((p = packet_string.find("<0x0d>")) != std::string::npos)
+                        packet_string.replace(p, 6, "<CR>");
+                    while ((p = packet_string.find("<0x0a>")) != std::string::npos)
+                        packet_string.replace(p, 6, "<LF>");
+
+                    std::vector<std::pair<std::string, char>> control_chars = { {"<0x1c>", 0x1C}, {"<0x1d>", 0x1D}, {"<0x7f>", 0x7F}, {"<0x1f>", 0x1F}, {"<0x1e>", 0x1E}, {"<0x20>", 0x20} };
+                    for (const auto& [marker, ch] : control_chars)
                     {
-                        packet_string.replace(p, 6, 1, ch);
+                        while ((p = packet_string.find(marker)) != std::string::npos)
+                        {
+                            packet_string.replace(p, 6, 1, ch);
+                        }
                     }
                 }
-#endif
 
                 if (!packet_string.empty())
                 {
+                    packet_string = trim_crlf_end(packet_string);
                     aprs::router::packet p(packet_string);
                     packets.push_back(p);
                 }
@@ -3760,6 +3778,102 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
     EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
 }
 
+TEST(modem, modulate_1005_afsk_1200_ax25_packet)
+{
+    std::vector<aprs::router::packet> packets;
+
+    {
+        std::ifstream file("packets_1d.txt");
+        if (!file.is_open())
+        {
+            FAIL() << "Failed to open packets_1d.txt";
+        }
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            aprs::router::packet p = line;
+            packets.push_back(p);
+        }
+    }
+
+    {
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
+        basic_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 48000);
+
+        modem m;
+        m.baud_rate(1200);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.3);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        int duration_ms = 100;
+
+        // Generate 1 seconds of silence buffer
+        std::vector<double> silence_buffer(48000 * duration_ms / 1000, 0.0);
+
+        for (const auto& p : packets)
+        {
+            m.transmit(p);
+
+            // Insert 1 seconds of silence between packets
+            wav_stream.write(silence_buffer.data(), silence_buffer.size());
+        }
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 1200
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
+
+    std::vector<aprs::router::packet> actual_packets;
+
+    direwolf_stdout_to_packets(output, actual_packets, true);
+
+    EXPECT_TRUE(actual_packets.size() == packets.size());
+
+    for (size_t i = 0; i < packets.size(); i++)
+    {
+        std::string actual_packet_string = to_string(actual_packets[i]);
+        std::string expected_packet_string = to_string(packets[i]);
+
+        // Direwolf does not preserve the path addresses set state
+        // It only keeps the last set path address as set
+
+        if (actual_packet_string != expected_packet_string)
+        {
+            EXPECT_EQ(packets[i].from, actual_packets[i].from);
+            EXPECT_EQ(packets[i].to, actual_packets[i].to);
+            EXPECT_EQ(packets[i].data, actual_packets[i].data);
+            EXPECT_TRUE(packets[i].path.size() == actual_packets[i].path.size());
+
+            bool address_mark_tested = false;
+
+            for (int j = packets[i].path.size() - 1; j >= 0; j--)
+            {
+                address expected_address;
+                address actual_address;
+                try_parse_address(packets[i].path[j], expected_address);
+                try_parse_address(actual_packets[i].path[j], actual_address);
+
+                EXPECT_EQ(expected_address.text, actual_address.text);
+                EXPECT_EQ(expected_address.ssid, actual_address.ssid);
+
+                if (actual_address.mark && !address_mark_tested)
+                {
+                    EXPECT_TRUE(expected_address.mark);
+                    address_mark_tested = true;
+                }
+            }
+        }
+    }
+}
+
 TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
 {
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
@@ -4592,7 +4706,7 @@ TEST(audio_device, try_get_default_audio_device)
     }
 }
 
-TEST(audio_stream, modem_transmit_1200)
+TEST(audio_stream, modem_transmit_afsk_1200)
 {
     // Test similar to the modem-transmit_demo test
     // But instead of transmitting to a radio, it renders the packet to the default audio device
@@ -4999,7 +5113,7 @@ TEST(audio_stream, alsa_audio_input_stream)
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
 
-#ifdef ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUN
+#ifdef ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 
 TEST(audio_stream, render_10s_stream)
 {
@@ -5059,7 +5173,59 @@ TEST(audio_stream, render_10s_stream)
     wav_stream.close();
 }
 
-TEST(audio_stream, modem_transmit_10_1200)
+TEST(audio_stream, render_10s_stream_using_assign_operators)
+{
+    // Windows audio hardware render test
+    // As you are running this test you could use a sound capture app on your phone to test the render
+    // We will write a tone to the default render device for 10 seconds
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
+
+    audio_stream stream = device.stream();
+
+    stream.start();
+
+    // My Linux systems are quieter than my Windows systems
+    // So set different volume levels for each OS
+
+#if WIN32
+    stream.volume(30);
+#endif // WIN32
+#if __linux__
+    stream.volume(100);
+#endif // __linux__
+
+    // Write a tone for 10 seconds, in chunks
+    // For audio testing purposes, we render the samples to a WAV file as well
+
+    wav_audio_output_stream wav_output_stream("test.wav", stream.sample_rate());
+
+#if WIN32
+    std::vector<double> audio_buffer = generate_audio_samples(10.0, 440.0, 0.01, static_cast<double>(stream.sample_rate()));
+#endif // WIN32
+#if __linux__
+    std::vector<double> audio_buffer = generate_audio_samples(10.0, 440.0, 0.5, static_cast<double>(stream.sample_rate()));
+#endif // __linux__
+
+    EXPECT_TRUE(wav_output_stream.write(audio_buffer.data(), audio_buffer.size()) == audio_buffer.size());
+
+    wav_output_stream.close();
+
+    wav_audio_input_stream wav_input_stream("test.wav");
+
+    // After 5-8 seconds on playback, you might hear small increments in volume on Windows on some devices
+    // This is likely due to the audio device's internal volume leveling or AGC kicking in
+    // There is no control over this behavior in WASAPI, or on in Windows
+
+    stream = wav_input_stream;
+
+    stream.wait_write_completed();
+
+    stream.close();
+}
+
+TEST(audio_stream, modem_transmit_10_afsk_1200)
 {
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
@@ -5089,7 +5255,7 @@ TEST(audio_stream, modem_transmit_10_1200)
     }
 }
 
-TEST(audio_stream, modem_transmit_10_continuous_1200)
+TEST(audio_stream, modem_transmit_10_continuous_afsk_1200)
 {
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
@@ -5201,7 +5367,7 @@ TEST(audio_stream, capture_5s_stream)
     }
 }
 
-#endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUN
+#endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 
 int main(int argc, char** argv)
 {

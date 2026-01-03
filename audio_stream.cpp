@@ -382,6 +382,15 @@ bool audio_stream::wait_write_completed(int timeout_ms)
     return stream_->wait_write_completed(timeout_ms);
 }
 
+bool audio_stream::eof()
+{
+    if (!stream_)
+    {
+        throw std::runtime_error("Stream not initialized");
+    }
+    return stream_->eof();
+}
+
 void audio_stream::start()
 {
     if (!stream_)
@@ -478,6 +487,11 @@ size_t null_audio_stream::read_interleaved(double*, size_t)
 bool null_audio_stream::wait_write_completed(int)
 {
     return true;
+}
+
+bool null_audio_stream::eof()
+{
+    return false;
 }
 
 void null_audio_stream::start()
@@ -1730,6 +1744,11 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
     return true;
 }
 
+bool wasapi_audio_output_stream::eof()
+{
+    return false;
+}
+
 void wasapi_audio_output_stream::start()
 {
     if (started_)
@@ -2405,6 +2424,11 @@ bool wasapi_audio_input_stream::wait_write_completed(int timeout_ms)
     // Not applicable for input streams
     (void)timeout_ms;
     return true;
+}
+
+bool wasapi_audio_input_stream::eof()
+{
+    return false;
 }
 
 void wasapi_audio_input_stream::start()
@@ -3466,6 +3490,11 @@ bool alsa_audio_output_stream::wait_write_completed(int timeout_ms)
     return true;
 }
 
+bool alsa_audio_output_stream::eof()
+{
+    return false;
+}
+
 size_t alsa_audio_output_stream::read(double* samples, size_t count)
 {
     // Not supported for output stream
@@ -3917,6 +3946,11 @@ bool alsa_audio_input_stream::wait_write_completed(int timeout_ms)
     return true;
 }
 
+bool alsa_audio_input_stream::eof()
+{
+    return false;
+}
+
 void alsa_audio_input_stream::start()
 {
     if (started_ || !start_stop_enabled_)
@@ -4081,6 +4115,11 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
     sample_rate_ = sfinfo.samplerate;
     channels_ = sfinfo.channels;
 
+    if (sfinfo.frames >= 0)
+    {
+        total_frames_ = static_cast<size_t>(sfinfo.frames);
+    }
+
     if (channels_ != 1)
     {
         throw std::runtime_error("Only mono WAV files are supported for reading");
@@ -4195,6 +4234,16 @@ bool wav_audio_input_stream::wait_write_completed(int timeout_ms)
     // Not supported
     (void)timeout_ms;
     return true;
+}
+
+bool wav_audio_input_stream::eof()
+{
+    if (!impl_ || impl_->sf_file_ == nullptr)
+    {
+        return true;
+    }
+    sf_count_t current_pos = sf_seek(impl_->sf_file_, 0, SEEK_CUR);
+    return current_pos >= static_cast<sf_count_t>(total_frames_);
 }
 
 size_t wav_audio_input_stream::read(double* samples, size_t count)
@@ -4406,6 +4455,11 @@ bool wav_audio_output_stream::wait_write_completed(int timeout_ms)
     return true;
 }
 
+bool wav_audio_output_stream::eof()
+{
+    return false;
+}
+
 size_t wav_audio_output_stream::read(double* samples, size_t count)
 {
     (void)samples;
@@ -4576,41 +4630,81 @@ bool tcp_audio_stream_control_client::connected() const
 
 std::string tcp_audio_stream_control_client::name()
 {
+    // Get the name from the server
+    //
+    // Request: { "command": "get_name" }
+    // Response: { "value": "<string>" }
+
     return handle_request(*this, *impl_, { {"command", "get_name"} })["value"].get<std::string>();
 }
 
 audio_stream_type tcp_audio_stream_control_client::type()
 {
+    // Get the type from the server
+    //
+    // Request: { "command": "get_type" }
+    // Response: { "value": "<string>" }
+
     return parse_audio_stream_type(handle_request(*this, *impl_, { {"command", "get_type"} })["value"].get<std::string>());
 }
 
 void tcp_audio_stream_control_client::volume(int percent)
 {
+    // Set the volume on the server
+    //
+    // Request: { "command": "set_volume", "value": <int> }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "set_volume"}, {"value", percent} });
 }
 
 int tcp_audio_stream_control_client::volume()
 {
+    // Get the volume from the server
+    //
+    // Request: { "command": "get_volume" }
+    // Response: { "value": <int> }
+
     return handle_request(*this, *impl_, { {"command", "get_volume"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::sample_rate()
 {
+    // Get the sample rate from the server
+    //
+    // Request: { "command": "get_sample_rate" }
+    // Response: { "value": <int> }
+
     return handle_request(*this, *impl_, { {"command", "get_sample_rate"} })["value"].get<int>();
 }
 
 int tcp_audio_stream_control_client::channels()
 {
+    // Get the channels from the server
+    //
+    // Request: { "command": "get_channels" }
+    // Response: { "value": <int> }
+
     return handle_request(*this, *impl_, { {"command", "get_channels"} })["value"].get<int>();
 }
 
 void tcp_audio_stream_control_client::start()
 {
+    // Start the stream on the server
+    //
+    // Request: { "command": "start" }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "start"} });
 }
 
 void tcp_audio_stream_control_client::stop()
 {
+    // Stop the stream on the server
+    //
+    // Request: { "command": "stop" }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "stop"} });
 }
 
@@ -4802,41 +4896,86 @@ std::string tcp_audio_stream_control_server::handle_request(const std::string& d
 
     if (command == "get_name")
     {
+        // Get the name of the stream
+        //
+        // Request: { "command": "get_name" }
+        // Response: { "value": "<string>" }
+
         response["value"] = stream.name();
     }
     else if (command == "get_type")
     {
+        // Get the type of the stream
+        //
+        // Request: { "command": "get_type" }
+        // Response: { "value": "<string>" }
+
         response["value"] = to_string(stream.type());
     }
     else if (command == "get_volume")
     {
+        // Get the volume of the stream
+        //
+        // Request: { "command": "get_volume" }
+        // Response: { "value": <int> }
+
         response["value"] = stream.volume();
     }
     else if (command == "set_volume")
     {
+        // Set the volume of the stream
+        //
+        // Request: { "command": "set_volume", "value": <int> }
+        // Response: { "value": "ok" }
+
         stream.volume(request.value("value", 0));
         response["value"] = "ok";
     }
     else if (command == "get_sample_rate")
     {
+        // Get the sample rate of the stream
+        //
+        // Request: { "command": "get_sample_rate" }
+        // Response: { "value": <int> }
+
         response["value"] = stream.sample_rate();
     }
     else if (command == "get_channels")
     {
+        // Get the number of channels of the stream
+        //
+        // Request: { "command": "get_channels" }
+        // Response: { "value": <int> }
+
         response["value"] = stream.channels();
     }
     else if (command == "start")
     {
+        // Start the stream on the server
+        //
+        // Request: { "command": "start" }
+        // Response: { "value": "ok" }
+
         stream.start();
         response["value"] = "ok";
     }
     else if (command == "stop")
     {
+        // Stop the stream on the server
+        //
+        // Request: { "command": "stop" }
+        // Response: { "value": "ok" }
+
         stream.stop();
         response["value"] = "ok";
     }
     else
     {
+        // Unknown command
+        //
+        // Request: { "command": "<string>" }
+        // Response: { "error": "unknown command: <unknown>" }
+
         response["error"] = "unknown command: " + command;
     }
 

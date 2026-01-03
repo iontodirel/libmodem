@@ -691,61 +691,121 @@ bool tcp_serial_port_client::connected() const
 
 void tcp_serial_port_client::rts(bool enable)
 {
+    // Send request to set RTS
+    //
+    // Request: { "command": "set_rts", "value": <bool> }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "set_rts"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::rts()
 {
+    // Send request to get RTS
+    //
+    // Request: { "command": "get_rts" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "get_rts"} })["value"].get<bool>();
 }
 
 void tcp_serial_port_client::dtr(bool enable)
 {
+    // Send request to set DTR
+    //
+    // Request: { "command": "set_dtr", "value": <bool> }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "set_dtr"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::dtr()
 {
+    // Send request to get DTR
+    //
+    // Request: { "command": "get_dtr" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "get_dtr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::cts()
 {
+    // Send request to get CTS
+    //
+    // Request: { "command": "get_cts" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "get_cts"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dsr()
 {
+    // Send request to get DSR
+    //
+    // Request: { "command": "get_dsr" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "get_dsr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dcd()
 {
+    // Send request to get DCD
+    //
+    // Request: { "command": "get_dcd" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "get_dcd"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::vector<uint8_t>& data)
 {
+    // Send request to write data
+    //
+    // Request: { "command": "write", "data": "<base64_encoded_data>" }
+    // Response: { "value": <number_of_bytes_written> }
+
     return handle_request(*this, *impl_, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::string& data)
 {
+    // Send request to write string data
+    //
+    // Request: { "command": "write_string", "data": "<base64_encoded_data>" }
+    // Response: { "value": <number_of_bytes_written> }
+
     return handle_request(*this, *impl_, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read(std::size_t size)
 {
+    // Send request to read data
+    //
+    // Request: { "command": "read", "size": <number_of_bytes_to_read> }
+    // Response: { "value": "<base64_encoded_data>" }
+
     return base64_decode(handle_request(*this, *impl_, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read_some(std::size_t max_size)
 {
+    // Send request to read some data
+    //
+    // Request: { "command": "read_some", "max_size": <maximum_number_of_bytes_to_read> }
+    // Response: { "value": "<base64_encoded_data>" }
+
     return base64_decode(handle_request(*this, *impl_, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
 }
 
 std::string tcp_serial_port_client::read_until(const std::string& delimiter)
 {
+    // Send request to read until delimiter
+    //
+    // Request: { "command": "read_until", "delimiter": "<base64_encoded_delimiter>" }
+    // Response: { "value": "<base64_encoded_data>" }
+
     return base64_decode_string(handle_request(*this, *impl_, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
 }
 
@@ -756,16 +816,31 @@ bool tcp_serial_port_client::is_open()
         return false;
     }
 
+    // Send request to check if port is open
+    //
+    // Request: { "command": "is_open" }
+    // Response: { "value": "<bool>" }
+
     return handle_request(*this, *impl_, { {"command", "is_open"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::bytes_available()
 {
+    // Send request to get bytes available
+    //
+    // Request: { "command": "bytes_available" }
+    // Response: { "value": <number_of_bytes_available> }
+
     return handle_request(*this, *impl_, { {"command", "bytes_available"} })["value"].get<std::size_t>();
 }
 
 void tcp_serial_port_client::flush()
 {
+    // Send request to flush
+    //
+    // Request: { "command": "flush" }
+    // Response: { "value": "ok" }
+
     handle_request(*this, *impl_, { {"command", "flush"} });
 }
 
@@ -925,7 +1000,16 @@ void tcp_serial_port_server::run_internal()
                 std::string request_data(boost::endian::big_to_native(request_length), '\0');
                 boost::asio::read(*impl_->client_socket, boost::asio::buffer(request_data.data(), request_data.size()));
 
-                std::string response_data = handle_request(request_data);
+                std::string response_data;
+
+                try
+                {
+                    response_data = handle_request(request_data);
+                }
+                catch (const std::exception& e)
+                {
+                    response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
+                }
 
                 uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
 
@@ -957,77 +1041,156 @@ std::string tcp_serial_port_server::handle_request(const std::string& data)
 
     if (command == "set_rts")
     {
+        // Set RTS
+        //
+        // Request: { "command": "set_rts", "value": <bool> }
+        // Response: { "value": "ok" }
+
         serial_port.rts(request.value("value", false));
         response["value"] = "ok";
     }
     else if (command == "get_rts")
     {
+        // Get RTS
+        //
+        // Request: { "command": "get_rts" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.rts();
     }
     else if (command == "set_dtr")
     {
+        // Set DTR
+        //
+        // Request: { "command": "set_dtr", "value": <bool> }
+        // Response: { "value": "ok" }
+
         serial_port.dtr(request.value("value", false));
         response["value"] = "ok";
     }
     else if (command == "get_dtr")
     {
+        // Get DTR
+        //
+        // Request: { "command": "get_dtr" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.dtr();
     }
     else if (command == "get_cts")
     {
+        // Get CTS
+        //
+        // Request: { "command": "get_cts" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.cts();
     }
     else if (command == "get_dsr")
     {
+        // Get DSR
+        //
+        // Request: { "command": "get_dsr" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.dsr();
     }
     else if (command == "get_dcd")
     {
+        // Get DCD
+        //
+        // Request: { "command": "get_dcd" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.dcd();
     }
     else if (command == "write")
     {
+        // Write data
+        //
+        // Request: { "command": "write", "data": "<base64_encoded_data>" }
+        // Response: { "value": <number_of_bytes_written> }
+
         std::string encoded_data = request.value("data", std::string());
         std::vector<uint8_t> write_data = base64_decode(encoded_data);
         response["value"] = serial_port.write(write_data);
     }
     else if (command == "write_string")
     {
+        // Write string data
+        //
+        // Request: { "command": "write_string", "data": "<base64_encoded_string>" }
+        // Response: { "value": <number_of_bytes_written> }
+
         std::string encoded_data = request.value("data", std::string());
         std::string write_data = base64_decode_string(encoded_data);
         response["value"] = serial_port.write(write_data);
     }
     else if (command == "read")
     {
+        // Read data
+        //
+        // Request: { "command": "read", "size": <number_of_bytes_to_read> }
+        // Response: { "value": "<base64_encoded_data>" }
+
         std::size_t size = request.value("size", static_cast<std::size_t>(0));
         response["value"] = base64_encode(serial_port.read(size));
     }
     else if (command == "read_some")
     {
+        // Read some data
+        //
+        // Request: { "command": "read_some", "max_size": <maximum_number_of_bytes_to_read> }
+        // Response: { "value": "<base64_encoded_data>" }
+
         std::size_t max_size = request.value("max_size", static_cast<std::size_t>(0));
         response["value"] = base64_encode(serial_port.read_some(max_size));
     }
     else if (command == "read_until")
     {
+        // Read until delimiter
+        //
+        // Request: { "command": "read_until", "delimiter": "<base64_encoded_delimiter>" }
+        // Response: { "value": "<base64_encoded_data>" }
+
         std::string encoded_delimiter = request.value("delimiter", std::string());
         std::string delimiter = base64_decode_string(encoded_delimiter);
         response["value"] = base64_encode(serial_port.read_until(delimiter));
     }
     else if (command == "is_open")
     {
+        // Is open
+        //
+        // Request: { "command": "is_open" }
+        // Response: { "value": <bool> }
+
         response["value"] = serial_port.is_open();
     }
     else if (command == "bytes_available")
     {
+        // Bytes available
+        //
+        // Request: { "command": "bytes_available" }
+        // Response: { "value": <number_of_bytes_available> }
+
         response["value"] = serial_port.bytes_available();
     }
     else if (command == "flush")
     {
+        // Flush
+        //
+        // Request: { "command": "flush" }
+        // Response: { "value": "ok" }
+
         serial_port.flush();
         response["value"] = "ok";
     }
     else
     {
+        // Unknown command
+        //
+        // Response: { "error": "unknown command: <command>" }
+
         response["error"] = "unknown command: " + command;
     }
 
