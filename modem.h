@@ -56,6 +56,7 @@ typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
 #include "audio_stream.h"
 #include "modulator.h"
 #include "bitstream.h"
+#include "io.h"
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -78,6 +79,20 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// ptt_control_base                                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct ptt_control_base
+{
+    virtual void ptt(bool enable) = 0;
+    virtual bool ptt() = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // modem                                                            //
 //                                                                  //
 //                                                                  //
@@ -85,8 +100,15 @@ LIBMODEM_NAMESPACE_BEGIN
 
 struct modem
 {
+    void initialize();
     void initialize(audio_stream_base& stream, modulator_base& modulator);
     void initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter);
+    void initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter, ptt_control_base& ptt_control);
+
+    void output_stream(audio_stream_base& stream);
+    void modulator(modulator_base& modulator);
+    void converter(bitstream_converter_base& converter);
+    void ptt_control(ptt_control_base& ptt_control);
 
     void transmit();
     void transmit(packet_type p);
@@ -113,10 +135,12 @@ private:
     void postprocess_audio(std::vector<double>& audio_buffer);
     void render_audio(const std::vector<double>& audio_buffer);
     void modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer);
+    void ptt(bool enable);
 
     std::optional<std::reference_wrapper<audio_stream_base>> audio;
     std::optional<std::reference_wrapper<modulator_base>> mod;
     std::optional<std::reference_wrapper<bitstream_converter_base>> conv;
+    std::optional<std::reference_wrapper<ptt_control_base>> ptt_control_;
     double start_silence_duration_s = 0.0;
     double end_silence_duration_s = 0.0;
     bool preemphasis_enabled = false;
@@ -192,5 +216,80 @@ LIBMODEM_INLINE void apply_preemphasis(It first, It last, int sample_rate, doubl
         *it = y;
     }
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// null_ptt_control                                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class null_ptt_control : public ptt_control_base
+{
+public:
+    void ptt(bool enable) override;
+    bool ptt() override;
+
+private:
+    bool ptt_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// serial_port_ptt_control                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class serial_port_ptt_line
+{
+    rts,
+    dtr
+};
+
+enum class serial_port_ptt_trigger
+{
+    off,
+    on
+};
+
+class serial_port_ptt_control : public ptt_control_base
+{
+public:
+    serial_port_ptt_control() = default;
+    serial_port_ptt_control(serial_port_base& serial_port);
+    serial_port_ptt_control(serial_port_base& serial_port, serial_port_ptt_line line, serial_port_ptt_trigger trigger);
+
+    void ptt(bool enable) override;
+    bool ptt() override;
+
+private:
+    std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
+    serial_port_ptt_line line_ = serial_port_ptt_line::rts;
+    serial_port_ptt_trigger trigger_ = serial_port_ptt_trigger::on;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// library_ptt_control                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class library_ptt_control : public ptt_control_base
+{
+public:
+    library_ptt_control() = default;
+    library_ptt_control(ptt_control_library& library);
+
+    void ptt(bool enable) override;
+    bool ptt() override;
+
+private:
+    std::optional<std::reference_wrapper<ptt_control_library>> library_;
+};
 
 LIBMODEM_NAMESPACE_END

@@ -250,4 +250,49 @@ private:
     bool ready_ = false;
 };
 
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// ptt_control_library                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct ptt_control_library_impl;
+
+class ptt_control_library
+{
+public:
+    ptt_control_library();
+    ptt_control_library(const ptt_control_library&) = delete;
+    ptt_control_library& operator=(const ptt_control_library&) = delete;
+    ptt_control_library(ptt_control_library&&) noexcept;
+    ptt_control_library& operator=(ptt_control_library&&) noexcept;
+    ~ptt_control_library();
+
+    void load(const std::string& library_path);
+    void load(const std::string& library_path, void* context);
+    void unload();
+
+    void uninit();
+
+    void ptt(bool enable);
+    bool ptt();
+
+    explicit operator bool() const;
+
+private:
+    typedef int (*set_ptt_fptr)(int);
+    typedef int (*get_ptt_fptr)(int*);
+    typedef int (*init_fptr)(void*);
+    typedef int (*uninit_fptr)();
+
+    std::unique_ptr<ptt_control_library_impl> pimpl_;
+    set_ptt_fptr set_ptt_fptr_ = nullptr;
+    get_ptt_fptr get_ptt_fptr_ = nullptr;
+    init_fptr init_fptr_ = nullptr;
+    uninit_fptr uninit_fptr_ = nullptr;
+    bool loaded_ = false;
+};
+
 LIBMODEM_NAMESPACE_END

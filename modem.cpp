@@ -38,6 +38,12 @@
 #include <memory>
 #include <thread>
 
+// Turns out opening the port can assert the RTS line to on
+// If this macro is defined, we will call ptt(false) in the ctor of serial_port_ptt_control
+#ifndef LIBMODEM_AUTO_PTT_DISABLE
+#define LIBMODEM_AUTO_PTT_DISABLE 1
+#endif // LIBMODEM_AUTO_PTT_DISABLE
+
 LIBMODEM_NAMESPACE_BEGIN
 
 // **************************************************************** //
@@ -47,6 +53,14 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+void modem::initialize()
+{
+    double ms_per_flag = (8.0 * 1000.0) / baud_rate_;
+
+    preamble_flags = (std::max)(static_cast<int>(tx_delay_ms / ms_per_flag), 1);
+    postamble_flags = (std::max)(static_cast<int>(tx_tail_ms / ms_per_flag), 1);
+}
 
 void modem::initialize(audio_stream_base& stream, modulator_base& modulator)
 {
@@ -64,6 +78,33 @@ void modem::initialize(audio_stream_base& stream, modulator_base& modulator, bit
     conv = std::ref(converter);
 
     initialize(stream, modulator);
+}
+
+void modem::initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter, ptt_control_base& ptt_control)
+{
+    ptt_control_ = std::ref(ptt_control);
+
+    initialize(stream, modulator, converter);
+}
+
+void modem::output_stream(audio_stream_base& stream)
+{
+    audio = std::ref(stream);
+}
+
+void modem::modulator(modulator_base& modulator)
+{
+    mod = std::ref(modulator);
+}
+
+void modem::converter(bitstream_converter_base& converter)
+{
+    conv = std::ref(converter);
+}
+
+void modem::ptt_control(ptt_control_base& ptt_control)
+{
+    ptt_control_ = std::ref(ptt_control);
 }
 
 void modem::transmit()
@@ -137,7 +178,12 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
         apply_preemphasis(audio_buffer.begin(), audio_buffer.end(), audio_stream.sample_rate(), /*tau*/ 75e-6);
     }
 
+    // Apply gain
+
     apply_gain(audio_buffer.begin(), audio_buffer.end(), gain_value);
+
+    // Handle silence without inserting at the begining
+    // Use audio_buffer_with_start_silence as copy buffer
 
     insert_silence(std::back_inserter(audio_buffer), audio_stream.sample_rate(), end_silence_duration_s);
 
@@ -183,6 +229,15 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
     modulator.reset();
 }
 
+void modem::ptt(bool enable)
+{
+    if (ptt_control_.has_value())
+    {
+        ptt_control_base& ptt_control = ptt_control_.value().get();
+        ptt_control.ptt(enable);
+    }
+}
+
 void modem::render_audio(const std::vector<double>& audio_buffer)
 {
     if (!audio.has_value())
@@ -192,24 +247,35 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
 
     struct audio_stream_base& audio_stream = audio.value().get();
 
-    // Start the playback
-    audio_stream.start();
-
     try
     {
+        // Start the playback
+        audio_stream.start();
+
+        ptt(true);
+
         // Write audio samples to output device
         // The stream will automatically handle buffering, the stream typically has a 200ms buffer
+        //
         // This effectively starts the audible playback of the packet
-        audio_stream.write(audio_buffer.data(), audio_buffer.size());
+
+        size_t written = 0;
+        while (written < audio_buffer.size())
+        {
+            written += audio_stream.write(audio_buffer.data() + written, audio_buffer.size() - written);
+        }
 
         // Actually wait for all samples to be played
         audio_stream.wait_write_completed();
     }
     catch (...)
     {
+        ptt(false);
         audio_stream.stop();
         throw;
     }
+
+    ptt(false);
 
     // Stop the playback
     audio_stream.stop();
@@ -294,6 +360,125 @@ void modem::baud_rate(int b)
 int modem::baud_rate() const
 {
     return baud_rate_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// null_ptt_control                                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void null_ptt_control::ptt(bool enable)
+{
+    ptt_ = enable;
+}
+
+bool null_ptt_control::ptt()
+{
+    return ptt_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// serial_port_ptt_control                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+serial_port_ptt_control::serial_port_ptt_control(serial_port_base& serial_port) : serial_port_(std::ref(serial_port))
+{
+#if LIBMODEM_AUTO_PTT_DISABLE
+    ptt(false);
+#endif // LIBMODEM_AUTO_PTT_DISABLE
+}
+
+serial_port_ptt_control::serial_port_ptt_control(serial_port_base& serial_port, serial_port_ptt_line line, serial_port_ptt_trigger trigger) : serial_port_(std::ref(serial_port)), line_(line), trigger_(trigger)
+{
+#if LIBMODEM_AUTO_PTT_DISABLE
+    ptt(false);
+#endif // LIBMODEM_AUTO_PTT_DISABLE
+}
+
+void serial_port_ptt_control::ptt(bool enable)
+{
+    if (!serial_port_.has_value())
+    {
+        throw std::runtime_error("No serial port assigned for PTT control");
+    }
+
+    serial_port_base& serial_port = serial_port_.value().get();
+
+    bool line_state = (trigger_ == serial_port_ptt_trigger::on) ? enable : !enable;
+
+    switch (line_)
+    {
+    case serial_port_ptt_line::rts:
+        serial_port.rts(line_state);
+        break;
+    case serial_port_ptt_line::dtr:
+        serial_port.dtr(line_state);
+        break;
+    default:
+        throw std::runtime_error("Invalid PTT line");
+    }
+}
+
+bool serial_port_ptt_control::ptt()
+{
+    if (!serial_port_.has_value())
+    {
+        throw std::runtime_error("No serial port assigned for PTT control");
+    }
+
+    serial_port_base& serial_port = serial_port_.value().get();
+
+    bool line_state = false;
+
+    switch (line_)
+    {
+    case serial_port_ptt_line::rts:
+        line_state = serial_port.rts();
+        break;
+    case serial_port_ptt_line::dtr:
+        line_state = serial_port.dtr();
+        break;
+    default:
+        throw std::runtime_error("Invalid PTT line");
+    }
+
+    return (trigger_ == serial_port_ptt_trigger::on) ? line_state : !line_state;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// library_ptt_control                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+library_ptt_control::library_ptt_control(ptt_control_library& library) : library_(library)
+{
+}
+
+void library_ptt_control::ptt(bool enable)
+{
+    if (library_.has_value())
+    {
+        library_->get().ptt(enable);
+    }
+}
+
+bool library_ptt_control::ptt()
+{
+    if (library_.has_value())
+    {
+        return library_->get().ptt();
+    }
+    return false;
 }
 
 LIBMODEM_NAMESPACE_END

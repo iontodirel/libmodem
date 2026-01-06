@@ -46,6 +46,7 @@
 #if __linux__
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <dlfcn.h>
 #endif // __linux__
 
 #include <boost/asio.hpp>
@@ -157,7 +158,7 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
 {
     if (is_open_)
     {
-        return false; // Already open
+        throw std::runtime_error("Serial port is already open");
     }
 
     try
@@ -171,44 +172,69 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
 
         // Convert parity enum
         boost::asio::serial_port_base::parity::type asio_parity;
+
         switch (parity)
         {
-            case parity::none: asio_parity = boost::asio::serial_port_base::parity::none; break;
-            case parity::odd:  asio_parity = boost::asio::serial_port_base::parity::odd; break;
-            case parity::even: asio_parity = boost::asio::serial_port_base::parity::even; break;
-            default:
-                asio_parity = boost::asio::serial_port_base::parity::none;
-                break;
+        case parity::none:
+            asio_parity = boost::asio::serial_port_base::parity::none;
+            break;
+        case parity::odd:
+            asio_parity = boost::asio::serial_port_base::parity::odd;
+            break;
+        case parity::even:
+            asio_parity = boost::asio::serial_port_base::parity::even;
+            break;
+        default:
+            asio_parity = boost::asio::serial_port_base::parity::none;
+            break;
         }
+
         impl_->serial_port.set_option(boost::asio::serial_port_base::parity(asio_parity));
 
         // Convert stop_bits enum
         boost::asio::serial_port_base::stop_bits::type asio_stop_bits;
+
         switch (stop_bits)
         {
-            case stop_bits::one:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::one; break;
-            case stop_bits::onepointfive: asio_stop_bits = boost::asio::serial_port_base::stop_bits::onepointfive; break;
-            case stop_bits::two:          asio_stop_bits = boost::asio::serial_port_base::stop_bits::two; break;
-            default:
-                asio_stop_bits = boost::asio::serial_port_base::stop_bits::one;
-                break;
+        case stop_bits::one:
+            asio_stop_bits = boost::asio::serial_port_base::stop_bits::one;
+            break;
+        case stop_bits::onepointfive:
+            asio_stop_bits = boost::asio::serial_port_base::stop_bits::onepointfive;
+            break;
+        case stop_bits::two:
+            asio_stop_bits = boost::asio::serial_port_base::stop_bits::two;
+            break;
+        default:
+            asio_stop_bits = boost::asio::serial_port_base::stop_bits::one;
+            break;
         }
+
         impl_->serial_port.set_option(boost::asio::serial_port_base::stop_bits(asio_stop_bits));
 
         // Convert flow_control enum
         boost::asio::serial_port_base::flow_control::type asio_flow_control;
+
         switch (flow_control)
         {
-            case flow_control::none:     asio_flow_control = boost::asio::serial_port_base::flow_control::none; break;
-            case flow_control::software: asio_flow_control = boost::asio::serial_port_base::flow_control::software; break;
-            case flow_control::hardware: asio_flow_control = boost::asio::serial_port_base::flow_control::hardware; break;
-            default:
-                asio_flow_control = boost::asio::serial_port_base::flow_control::none;
-                break;
+        case flow_control::none:
+            asio_flow_control = boost::asio::serial_port_base::flow_control::none;
+            break;
+        case flow_control::software:
+            asio_flow_control = boost::asio::serial_port_base::flow_control::software;
+            break;
+        case flow_control::hardware:
+            asio_flow_control = boost::asio::serial_port_base::flow_control::hardware;
+            break;
+        default:
+            asio_flow_control = boost::asio::serial_port_base::flow_control::none;
+            break;
         }
+
         impl_->serial_port.set_option(boost::asio::serial_port_base::flow_control(asio_flow_control));
 
         is_open_ = true;
+
         return true;
     }
     catch (const boost::system::system_error&)
@@ -229,7 +255,10 @@ void serial_port::close()
 
 void serial_port::rts(bool enable)
 {
-    if (!is_open_) return;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -265,7 +294,10 @@ void serial_port::rts(bool enable)
 
 bool serial_port::rts()
 {
-    if (!is_open_) return false;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -287,7 +319,10 @@ bool serial_port::rts()
 
 void serial_port::dtr(bool enable)
 {
-    if (!is_open_) return;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -323,7 +358,10 @@ void serial_port::dtr(bool enable)
 
 bool serial_port::dtr()
 {
-    if (!is_open_) return false;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -345,7 +383,10 @@ bool serial_port::dtr()
 
 bool serial_port::cts()
 {
-    if (!is_open_) return false;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -368,7 +409,10 @@ bool serial_port::cts()
 
 bool serial_port::dsr()
 {
-    if (!is_open_) return false;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -391,7 +435,10 @@ bool serial_port::dsr()
 
 bool serial_port::dcd()
 {
-    if (!is_open_) return false;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -414,7 +461,10 @@ bool serial_port::dcd()
 
 std::size_t serial_port::write(const std::vector<uint8_t>& data)
 {
-    if (!is_open_) return 0;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -428,7 +478,10 @@ std::size_t serial_port::write(const std::vector<uint8_t>& data)
 
 std::size_t serial_port::write(const std::string& data)
 {
-    if (!is_open_) return 0;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -442,8 +495,12 @@ std::size_t serial_port::write(const std::string& data)
 
 std::vector<uint8_t> serial_port::read(std::size_t size)
 {
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
+
     std::vector<uint8_t> buffer(size);
-    if (!is_open_) return buffer;
 
     try
     {
@@ -461,8 +518,12 @@ std::vector<uint8_t> serial_port::read(std::size_t size)
 
 std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 {
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
+
     std::vector<uint8_t> buffer(max_size);
-    if (!is_open_) return buffer;
 
     try
     {
@@ -479,7 +540,10 @@ std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 
 std::string serial_port::read_until(const std::string& delimiter)
 {
-    if (!is_open_) return "";
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -504,7 +568,10 @@ bool serial_port::is_open()
 
 std::size_t serial_port::bytes_available()
 {
-    if (!is_open_) return 0;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
     try
     {
@@ -531,7 +598,10 @@ std::size_t serial_port::bytes_available()
 
 void serial_port::flush()
 {
-    if (!is_open_) return;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
 #ifdef WIN32
     ::FlushFileBuffers(impl_->serial_port.native_handle());
@@ -543,7 +613,10 @@ void serial_port::flush()
 
 void serial_port::timeout(unsigned int milliseconds)
 {
-    if (!is_open_) return;
+    if (!is_open_)
+    {
+        throw std::runtime_error("Serial port not open");
+    }
 
 #ifdef WIN32
     COMMTIMEOUTS timeouts = { 0 };
@@ -1197,6 +1270,171 @@ std::string tcp_serial_port_server::handle_request(const std::string& data)
     std::string response_string = response.dump();
 
     return response_string;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// ptt_control_library_impl                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct ptt_control_library_impl
+{
+#if WIN32
+    HMODULE handle = nullptr;
+#endif // WIN32
+#ifdef __linux__
+    void* handle = nullptr;
+#endif
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// ptt_control_library                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+ptt_control_library::ptt_control_library() : pimpl_(std::make_unique<ptt_control_library_impl>())
+{
+}
+
+ptt_control_library::ptt_control_library(ptt_control_library&& other) noexcept = default;
+ptt_control_library& ptt_control_library::operator=(ptt_control_library&& other) noexcept = default;
+
+ptt_control_library::~ptt_control_library()
+{
+    uninit();
+}
+
+void ptt_control_library::load(const std::string& library_path)
+{
+    load(library_path, nullptr);
+}
+
+void ptt_control_library::load(const std::string& library_path, void* context)
+{
+    if (loaded_)
+    {
+        throw std::runtime_error("Library already loaded");
+    }
+
+#if WIN32
+
+    pimpl_->handle = LoadLibraryA(library_path.c_str());
+
+    if (pimpl_->handle == nullptr)
+    {
+        throw std::runtime_error("Failed to load library: " + library_path);
+    }
+
+    init_fptr_ = reinterpret_cast<init_fptr>(GetProcAddress(pimpl_->handle, "init"));
+    uninit_fptr_ = reinterpret_cast<uninit_fptr>(GetProcAddress(pimpl_->handle, "uninit"));
+    set_ptt_fptr_ = reinterpret_cast<set_ptt_fptr>(GetProcAddress(pimpl_->handle, "set_ptt"));
+    get_ptt_fptr_ = reinterpret_cast<get_ptt_fptr>(GetProcAddress(pimpl_->handle, "get_ptt"));
+
+#endif
+#ifdef __linux__
+
+    pimpl_->handle = dlopen(library_path.c_str(), RTLD_NOW);
+
+    if (pimpl_->handle == nullptr)
+    {
+        throw std::runtime_error("Failed to load library: " + library_path);
+    }
+
+    init_fptr_ = reinterpret_cast<init_fptr>(dlsym(pimpl_->handle, "init"));
+    uninit_fptr_ = reinterpret_cast<uninit_fptr>(dlsym(pimpl_->handle, "uninit"));
+    set_ptt_fptr_ = reinterpret_cast<set_ptt_fptr>(dlsym(pimpl_->handle, "set_ptt"));
+    get_ptt_fptr_ = reinterpret_cast<get_ptt_fptr>(dlsym(pimpl_->handle, "get_ptt"));
+
+#endif
+
+    loaded_ = true;
+
+    if (set_ptt_fptr_ == nullptr || get_ptt_fptr_ == nullptr)
+    {
+        throw std::runtime_error("Failed to resolve PTT functions");
+    }
+
+    if (init_fptr_ != nullptr)
+    {
+        if (init_fptr_(context) != 0)
+        {
+            throw std::runtime_error("Library init failed");
+        }
+    }
+}
+
+void ptt_control_library::unload()
+{
+    if (!loaded_)
+    {
+        return;
+    }
+
+    if (pimpl_ == nullptr || pimpl_->handle == nullptr)
+    {
+        return;
+    }
+
+    if (uninit_fptr_ != nullptr)
+    {
+        uninit_fptr_();
+    }
+
+#if WIN32
+    FreeLibrary(pimpl_->handle);
+#endif
+#ifdef __linux__
+    dlclose(pimpl_->handle);
+#endif
+
+    pimpl_->handle = nullptr;
+    set_ptt_fptr_ = nullptr;
+    get_ptt_fptr_ = nullptr;
+    init_fptr_ = nullptr;
+    uninit_fptr_ = nullptr;
+}
+
+void ptt_control_library::uninit()
+{
+    if (uninit_fptr_ != nullptr)
+    {
+        if (uninit_fptr_() != 0)
+        {
+            throw std::runtime_error("Library uninit failed");
+        }
+    }
+}
+
+void ptt_control_library::ptt(bool enable)
+{
+    if (set_ptt_fptr_ != nullptr)
+    {
+        set_ptt_fptr_(enable ? 1 : 0);
+    }
+}
+
+bool ptt_control_library::ptt()
+{
+    if (get_ptt_fptr_ != nullptr)
+    {
+        int ptt_state = 0;
+        if (get_ptt_fptr_(&ptt_state) == 0)
+        {
+            return ptt_state != 0;
+        }
+    }
+    return false;
+}
+
+ptt_control_library::operator bool() const
+{
+    return loaded_;
 }
 
 LIBMODEM_NAMESPACE_END

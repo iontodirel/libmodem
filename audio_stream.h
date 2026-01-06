@@ -844,6 +844,9 @@ public:
     bool start(const std::string& host, int port);
     void stop();
 
+    bool faulted();
+    void throw_if_faulted();
+
 private:
     void run();
     void run_internal();
@@ -855,6 +858,7 @@ private:
     std::atomic<bool> running_ = false;
     std::mutex mutex_;
     std::condition_variable cv_;
+    std::exception_ptr exception_;
     bool ready_ = false;
 };
 

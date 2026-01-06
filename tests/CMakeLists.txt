@@ -178,6 +178,11 @@ target_link_libraries(tests PRIVATE GTest::gtest_main gtest gtest_main nlohmann_
 target_compile_definitions(tests PRIVATE ATEST_EXE_PATH="${ATEST_EXE_PATH}"  PYTHON_EXE_PATH="${Python3_EXECUTABLE}" LIBMODEM_PACKET_NAMESPACE_REFERENCE=aprs::router:: APRS_ROUTER_ENABLE_PACKET_SUPPORT=true)
 set_property(TARGET tests PROPERTY CXX_STANDARD 20)
 
+add_library(ptt_library_example SHARED ptt_library_example.c)
+if(NOT WIN32)
+    target_compile_options(ptt_library_example PRIVATE -fvisibility=hidden)
+endif()
+
 add_custom_target(bitstream_stress_test
     COMMAND tests --gtest_filter=bitstream.try_decode_basic_bitstream_1005:bitstream.encode_basic_bitstream_1005 --gtest_repeat=500 --gtest_break_on_failure
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}

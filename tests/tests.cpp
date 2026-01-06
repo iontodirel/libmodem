@@ -78,6 +78,9 @@
 #define ENABLE_HARDWARE_TESTS_4
 #endif // ENABLE_ALL_HARDWARE_TESTS
 
+// Enable long running tests by default
+#define ENABLE_TESTS_LONG_RUNNING
+
 using namespace LIBMODEM_NAMESPACE;
 
 // **************************************************************** //
@@ -3778,102 +3781,6 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
     EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
 }
 
-TEST(modem, modulate_1005_afsk_1200_ax25_packet)
-{
-    std::vector<aprs::router::packet> packets;
-
-    {
-        std::ifstream file("packets_1d.txt");
-        if (!file.is_open())
-        {
-            FAIL() << "Failed to open packets_1d.txt";
-        }
-
-        std::string line;
-        while (std::getline(file, line))
-        {
-            aprs::router::packet p = line;
-            packets.push_back(p);
-        }
-    }
-
-    {
-        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
-        basic_bitstream_converter_adapter bitstream_converter;
-        wav_audio_output_stream wav_stream("test.wav", 48000);
-
-        modem m;
-        m.baud_rate(1200);
-        m.tx_delay(300);
-        m.tx_tail(45);
-        m.gain(0.3);
-        m.initialize(wav_stream, modulator, bitstream_converter);
-
-        int duration_ms = 100;
-
-        // Generate 1 seconds of silence buffer
-        std::vector<double> silence_buffer(48000 * duration_ms / 1000, 0.0);
-
-        for (const auto& p : packets)
-        {
-            m.transmit(p);
-
-            // Insert 1 seconds of silence between packets
-            wav_stream.write(silence_buffer.data(), silence_buffer.size());
-        }
-
-        wav_stream.close();
-    }
-
-    std::string output;
-    std::string error;
-
-    // Run Direwolf's ATEST with -B 1200
-    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
-
-    std::vector<aprs::router::packet> actual_packets;
-
-    direwolf_stdout_to_packets(output, actual_packets, true);
-
-    EXPECT_TRUE(actual_packets.size() == packets.size());
-
-    for (size_t i = 0; i < packets.size(); i++)
-    {
-        std::string actual_packet_string = to_string(actual_packets[i]);
-        std::string expected_packet_string = to_string(packets[i]);
-
-        // Direwolf does not preserve the path addresses set state
-        // It only keeps the last set path address as set
-
-        if (actual_packet_string != expected_packet_string)
-        {
-            EXPECT_EQ(packets[i].from, actual_packets[i].from);
-            EXPECT_EQ(packets[i].to, actual_packets[i].to);
-            EXPECT_EQ(packets[i].data, actual_packets[i].data);
-            EXPECT_TRUE(packets[i].path.size() == actual_packets[i].path.size());
-
-            bool address_mark_tested = false;
-
-            for (int j = packets[i].path.size() - 1; j >= 0; j--)
-            {
-                address expected_address;
-                address actual_address;
-                try_parse_address(packets[i].path[j], expected_address);
-                try_parse_address(actual_packets[i].path[j], actual_address);
-
-                EXPECT_EQ(expected_address.text, actual_address.text);
-                EXPECT_EQ(expected_address.ssid, actual_address.ssid);
-
-                if (actual_address.mark && !address_mark_tested)
-                {
-                    EXPECT_TRUE(expected_address.mark);
-                    address_mark_tested = true;
-                }
-            }
-        }
-    }
-}
-
 TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
 {
     aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
@@ -4057,6 +3964,108 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     EXPECT_TRUE(output.find("[0] " + replace_non_printable(to_string(packet))) != std::string::npos);
 }
+
+#ifdef ENABLE_TESTS_LONG_RUNNING
+
+TEST(modem, modulate_1005_afsk_1200_ax25_packet)
+{
+    std::vector<aprs::router::packet> packets;
+
+    {
+        std::ifstream file("packets_1d.txt");
+        if (!file.is_open())
+        {
+            FAIL() << "Failed to open packets_1d.txt";
+        }
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            aprs::router::packet p = line;
+            packets.push_back(p);
+        }
+    }
+
+    {
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
+        basic_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 48000);
+
+        modem m;
+        m.baud_rate(1200);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.3);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        int duration_ms = 100;
+
+        // Generate 1 seconds of silence buffer
+        std::vector<double> silence_buffer(48000 * duration_ms / 1000, 0.0);
+
+        for (const auto& p : packets)
+        {
+            m.transmit(p);
+
+            // Insert 1 seconds of silence between packets
+            wav_stream.write(silence_buffer.data(), silence_buffer.size());
+        }
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 1200
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
+
+    std::vector<aprs::router::packet> actual_packets;
+
+    direwolf_stdout_to_packets(output, actual_packets, true);
+
+    EXPECT_TRUE(actual_packets.size() == packets.size());
+
+    for (size_t i = 0; i < packets.size(); i++)
+    {
+        std::string actual_packet_string = to_string(actual_packets[i]);
+        std::string expected_packet_string = to_string(packets[i]);
+
+        // Direwolf does not preserve the path addresses set state
+        // It only keeps the last set path address as set
+
+        if (actual_packet_string != expected_packet_string)
+        {
+            EXPECT_EQ(packets[i].from, actual_packets[i].from);
+            EXPECT_EQ(packets[i].to, actual_packets[i].to);
+            EXPECT_EQ(packets[i].data, actual_packets[i].data);
+            EXPECT_TRUE(packets[i].path.size() == actual_packets[i].path.size());
+
+            bool address_mark_tested = false;
+
+            for (int j = packets[i].path.size() - 1; j >= 0; j--)
+            {
+                address expected_address;
+                address actual_address;
+                try_parse_address(packets[i].path[j], expected_address);
+                try_parse_address(actual_packets[i].path[j], actual_address);
+
+                EXPECT_EQ(expected_address.text, actual_address.text);
+                EXPECT_EQ(expected_address.ssid, actual_address.ssid);
+
+                if (actual_address.mark && !address_mark_tested)
+                {
+                    EXPECT_TRUE(expected_address.mark);
+                    address_mark_tested = true;
+                }
+            }
+        }
+    }
+}
+
+#endif // ENABLE_TESTS_LONG_RUNNING
 
 // **************************************************************** //
 //                                                                  //
@@ -4475,6 +4484,60 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     }
 }
 
+TEST(ptt_control_library, ptt_control_library)
+{
+    static int last_action = -1;
+    static int last_value = -1;
+
+    auto callback = [](int action, int value) {
+        last_action = action;
+        last_value = value;
+    };
+
+    EXPECT_TRUE(last_action == -1);
+    EXPECT_TRUE(last_value == -1);
+
+    ptt_control_library lib;
+
+#if WIN32
+    lib.load("./ptt_library_example.dll", reinterpret_cast<void*>(+callback));
+#endif
+#ifdef __linux__
+    lib.load("./libptt_library_example.so", reinterpret_cast<void*>(+callback));
+#endif
+
+    library_ptt_control ptt_control(lib);
+
+    ptt_control.ptt(true);
+
+    EXPECT_TRUE(last_action == 0);
+    EXPECT_TRUE(last_value == 1);
+
+    EXPECT_TRUE(ptt_control.ptt());
+
+    EXPECT_TRUE(last_action == 1);
+    EXPECT_TRUE(last_value == 1);
+
+    ptt_control.ptt(false);
+
+    EXPECT_TRUE(last_action == 0);
+    EXPECT_TRUE(last_value == 0);
+
+    EXPECT_TRUE(!ptt_control.ptt());
+
+    EXPECT_TRUE(last_action == 1);
+    EXPECT_TRUE(last_value == 0);
+
+    ptt_control.ptt(true);
+
+    EXPECT_TRUE(last_action == 0);
+    EXPECT_TRUE(last_value == 1);
+
+#if WIN32
+    lib.unload();
+#endif
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -4513,7 +4576,7 @@ TEST(modem, transmit_hardware_demo)
     // Get the Digirig render audio device
     audio_device device;
 #if WIN32
-    if (!try_get_audio_device_by_description("Speakers (2- USB Audio Device)", device, audio_device_type::render, audio_device_state::active))
+    if (!try_get_audio_device_by_id("{0.0.0.00000000}.{37b0c850-d234-486f-add7-7c6f81d5eb6e}", device))
     {
         return;
     }
@@ -4524,8 +4587,6 @@ TEST(modem, transmit_hardware_demo)
         return;
     }
 #endif // __linux__
-
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Connecting to a Digirig serial port, which uses the RTS line for the PTT
     serial_port port;
@@ -4542,10 +4603,7 @@ TEST(modem, transmit_hardware_demo)
     }
 #endif // __linux__
 
-    // Turns out opening the port asserts the RTS line to on
-    // Disable it, if we do it fast it will never be asserted high
-    port.rts(false);
-
+    serial_port_ptt_control ptt_control(port, serial_port_ptt_line::rts, serial_port_ptt_trigger::on);
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
     basic_bitstream_converter_adapter bitstream_converter;
@@ -4557,19 +4615,19 @@ TEST(modem, transmit_hardware_demo)
     m.start_silence(0.1);
     m.end_silence(0.1);
     m.gain(0.3);
-    m.initialize(stream, modulator, bitstream_converter);
-
-    // Turn the transmitter on
-    port.rts(true);
+    m.output_stream(stream);
+    m.modulator(modulator);
+    m.converter(bitstream_converter);
+    m.ptt_control(ptt_control);
+    m.initialize();
 
     // Set audio stream volume to 50%
     stream.volume(50);
 
+    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
+
     // Send the modulated packet to the audio device
     m.transmit(p);
-
-    // Turn the transmitter off
-    port.rts(false);
 }
 
 TEST(modem, transmit_hardware_demo_virtual_serial_port)
@@ -4955,9 +5013,9 @@ TEST(audio_stream, alsa_audio_output_stream)
 
     EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
 
-    std::unique_ptr<audio_stream_base> stream = device.stream();
+    audio_stream stream = device.stream();
 
-    alsa_audio_output_stream& alsa_stream = dynamic_cast<alsa_audio_output_stream&>(*stream.get());
+    alsa_audio_output_stream& alsa_stream = dynamic_cast<alsa_audio_output_stream&>(stream.get());
 
     alsa_stream.stop();
 
@@ -5012,7 +5070,7 @@ TEST(audio_stream, alsa_audio_output_stream)
 
     auto it = std::find_if(controls.begin(), controls.end(), [](const alsa_audio_stream_control& control) {
         return control.name() == "Master";
-        });
+    });
 
     EXPECT_TRUE(it != controls.end());
 
@@ -5035,9 +5093,9 @@ TEST(audio_stream, alsa_audio_input_stream)
 
     EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::capture));
 
-    std::unique_ptr<audio_stream_base> stream = device.stream();
+    audio_stream stream = device.stream();
 
-    alsa_audio_input_stream& alsa_stream = dynamic_cast<alsa_audio_input_stream&>(*stream.get());
+    alsa_audio_input_stream& alsa_stream = dynamic_cast<alsa_audio_input_stream&>(stream.get());
 
     alsa_stream.stop();
 

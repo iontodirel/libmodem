@@ -4813,6 +4813,23 @@ void tcp_audio_stream_control_server::stop()
     }
 }
 
+void tcp_audio_stream_control_server::throw_if_faulted()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (exception_)
+    {
+        std::exception_ptr ex = exception_;
+        exception_ = nullptr;
+        std::rethrow_exception(ex);
+    }
+}
+
+bool tcp_audio_stream_control_server::faulted()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return exception_ != nullptr;
+}
+
 void tcp_audio_stream_control_server::run()
 {
     {
@@ -4825,18 +4842,13 @@ void tcp_audio_stream_control_server::run()
     {
         run_internal();
     }
-    catch (const boost::system::system_error& e)
-    {
-        running_ = false;
-        if (e.code() != boost::asio::error::operation_aborted)
-        {
-            throw;
-        }
-    }
     catch (...)
     {
         running_ = false;
-        throw;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        exception_ = std::current_exception();
+        cv_.notify_all();
     }
 
     running_ = false;
@@ -4874,7 +4886,8 @@ void tcp_audio_stream_control_server::run_internal()
             }
             catch (const boost::system::system_error& e)
             {
-                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
+                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset ||
+                    e.code() == boost::asio::error::connection_aborted || e.code() == boost::asio::error::broken_pipe)
                 {
                     break;
                 }
