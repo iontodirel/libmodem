@@ -62,7 +62,18 @@
 #endif
 
 #include <io.h>
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif // __clang__
+
 #include <boost/process.hpp>
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif // __clang__
+
 #include <gtest/gtest.h>
 
 #include <thread>
@@ -3932,7 +3943,8 @@ APRS_TRACK_NAMESPACE_USE
 APRS_TRACK_DETAIL_NAMESPACE_USE
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
     
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4342,7 +4354,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Write back to a wav file and demodulate with Direwolf
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4431,7 +4444,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Write back to a wav file and demodulate with Direwolf
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4504,6 +4518,9 @@ TEST(ptt_control_library, ptt_control_library)
 #endif
 #ifdef __linux__
     lib.load("./libptt_library_example.so", reinterpret_cast<void*>(+callback));
+#endif
+#if __APPLE__
+    lib.load("./libptt_library_example.dylib", reinterpret_cast<void*>(+callback));
 #endif
 
     library_ptt_control ptt_control(lib);

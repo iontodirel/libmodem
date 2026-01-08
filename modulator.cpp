@@ -44,7 +44,7 @@ LIBMODEM_NAMESPACE_BEGIN
 //                                                                  //
 // **************************************************************** //
 
-dds_afsk_modulator_double::dds_afsk_modulator_double(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000, double alpha = 1.0)
+dds_afsk_modulator_double::dds_afsk_modulator_double(double f_mark, double f_space, int bitrate, int sample_rate, double alpha)
 {
     this->f_mark = f_mark;
     this->f_space = f_space;

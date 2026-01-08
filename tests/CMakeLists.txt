@@ -31,6 +31,8 @@
 
 cmake_minimum_required (VERSION 3.28)
 
+set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "")
+
 project ("libmodem" LANGUAGES C CXX)
 
 include(FetchContent)
@@ -231,6 +233,11 @@ endif()
 
 if(MSVC)
     #target_compile_options(tests PRIVATE /Wall /analyze /external:W0)
+endif()
+
+if(APPLE)
+    target_compile_options(tests PRIVATE -fexperimental-library)
+    target_link_options(tests PRIVATE -fexperimental-library)
 endif()
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)

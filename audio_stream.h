@@ -745,7 +745,7 @@ public:
     wav_audio_output_stream& operator=(const wav_audio_output_stream&) = delete;
     wav_audio_output_stream(wav_audio_output_stream&&) noexcept;
     wav_audio_output_stream& operator=(wav_audio_output_stream&&) noexcept;
-    wav_audio_output_stream& operator=(wav_audio_input_stream& rhs);
+    wav_audio_output_stream& operator=(wav_audio_input_stream& rhs) override;
     virtual ~wav_audio_output_stream();
 
     void close() override;
