@@ -76,6 +76,9 @@
 // Enable long running tests by default
 #define ENABLE_TESTS_LONG_RUNNING
 
+#define STRINGIFY0(x) #x
+#define STRINGIFY(x) STRINGIFY0(x)
+
 using namespace LIBMODEM_NAMESPACE;
 
 // **************************************************************** //
@@ -5902,5 +5905,8 @@ TEST(audio_stream, capture_5s_stream)
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
+#ifdef LIBMODEM_FILTER_TEST
+    ::testing::GTEST_FLAG(filter) = STRINGIFY(LIBMODEM_FILTER_TEST);
+#endif // LIBMODEM_FILTER_TEST
     return RUN_ALL_TESTS();
 }

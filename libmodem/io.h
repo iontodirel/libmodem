@@ -41,6 +41,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <unordered_set>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -245,22 +246,23 @@ public:
 
 protected:
     virtual std::string handle_request(const std::string& data) = 0;
-    virtual void handle_client(std::shared_ptr<tcp_client_connection_impl> connection);
 
 private:
     void run();
     void run_internal();
+    void accept_async();
+    void read_async(std::shared_ptr<tcp_client_connection_impl> connection);
+    void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response);
 
     std::unique_ptr<tcp_server_base_impl> impl_;
     std::jthread thread_;
     std::atomic<bool> running_ = false;
     std::mutex mutex_;
     std::condition_variable cv_;
-    std::mutex clients_mutex_;
-    std::vector<std::jthread> client_threads_;
-    std::vector<std::weak_ptr<tcp_client_connection_impl>> client_connections_;
     bool ready_ = false;
     std::exception_ptr exception_;
+    std::mutex connections_mutex_;
+    std::unordered_set<std::shared_ptr<tcp_client_connection_impl>> connections_;
 };
 
 // **************************************************************** //

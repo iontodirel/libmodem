@@ -941,12 +941,27 @@ struct tcp_server_base_impl
 
 struct tcp_client_connection_impl
 {
-    explicit tcp_client_connection_impl(boost::asio::io_context& io) : socket(io)
+    explicit tcp_client_connection_impl(boost::asio::ip::tcp::socket s) : socket(std::move(s))
     {
     }
 
     boost::asio::ip::tcp::socket socket;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// close_socket                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void close_socket(boost::asio::ip::tcp::socket& socket)
+{
+    boost::system::error_code ec;
+    socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    socket.close(ec);
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -987,9 +1002,19 @@ bool tcp_server_base::start(const std::string& host, int port)
 {
     try
     {
+        ready_ = false;
+
+        impl_->io_context.restart();
+
         boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
-        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context, endpoint);
+
+        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context);
+
+        impl_->acceptor->open(endpoint.protocol());
         impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        impl_->acceptor->bind(endpoint);
+        impl_->acceptor->listen();
+
         running_ = true;
 
         thread_ = std::jthread(&tcp_server_base::run, this);
@@ -1007,23 +1032,26 @@ bool tcp_server_base::start(const std::string& host, int port)
 
 void tcp_server_base::stop()
 {
+    if (!running_)
+    {
+        return;
+    }
     running_ = false;
 
     {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        for (auto& wp : client_connections_)
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        for (auto& conn : connections_)
         {
-            if (auto sp = wp.lock())
-            {
-                boost::system::error_code ec;
-                sp->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-                sp->socket.close(ec);
-            }
+            close_socket(conn->socket);
         }
-        client_connections_.clear();
+        connections_.clear();
     }
 
-    if (impl_ && impl_->acceptor && impl_->acceptor->is_open())
+    boost::asio::post(impl_->io_context, [] { /* cancel all pending ops if needed */ });
+
+    impl_->io_context.stop();
+
+    if (impl_->acceptor && impl_->acceptor->is_open())
     {
         boost::system::error_code ec;
         impl_->acceptor->close(ec);
@@ -1032,11 +1060,6 @@ void tcp_server_base::stop()
     if (thread_.joinable())
     {
         thread_.join();
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        client_threads_.clear();
     }
 }
 
@@ -1077,9 +1100,12 @@ void tcp_server_base::run()
     catch (const boost::system::system_error& e)
     {
         running_ = false;
+
         if (e.code() != boost::asio::error::operation_aborted)
         {
-            throw;
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::make_exception_ptr(e);
+            cv_.notify_all();
         }
     }
     catch (...)
@@ -1098,74 +1124,125 @@ void tcp_server_base::run()
 
 void tcp_server_base::run_internal()
 {
-    while (running_)
-    {
-        auto connection = std::make_shared<tcp_client_connection_impl>(impl_->io_context);
-
-        try
-        {
-            impl_->acceptor->accept(connection->socket);
-        }
-        catch (const boost::system::system_error&)
-        {
-            break;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
-
-            client_connections_.push_back(connection);
-
-            std::erase_if(client_connections_, [](const std::weak_ptr<tcp_client_connection_impl>& wp) {
-                return wp.expired();
-            });
-
-            client_threads_.emplace_back(&tcp_server_base::handle_client, this, connection);
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(clients_mutex_);
-    client_threads_.clear();
+    accept_async();
+    impl_->io_context.run();
 }
 
-void tcp_server_base::handle_client(std::shared_ptr<tcp_client_connection_impl> connection)
+void tcp_server_base::accept_async()
 {
-    while (running_ && connection->socket.is_open())
-    {
-        try
+    auto socket = std::make_shared<boost::asio::ip::tcp::socket>(impl_->io_context);
+
+    impl_->acceptor->async_accept(*socket, [this, socket](boost::system::error_code ec) {
+        if (!running_)
         {
-            // Read the request from the client
-            // Read the request length, then read the request data
-            // Parse the request, identify the command and handle it, encode the response as a string
-            // Write the response length, then write the response data to the client
+            return;
+        }
 
-            uint32_t request_length;
-            boost::asio::read(connection->socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+        if (!ec)
+        {
+            auto connection = std::make_shared<tcp_client_connection_impl>(std::move(*socket));
 
-            std::string request_data(boost::endian::big_to_native(request_length), '\0');
-            boost::asio::read(connection->socket, boost::asio::buffer(request_data.data(), request_data.size()));
-
-            std::string response_data;
-
-            try
             {
-                response_data = handle_request(request_data);
-            }
-            catch (const std::exception& e)
-            {
-                response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
+                std::lock_guard<std::mutex> lock(connections_mutex_);
+                connections_.insert(connection);
             }
 
-            uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
-
-            boost::asio::write(connection->socket, boost::asio::buffer(&response_length, sizeof(response_length)));
-            boost::asio::write(connection->socket, boost::asio::buffer(response_data));
+            read_async(connection);
         }
-        catch (const boost::system::system_error&)
+        else if (ec != boost::asio::error::operation_aborted)
         {
-            break;
+            return;
         }
-    }
+
+        accept_async();
+    });
+}
+
+void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> connection)
+{
+    auto length_buffer = std::make_shared<uint32_t>(0); // Buffer for the 4-byte length prefix
+
+    boost::asio::async_read(
+        connection->socket,
+        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
+        [this, connection, length_buffer](boost::system::error_code ec, std::size_t) {
+            if (ec || !running_)
+            {
+                close_socket(connection->socket);
+
+                {
+                    std::lock_guard<std::mutex> lock(connections_mutex_);
+                    connections_.erase(connection);
+                }
+
+                return;
+            }
+
+            auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
+
+            boost::asio::async_read(
+                connection->socket,
+                boost::asio::buffer(request->data(), request->size()),
+                [this, connection, request](boost::system::error_code ec, std::size_t) {
+                    if (ec || !running_)
+                    {
+                        close_socket(connection->socket);
+
+                        {
+                            std::lock_guard<std::mutex> lock(connections_mutex_);
+                            connections_.erase(connection);
+                        }
+
+                        return;
+                    }
+
+                    std::string response;
+                    try
+                    {
+                        response = handle_request(*request);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        response = nlohmann::json{ {"error", e.what()} }.dump();
+                    }
+
+                    write_async(connection, std::move(response));
+                }
+            );
+        }
+    );
+}
+
+void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response)
+{
+    auto data_buffer = std::make_shared<std::string>(std::move(response));
+
+    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data_buffer->size()));
+    auto length_buffer = std::make_shared<uint32_t>(length);
+
+    std::array<boost::asio::const_buffer, 2> buffers = {
+        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
+        boost::asio::buffer(*data_buffer)
+    };
+
+    boost::asio::async_write(
+        connection->socket,
+        buffers,
+        [this, connection, data_buffer, length_buffer](boost::system::error_code ec, std::size_t) {
+            if (ec || !running_)
+            {
+                close_socket(connection->socket);
+
+                {
+                    std::lock_guard<std::mutex> lock(connections_mutex_);
+                    connections_.erase(connection);
+                }
+
+                return;
+            }
+            read_async(connection);
+        }
+    );
 }
 
 // **************************************************************** //
