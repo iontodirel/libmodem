@@ -45,3 +45,4 @@ tests/out/*
 out/*
 tests/external/*
 build/*
+libmodem/out/*
