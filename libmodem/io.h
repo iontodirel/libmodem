@@ -239,6 +239,9 @@ public:
     virtual bool start(const std::string& host, int port);
     virtual void stop();
 
+    void thread_count(std::size_t size);
+    std::size_t thread_count() const;
+
     bool running() const;
 
     bool faulted();
@@ -249,13 +252,13 @@ protected:
 
 private:
     void run();
-    void run_internal();
     void accept_async();
     void read_async(std::shared_ptr<tcp_client_connection_impl> connection);
     void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response);
 
     std::unique_ptr<tcp_server_base_impl> impl_;
-    std::jthread thread_;
+    std::vector<std::jthread> threads_;
+    std::size_t thread_count_ = 1;
     std::atomic<bool> running_ = false;
     std::mutex mutex_;
     std::condition_variable cv_;

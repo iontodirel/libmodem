@@ -939,12 +939,13 @@ struct tcp_server_base_impl
 //                                                                  //
 // **************************************************************** //
 
-struct tcp_client_connection_impl
+struct tcp_client_connection_impl : public std::enable_shared_from_this<tcp_client_connection_impl>
 {
-    explicit tcp_client_connection_impl(boost::asio::ip::tcp::socket s) : socket(std::move(s))
+    explicit tcp_client_connection_impl(boost::asio::io_context& io_context) : strand(boost::asio::make_strand(io_context)), socket(strand)
     {
     }
 
+    boost::asio::strand<boost::asio::io_context::executor_type> strand;
     boost::asio::ip::tcp::socket socket;
 };
 
@@ -1006,7 +1007,9 @@ bool tcp_server_base::start(const std::string& host, int port)
 
         impl_->io_context.restart();
 
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
+        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
+        auto endpoints = resolver.resolve(host, std::to_string(port));
+        boost::asio::ip::tcp::endpoint endpoint = *endpoints.begin();
 
         impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context);
 
@@ -1017,7 +1020,12 @@ bool tcp_server_base::start(const std::string& host, int port)
 
         running_ = true;
 
-        thread_ = std::jthread(&tcp_server_base::run, this);
+        threads_.clear();
+
+        for (std::size_t i = 0; i < thread_count_; ++i)
+        {
+            threads_.emplace_back(&tcp_server_base::run, this);
+        }
 
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this]() { return ready_; });
@@ -1057,10 +1065,24 @@ void tcp_server_base::stop()
         impl_->acceptor->close(ec);
     }
 
-    if (thread_.joinable())
+    for (auto& thread : threads_)
     {
-        thread_.join();
+        if (thread.joinable())
+        {
+            thread.join();
+        }
     }
+    threads_.clear();
+}
+
+void tcp_server_base::thread_count(std::size_t size)
+{
+    thread_count_ = size;
+}
+
+size_t tcp_server_base::thread_count() const
+{
+    return thread_count_;
 }
 
 bool tcp_server_base::running() const
@@ -1089,13 +1111,17 @@ void tcp_server_base::run()
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        ready_ = true;
+        if (!ready_)
+        {
+            accept_async();
+            ready_ = true;
+        }
     }
     cv_.notify_one();
 
     try
     {
-        run_internal();
+        impl_->io_context.run();
     }
     catch (const boost::system::system_error& e)
     {
@@ -1122,17 +1148,11 @@ void tcp_server_base::run()
     running_ = false;
 }
 
-void tcp_server_base::run_internal()
-{
-    accept_async();
-    impl_->io_context.run();
-}
-
 void tcp_server_base::accept_async()
 {
-    auto socket = std::make_shared<boost::asio::ip::tcp::socket>(impl_->io_context);
+    auto connection = std::make_shared<tcp_client_connection_impl>(impl_->io_context);
 
-    impl_->acceptor->async_accept(*socket, [this, socket](boost::system::error_code ec) {
+    impl_->acceptor->async_accept(connection->socket, [this, connection](boost::system::error_code ec) {
         if (!running_)
         {
             return;
@@ -1140,8 +1160,6 @@ void tcp_server_base::accept_async()
 
         if (!ec)
         {
-            auto connection = std::make_shared<tcp_client_connection_impl>(std::move(*socket));
-
             {
                 std::lock_guard<std::mutex> lock(connections_mutex_);
                 connections_.insert(connection);
@@ -1165,51 +1183,55 @@ void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> con
     boost::asio::async_read(
         connection->socket,
         boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
-        [this, connection, length_buffer](boost::system::error_code ec, std::size_t) {
-            if (ec || !running_)
-            {
-                close_socket(connection->socket);
-
+        boost::asio::bind_executor(connection->strand,
+            [this, connection, length_buffer](boost::system::error_code ec, std::size_t) {
+                if (ec || !running_)
                 {
-                    std::lock_guard<std::mutex> lock(connections_mutex_);
-                    connections_.erase(connection);
+                    close_socket(connection->socket);
+
+                    {
+                        std::lock_guard<std::mutex> lock(connections_mutex_);
+                        connections_.erase(connection);
+                    }
+
+                    return;
                 }
 
-                return;
-            }
+                auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
 
-            auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
+                boost::asio::async_read(
+                    connection->socket,
+                    boost::asio::buffer(request->data(), request->size()),
+                    boost::asio::bind_executor(connection->strand,
+                        [this, connection, request](boost::system::error_code ec, std::size_t) {
+                            if (ec || !running_)
+                            {
+                                close_socket(connection->socket);
 
-            boost::asio::async_read(
-                connection->socket,
-                boost::asio::buffer(request->data(), request->size()),
-                [this, connection, request](boost::system::error_code ec, std::size_t) {
-                    if (ec || !running_)
-                    {
-                        close_socket(connection->socket);
+                                {
+                                    std::lock_guard<std::mutex> lock(connections_mutex_);
+                                    connections_.erase(connection);
+                                }
 
-                        {
-                            std::lock_guard<std::mutex> lock(connections_mutex_);
-                            connections_.erase(connection);
+                                return;
+                            }
+
+                            std::string response;
+                            try
+                            {
+                                response = handle_request(*request);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                response = nlohmann::json{ {"error", e.what()} }.dump();
+                            }
+
+                            write_async(connection, std::move(response));
                         }
-
-                        return;
-                    }
-
-                    std::string response;
-                    try
-                    {
-                        response = handle_request(*request);
-                    }
-                    catch (const std::exception& e)
-                    {
-                        response = nlohmann::json{ {"error", e.what()} }.dump();
-                    }
-
-                    write_async(connection, std::move(response));
-                }
-            );
-        }
+                    )
+                );
+            }
+        )
     );
 }
 
@@ -1228,20 +1250,22 @@ void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> co
     boost::asio::async_write(
         connection->socket,
         buffers,
-        [this, connection, data_buffer, length_buffer](boost::system::error_code ec, std::size_t) {
-            if (ec || !running_)
-            {
-                close_socket(connection->socket);
-
+        boost::asio::bind_executor(connection->strand,
+            [this, connection, data_buffer, length_buffer](boost::system::error_code ec, std::size_t) {
+                if (ec || !running_)
                 {
-                    std::lock_guard<std::mutex> lock(connections_mutex_);
-                    connections_.erase(connection);
-                }
+                    close_socket(connection->socket);
 
-                return;
+                    {
+                        std::lock_guard<std::mutex> lock(connections_mutex_);
+                        connections_.erase(connection);
+                    }
+
+                    return;
+                }
+                read_async(connection);
             }
-            read_async(connection);
-        }
+        )
     );
 }
 

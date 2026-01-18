@@ -4960,6 +4960,31 @@ TEST(tcp_ptt_control_server, tcp_ptt_control_server)
     }
 
     {
+        std::atomic<bool> ptt_state{ false };
+        std::atomic<int> counts{ 0 };
+
+        tcp_ptt_control_server server([&](bool ptt) { ptt_state.store(ptt); counts.fetch_add(1); });
+
+        server.thread_count(50);
+
+        server.start("localhost", 1235);
+
+        std::vector<tcp_ptt_control_client> clients(10000);
+        for (auto& client : clients)
+        {
+            EXPECT_TRUE(client.connect("127.0.0.1", 1235));
+        }
+
+        for (size_t i = 0; i < clients.size(); ++i)
+        {
+            bool expected = (i % 2 == 0);
+            clients[i].ptt(expected);
+            EXPECT_EQ(ptt_state.load(), expected);
+            EXPECT_EQ(i + 1, counts.load());
+        }
+    }
+
+    {
         bool ptt_state = false;
         tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; });
 
