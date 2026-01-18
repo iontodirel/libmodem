@@ -68,6 +68,8 @@ LIBMODEM_NAMESPACE_BEGIN
 class serial_port_base
 {
 public:
+    virtual ~serial_port_base() = default;
+
     virtual void rts(bool enable) = 0;
     virtual bool rts() = 0;
     virtual void dtr(bool enable) = 0;

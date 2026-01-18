@@ -115,7 +115,7 @@ std::string to_string(const std::vector<address>& path);
 std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25);
 static std::string replace_crlf(std::string_view s);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets);
-void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<aprs::router::packet>& packets, bool replace_hex_markers = false);
+void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<packet>& packets, bool replace_hex_markers = false);
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, const std::string& packets_filename);
 std::vector<double> generate_audio_samples(double duration_seconds, double frequency, double gain, double sample_rate);
 
@@ -381,14 +381,14 @@ std::string trim_crlf_end(std::string_view s)
     return std::string(s);
 }
 
-void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<aprs::router::packet>& packets)
+void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<packet>& packets)
 {
     std::ifstream input_file(direwolf_output_filename);
     std::string content((std::istreambuf_iterator<char>(input_file)), std::istreambuf_iterator<char>());
     direwolf_stdout_to_packets(content, packets);
 }
 
-void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<aprs::router::packet>& packets, bool replace_hex_markers)
+void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<packet>& packets, bool replace_hex_markers)
 {
     std::istringstream input(direwolf_output);
     std::string line;
@@ -430,7 +430,7 @@ void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<
                 if (!packet_string.empty())
                 {
                     packet_string = trim_crlf_end(packet_string);
-                    aprs::router::packet p(packet_string);
+                    packet p(packet_string);
                     packets.push_back(p);
                 }
             }
@@ -440,11 +440,11 @@ void direwolf_stdout_to_packets(const std::string& direwolf_output, std::vector<
 
 void direwolf_output_to_packets(const std::string& direwolf_output_filename, std::vector<std::string>& packets_string)
 {
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
     direwolf_output_to_packets(direwolf_output_filename, packets);
     for (const auto& packet : packets)
     {
-        packets_string.push_back(aprs::router::to_string(packet));
+        packets_string.push_back(to_string(packet));
     }
 }
 
@@ -668,7 +668,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     {
         // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+        packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
         std::vector<uint8_t> frame = encode_frame(p);
 
@@ -694,7 +694,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     {
         // N0CALL-10>APZ001,WIDE1-1,WIDE2-2*:Hello, APRS!
-        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2*" }, "Hello, APRS!" };
+        packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2*" }, "Hello, APRS!" };
 
         std::vector<uint8_t> frame = encode_frame(p);
 
@@ -754,7 +754,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     {
         // N0CALL-10>APZ001:Hello, APRS!
-        aprs::router::packet p = { "N0CALL-10", "APZ001", {}, "Hello, APRS!" };
+        packet p = { "N0CALL-10", "APZ001", {}, "Hello, APRS!" };
 
         std::vector<uint8_t> frame_bytes = encode_frame(p);
 
@@ -1261,7 +1261,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     };
 
     {
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1287,7 +1287,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         std::vector<uint8_t> frame = { 0x8e, 0xa0, 0xa6, 0x98, 0x94, 0x40, 0x60, 0x9c, 0x6c, 0xb0, 0xa2, 0xb2, 0x40, 0xf8, 0xa4, 0x8a, 0x98, 0x82, 0xb2, 0x40, 0x60, 0xae, 0x92, 0x88, 0x8a, 0x64, 0x40, 0x65, 0x03, 0xf0, 0x24, 0x47, 0x50, 0x52, 0x4d, 0x43, 0x2c, 0x30, 0x31, 0x33, 0x36, 0x34, 0x31, 0x2e, 0x30, 0x36, 0x2c, 0x41, 0x2c, 0x33, 0x33, 0x34, 0x38, 0x2e, 0x31, 0x36, 0x30, 0x37, 0x2c, 0x4e, 0x2c, 0x31, 0x31, 0x38, 0x30, 0x37, 0x2e, 0x34, 0x36, 0x33, 0x31, 0x2c, 0x57, 0x2c, 0x33, 0x34, 0x2e, 0x30, 0x2c, 0x30, 0x39, 0x30, 0x2e, 0x35, 0x2c, 0x32, 0x33, 0x31, 0x31, 0x30, 0x35, 0x2c, 0x31, 0x33, 0x2e, 0x2c, 0x45, 0x2a, 0x37, 0x33, 0x0d, 0xc9, 0x42 };
 
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1302,7 +1302,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         std::vector<uint8_t> frame = { 0x82, 0xa0, 0xa4, 0xb0, 0x68, 0x6c, 0x60, 0xae, 0x82, 0x6c, 0xb2, 0x98, 0x84, 0x60, 0xae, 0x82, 0x6c, 0xb2, 0x98, 0x84, 0xee, 0xae, 0x6c, 0xa6, 0x86, 0x8a, 0x40, 0xf5, 0x03, 0xf0, 0x3e, 0x30, 0x38, 0x31, 0x38, 0x33, 0x39, 0x7a, 0x20, 0x77, 0x61, 0x36, 0x79, 0x6c, 0x62, 0x40, 0x74, 0x68, 0x65, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x2e, 0x63, 0x6f, 0x6d, 0x0d, 0x0c, 0x66 };
 
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1324,7 +1324,7 @@ LIBMODEM_AX25_USING_NAMESPACE
             0xAE, 0xE6
         };
 
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1336,7 +1336,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         std::vector<uint8_t> frame = { 0xa6, 0x6a, 0xa4, 0xa8, 0xa2, 0xa0, 0x60, 0x96, 0x88, 0x6e, 0x8c, 0x9c, 0x9e, 0xea, 0xae, 0x6c, 0xa0, 0xac, 0x8e, 0x40, 0xe6, 0xae, 0x84, 0x6c, 0x94, 0x82, 0xa4, 0xf4, 0xae, 0x92, 0x88, 0x8a, 0x64, 0x40, 0xe1, 0x03, 0xf0, 0x27, 0x2f, 0x33, 0x68, 0x6c, 0x22, 0x4b, 0x75, 0x2f, 0x5d, 0x22, 0x34, 0x74, 0x7d, 0x0d, 0x20, 0xef };
        
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1364,7 +1364,7 @@ LIBMODEM_AX25_USING_NAMESPACE
             0x84, 0xAE
         };
 
-        aprs::router::packet p;
+        packet p;
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
@@ -1491,7 +1491,7 @@ TEST(fx25, encode_fx25_frame_iterator)
 LIBMODEM_AX25_USING_NAMESPACE
 LIBMODEM_FX25_USING_NAMESPACE
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Using encode_fx25_frame with iterators
 
@@ -1534,7 +1534,7 @@ TEST(fx25, encode_fx25_frame_container)
 LIBMODEM_AX25_USING_NAMESPACE
 LIBMODEM_FX25_USING_NAMESPACE
 
-    // aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    // packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Using encode_fx25_frame with a container
 
@@ -1592,7 +1592,7 @@ TEST(fx25, encode_fx25_frame_span)
 LIBMODEM_AX25_USING_NAMESPACE
 LIBMODEM_FX25_USING_NAMESPACE
 
-    // aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    // packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Using encode_fx25_frame with a span
 
@@ -2311,7 +2311,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // the expected output concise.
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     std::vector<uint8_t> bitstream = encode_basic_bitstream(p, 1, 1);
 
@@ -2561,7 +2561,7 @@ TEST(bitstream, encode_fx25_bitstream)
 LIBMODEM_FX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
 
@@ -2681,7 +2681,7 @@ TEST(bitstream, encode_end_to_end_demo)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     std::vector<uint8_t> frame = encode_frame(p);
 
@@ -3083,7 +3083,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         1, 1, 1, 1, 1, 1, 1, 0,
     };
 
-    aprs::router::packet p;
+    packet p;
     bitstream_state state;
 
     for (uint8_t bit : bitstream)
@@ -3159,7 +3159,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         1, 1, 1, 1, 1, 1, 1, 0,
     };
 
-    aprs::router::packet p;
+    packet p;
 
     size_t read = 0;
     bitstream_state state;
@@ -3189,7 +3189,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         else if (c == '1') bitstream.push_back(1);
     }
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     std::vector<uint8_t> buffer;
     bitstream_state state;
@@ -3206,7 +3206,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         while (offset < buffer.size())  // Inner loop to get ALL packets from this chunk
         {
             size_t read = 0;
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(buffer, offset, packet, read, state))
             {
                 packets.push_back(packet);
@@ -3274,13 +3274,13 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         // Decode the entire bitstream into packets and expected 1005 packets
 
-        std::vector<aprs::router::packet> packets;
+        std::vector<packet> packets;
 
         bitstream_state state;
 
         for (uint8_t bit : bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, packet, state))
             {
                 EXPECT_TRUE(state.complete == true);
@@ -3295,13 +3295,13 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         // Decoding frames and converting to packets explicitly
 
-        std::vector<aprs::router::packet> packets;
+        std::vector<packet> packets;
 
         bitstream_state state;
 
         for (uint8_t bit : bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, state))
             {
                 packet = to_packet(state.frame);
@@ -3336,7 +3336,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         for (uint8_t bit : bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, state))
             {
                 packet = to_packet(state.frame);
@@ -3448,7 +3448,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     for (uint8_t bit : bitstream)
     {
-        aprs::router::packet packet;
+        packet packet;
         if (try_decode_basic_bitstream(bit, packet, state))
         {
             std::vector<uint8_t> packet_bitstream;
@@ -3510,7 +3510,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         if (try_decode_basic_bitstream(bit, state))
         {
-            aprs::router::packet packet = to_packet(state.frame);
+            packet packet = to_packet(state.frame);
             std::string packet_str = to_string(packet); // packet to string
             packet_str = replace_crlf(packet_str); // replace newlines for printing
             packets.push_back(packet_str);
@@ -3565,7 +3565,7 @@ LIBMODEM_AX25_USING_NAMESPACE
                 std::bit_cast<uint16_t>(f.crc));
 
             // Convert to packet
-            aprs::router::packet p = to_packet(f); // frame to packet
+            packet p = to_packet(f); // frame to packet
             std::string packet_str = to_string(p); // packet to string
             packet_str = replace_crlf(packet_str); // replace newlines for printing
             
@@ -3602,7 +3602,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Also save the NRZI level at the end of the frame for use in re-decoding
     // Store all packets in a vector for later comparison
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     bitstream_state state;
 
@@ -3613,7 +3613,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     for (uint8_t bit : bitstream)
     {
-        aprs::router::packet packet;
+        packet packet;
         if (try_decode_basic_bitstream(bit, packet, state))
         {
             std::vector<uint8_t> packet_bitstream;
@@ -3636,7 +3636,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Decode each saved packet bitstream again using its saved NRZI level
     // Compare the restored packets to the original packets
 
-    std::vector<aprs::router::packet> restored_packets;
+    std::vector<packet> restored_packets;
 
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
@@ -3644,7 +3644,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
@@ -3681,7 +3681,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Also save the NRZI level at the end of the frame for use in re-decoding
     // Store all packets in a vector for later comparison
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     bitstream_state state;
 
@@ -3696,7 +3696,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         buffer.push_back(bit);
 
-        aprs::router::packet packet;
+        packet packet;
         if (try_decode_basic_bitstream(bit, packet, state))
         {
             packets.push_back(packet);
@@ -3719,7 +3719,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Decode each saved packet bitstream again using its saved NRZI level
     // Compare the restored packets to the original packets
 
-    std::vector<aprs::router::packet> restored_packets;
+    std::vector<packet> restored_packets;
 
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
@@ -3727,7 +3727,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
@@ -3764,7 +3764,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Also save the NRZI level at the end of the frame for use in re-decoding
     // Store all packets in a vector for later comparison
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     bitstream_state state;
 
@@ -3793,7 +3793,7 @@ LIBMODEM_AX25_USING_NAMESPACE
             EXPECT_TRUE(state.global_bit_count == 0);
         }
 
-        aprs::router::packet packet;
+        packet packet;
         if (try_decode_basic_bitstream(bit, packet, state))
         {
             packets.push_back(packet);
@@ -3818,7 +3818,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // Decode each saved packet bitstream again using its saved NRZI level
     // Compare the restored packets to the original packets
 
-    std::vector<aprs::router::packet> restored_packets;
+    std::vector<packet> restored_packets;
 
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
@@ -3826,7 +3826,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
-            aprs::router::packet packet;
+            packet packet;
             if (try_decode_basic_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
@@ -3844,13 +3844,13 @@ TEST(bitstream, try_decode_basic_bitstream_shared_preamble_postamble)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
-    aprs::router::packet p1 = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
-    aprs::router::packet p2 = { "N0CALL-11", "APZ002", { "WIDE1-1", "WIDE2-2" }, "Another test!" };
-    aprs::router::packet p3 = { "N0CALL-12", "APZ003", { "WIDE1-1", "WIDE2-2" }, "Yet another packet." };
-    aprs::router::packet p4 = { "N0CALL-13", "APZ004", { "WIDE1-1", "WIDE2-2" }, "Packet." };
-    aprs::router::packet p5 = { "N0CALL-14", "APZ005", { "WIDE1-1", "WIDE2-2" }, "A packet." };
-    aprs::router::packet p6 = { "N0CALL-15", "APZ006", { "WIDE1-1", "WIDE2-2" }, "0 packet!" };
-    aprs::router::packet p7 = { "N0CALL-15", "APZ007", { "WIDE1-1", "WIDE2-2" }, "Final packet." };
+    packet p1 = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p2 = { "N0CALL-11", "APZ002", { "WIDE1-1", "WIDE2-2" }, "Another test!" };
+    packet p3 = { "N0CALL-12", "APZ003", { "WIDE1-1", "WIDE2-2" }, "Yet another packet." };
+    packet p4 = { "N0CALL-13", "APZ004", { "WIDE1-1", "WIDE2-2" }, "Packet." };
+    packet p5 = { "N0CALL-14", "APZ005", { "WIDE1-1", "WIDE2-2" }, "A packet." };
+    packet p6 = { "N0CALL-15", "APZ006", { "WIDE1-1", "WIDE2-2" }, "0 packet!" };
+    packet p7 = { "N0CALL-15", "APZ007", { "WIDE1-1", "WIDE2-2" }, "Final packet." };
 
     std::vector<uint8_t> frame1 = encode_frame(p1);
     std::vector<uint8_t> frame2 = encode_frame(p2);
@@ -3926,13 +3926,13 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     nrzi_encode(combined_bitstream.begin(), combined_bitstream.end());
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     bitstream_state state;
 
     for (uint8_t bit : combined_bitstream)
     {
-        aprs::router::packet p;
+        packet p;
         if (try_decode_basic_bitstream(bit, p, state))
         {
             packets.push_back(p);
@@ -3960,8 +3960,8 @@ TEST(bitstream, try_decode_basic_bitstream_heavy_bit_stuffing)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
-    aprs::router::packet p1 = { "N0CALL", "APZ001", {}, "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" };
-    aprs::router::packet p2 = { "N0CALL", "APZ001", {}, "\x7E\x7E\x7E\x7E" };
+    packet p1 = { "N0CALL", "APZ001", {}, "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF" };
+    packet p2 = { "N0CALL", "APZ001", {}, "\x7E\x7E\x7E\x7E" };
 
     std::vector<uint8_t> frame1 = encode_frame(p1);
     std::vector<uint8_t> frame2 = encode_frame(p2);
@@ -3983,12 +3983,12 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     nrzi_encode(bitstream.begin(), bitstream.end());
 
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
     bitstream_state state;
 
     for (uint8_t bit : bitstream)
     {
-        aprs::router::packet p;
+        packet p;
         if (try_decode_basic_bitstream(bit, p, state))
         {
             packets.push_back(p);
@@ -4005,7 +4005,7 @@ TEST(bitstream, encode_fx25_frame_larger_size)
 LIBMODEM_FX25_USING_NAMESPACE
 
     {
-        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }; // 239
+        packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }; // 239
 
         std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
 
@@ -4013,7 +4013,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     }
 
     {
-        aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890" }; // 241
+        packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890" }; // 241
 
         std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
 
@@ -4037,7 +4037,7 @@ LIBMODEM_FX25_USING_NAMESPACE
 
 TEST(modem, modulate_afsk_1200_ax25_packet)
 {
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     {
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
@@ -4068,7 +4068,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
 
 TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
 {
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     std::vector<int> sample_rates = { 8000, 9600, 44100, 96000, 192000 };
 
@@ -4106,7 +4106,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_data_lengths)
 {
 LIBMODEM_FX25_USING_NAMESPACE
 
-    std::vector<aprs::router::packet> packets = {
+    std::vector<packet> packets = {
         { "N0CALL-10", "APZ001", { "WIDE1-1" }, "Hello" }, // 32
         { "N0CALL-10", "APZ001", { "WIDE1-1" }, "Hello" }, // 32
         { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" }, //64
@@ -4163,7 +4163,7 @@ LIBMODEM_FX25_USING_NAMESPACE
 
 TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
 {
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     {
         std::vector<double> audio_buffer;
@@ -4222,7 +4222,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
-    aprs::router::packet packet = packet_string;
+    packet packet = packet_string;
 
     wav_audio_output_stream wav_stream("test.wav", 48000);
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
@@ -4232,8 +4232,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(45);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
+    m.start_silence(100);
+    m.end_silence(100);
     m.gain(0.3);
     m.initialize(wav_stream, modulator, bitstream_converter);
 
@@ -4255,7 +4255,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
 TEST(modem, modulate_1005_afsk_1200_ax25_packet)
 {
-    std::vector<aprs::router::packet> packets;
+    std::vector<packet> packets;
 
     {
         std::ifstream file("packets_1d.txt");
@@ -4269,7 +4269,7 @@ TEST(modem, modulate_1005_afsk_1200_ax25_packet)
         {
             if (!line.empty() && line.back() == '\r')
                 line.pop_back();
-            aprs::router::packet p = line;
+            packet p = line;
             packets.push_back(p);
         }
     }
@@ -4308,7 +4308,7 @@ TEST(modem, modulate_1005_afsk_1200_ax25_packet)
     // Run Direwolf's ATEST with -B 1200
     run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
 
-    std::vector<aprs::router::packet> actual_packets;
+    std::vector<packet> actual_packets;
 
     direwolf_stdout_to_packets(output, actual_packets, true);
 
@@ -4369,7 +4369,7 @@ TEST(modem, modulate_1005_afsk_1200_ax25_packet)
 
 TEST(dds_afsk_modulator, samples_per_bit)
 {
-    aprs::router::packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
     {
         // The next_samples_per_bit function should be constant when the sample rate is an integer multiple of the baud rate
@@ -4633,7 +4633,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
-    aprs::router::packet packet = packet_string;
+    packet packet = packet_string;
 
     {
         // Modulate to a wav file
@@ -4646,8 +4646,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
         m.baud_rate(1200);
         m.tx_delay(300);
         m.tx_tail(45);
-        m.start_silence(0.1);
-        m.end_silence(0.1);
+        m.start_silence(100);
+        m.end_silence(100);
         m.gain(0.3);
         m.initialize(wav_stream, modulator, bitstream_converter);
 
@@ -4723,7 +4723,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
-    aprs::router::packet packet = packet_string;
+    packet packet = packet_string;
 
     {
         // Modulate to a wav file
@@ -4736,8 +4736,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
         m.baud_rate(1200);
         m.tx_delay(300);
         m.tx_tail(45);
-        m.start_silence(0.1);
-        m.end_silence(0.1);
+        m.start_silence(100);
+        m.end_silence(100);
         m.gain(0.3);
         m.initialize(wav_stream, modulator, bitstream_converter);
 
@@ -4935,24 +4935,25 @@ TEST(tcp_ptt_control_server, tcp_ptt_control_server)
 
     {
         bool ptt_state = false;
-
-        tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; });
-
+        int counts = 0;
+        tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; counts++; });
         server.start("127.0.0.1", 1235);
 
-        tcp_ptt_control_client client1;
-        tcp_ptt_control_client client2;
+        std::vector<tcp_ptt_control_client> clients(20);
 
-        client1.connect("127.0.0.1", 1235);
-        client2.connect("127.0.0.1", 1235);
+        for (auto& client : clients)
+        {
+            EXPECT_TRUE(client.connect("127.0.0.1", 1235));
+        }
 
-        client1.ptt(true);
-
-        EXPECT_TRUE(ptt_state == true);
-
-        client2.ptt(false);
-
-        EXPECT_TRUE(ptt_state == false);
+        // Test each client can control PTT
+        for (size_t i = 0; i < clients.size(); ++i)
+        {
+            bool expected = (i % 2 == 0);
+            clients[i].ptt(expected);
+            EXPECT_EQ(ptt_state, expected);
+            EXPECT_EQ(i + 1, counts);
+        }
     }
 
     {
@@ -5083,8 +5084,8 @@ TEST(modem, transmit_hardware_demo)
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(120);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
+    m.start_silence(100);
+    m.end_silence(100);
     m.gain(0.3);
     m.output_stream(stream);
     m.modulator(modulator);
@@ -5095,7 +5096,7 @@ TEST(modem, transmit_hardware_demo)
     // Set audio stream volume to 50%
     stream.volume(50);
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Send the modulated packet to the audio device
     m.transmit(p);
@@ -5129,7 +5130,7 @@ TEST(modem, transmit_hardware_demo_virtual_serial_port)
     }
 #endif // __linux__
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "W7ION-10", "WIDE2*" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     // Connecting to a Digirig serial port, which uses the RTS line for the PTT
     serial_port port;
@@ -5173,8 +5174,8 @@ TEST(modem, transmit_hardware_demo_virtual_serial_port)
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(120);
-    m.start_silence(1);
-    m.end_silence(0.1);
+    m.start_silence(1000);
+    m.end_silence(100);
     m.gain(0.3);
     m.initialize(stream, modulator, bitstream_converter);
 
@@ -5246,7 +5247,7 @@ TEST(audio_stream, modem_transmit_afsk_1200)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
@@ -5256,8 +5257,8 @@ TEST(audio_stream, modem_transmit_afsk_1200)
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(45);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
+    m.start_silence(100);
+    m.end_silence(100);
     m.gain(0.3);
     m.initialize(stream, modulator, bitstream_converter);
 
@@ -5759,7 +5760,7 @@ TEST(audio_stream, modem_transmit_10_afsk_1200)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
@@ -5769,8 +5770,8 @@ TEST(audio_stream, modem_transmit_10_afsk_1200)
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(45);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
+    m.start_silence(100);
+    m.end_silence(100);
     m.gain(0.3);
     m.initialize(stream, modulator, bitstream_converter);
 
@@ -5789,7 +5790,7 @@ TEST(audio_stream, modem_transmit_10_continuous_afsk_1200)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    aprs::router::packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
+    packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
@@ -5807,8 +5808,8 @@ TEST(audio_stream, modem_transmit_10_continuous_afsk_1200)
     m.baud_rate(1200);
     m.tx_delay(300);
     m.tx_tail(45);
-    m.start_silence(0.1);
-    m.end_silence(0.1);
+    m.start_silence(100);
+    m.end_silence(100);
     m.gain(0.3);
     m.initialize(stream, modulator, bitstream_converter);
 

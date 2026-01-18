@@ -82,6 +82,17 @@
 
 LIBMODEM_NAMESPACE_BEGIN
 
+#ifndef LIBMODEM_DEFINE_CUSTOM_TYPES
+
+template<class T>
+using internal_vector_t = std::vector<T>;
+
+#endif // LIBMODEM_DEFINE_CUSTOM_TYPES
+
+LIBMODEM_NAMESPACE_END
+
+LIBMODEM_NAMESPACE_BEGIN
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //

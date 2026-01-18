@@ -88,6 +88,7 @@ struct modem_events
 
 struct ptt_control_base
 {
+    virtual ~ptt_control_base() = default;
     virtual void ptt(bool enable) = 0;
     virtual bool ptt() = 0;
 };

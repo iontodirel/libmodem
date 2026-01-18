@@ -233,46 +233,6 @@ LIBMODEM_INLINE std::pair<OutputIt, bool> encode(InputIt input_it_begin, InputIt
     return { output_it, true };
 }
 
-inline void handle_set_hardware(const frame& f)
-{
-    if (static_cast<command>(f.command_byte) != command::set_hw)
-    {
-        return;
-    }
-
-    // FEND | 0x06 |  | parameters | FEND
-
-    // VERSION
-    // OUTPUT_VOLUME=100
-    // OUTPUT_VOLUME
-    // INPUT_VOLUME=80
-
-    /*
-      {
-         "command": "set_output_volume",
-         "stream": "wasapi_audio_stream_default",
-         "value": 100
-      }
-
-
-    
-    */
-
-    // set_output_volume
-    // get_output_volume
-    // set_input_volume
-    // get_input_volume
-    // get_version
-    // test_transmit
-    // test_receive
-    // set_mode
-
-
-    std::string command_string(f.data.begin(), f.data.end());
-
-
-}
-
 LIBMODEM_KISS_NAMESPACE_END
 
 LIBMODEM_NAMESPACE_END
