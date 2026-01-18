@@ -114,7 +114,7 @@ void modem::transmit()
     transmit(bitstream);
 }
 
-void modem::transmit(packet_type p)
+void modem::transmit(packet p)
 {
     if (!conv.has_value())
     {
@@ -137,7 +137,7 @@ void modem::transmit(packet_type p)
     transmit(bitstream);
 }
 
-void modem::transmit(const std::vector<uint8_t>& bits)
+void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator)
 {
     if (!mod.has_value())
     {
@@ -153,7 +153,7 @@ void modem::transmit(const std::vector<uint8_t>& bits)
 
     std::vector<double> audio_buffer;
 
-    modulate_bitstream(bits, audio_buffer);
+    modulate_bitstream(bits, audio_buffer, reset_modulator);
 
     // Apply pre-emphasis filter and gain
 
@@ -185,22 +185,22 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
     // Handle silence without inserting at the begining
     // Use audio_buffer_with_start_silence as copy buffer
 
-    insert_silence(std::back_inserter(audio_buffer), audio_stream.sample_rate(), end_silence_duration_s);
+    insert_silence(std::back_inserter(audio_buffer), audio_stream.sample_rate(), end_silence_duration_ms / 1000.0);
 
     std::vector<double> audio_buffer_with_start_silence;
 
-    size_t start_silence_samples = static_cast<size_t>(start_silence_duration_s * audio_stream.sample_rate());
+    size_t start_silence_samples = static_cast<size_t>(start_silence_duration_ms / 1000.0 * audio_stream.sample_rate());
 
     audio_buffer_with_start_silence.reserve(start_silence_samples + audio_buffer.size());
 
-    insert_silence(std::back_inserter(audio_buffer_with_start_silence), audio_stream.sample_rate(), start_silence_duration_s);
+    insert_silence(std::back_inserter(audio_buffer_with_start_silence), audio_stream.sample_rate(), start_silence_duration_ms / 1000.0);
 
     audio_buffer_with_start_silence.insert(audio_buffer_with_start_silence.end(), audio_buffer.begin(), audio_buffer.end());
 
     audio_buffer = std::move(audio_buffer_with_start_silence);
 }
 
-void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer)
+void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator)
 {
     if (!mod.has_value())
     {
@@ -226,7 +226,10 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
         }
     }
 
-    modulator.reset();
+    if (reset_modulator)
+    {
+        modulator.reset();
+    }
 }
 
 void modem::ptt(bool enable)
@@ -281,10 +284,33 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
     audio_stream.stop();
 }
 
-size_t modem::receive(std::vector<packet_type>& packets)
+void modem::start()
+{
+    // Not yet supported
+}
+
+void modem::stop()
+{
+    // Not yet supported
+}
+
+bool modem::remove_on_received(uint32_t cookie)
+{
+    return received_callbacks_.erase(cookie) > 0;
+}
+
+size_t modem::receive(std::vector<packet>& packets)
 {
     (void)packets;
     return 0;
+}
+
+void modem::reset()
+{
+    if (mod.has_value())
+    {
+        mod.value().get().reset();
+    }
 }
 
 void modem::preemphasis(bool enable)
@@ -307,32 +333,32 @@ double modem::gain() const
     return gain_value;
 }
 
-void modem::start_silence(double d)
+void modem::start_silence(int ms)
 {
-    if (d < 0.0) d = 0.0;
-    start_silence_duration_s = d;
+    if (ms < 0) ms = 0;
+    start_silence_duration_ms = ms;
 }
 
-double modem::start_silence() const
+int modem::start_silence() const
 {
-    return start_silence_duration_s;
+    return start_silence_duration_ms;
 }
 
-void modem::end_silence(double d)
+void modem::end_silence(int ms)
 {
-    if (d < 0.0) d = 0.0;
-    end_silence_duration_s = d;
+    if (ms < 0) ms = 0;
+    end_silence_duration_ms = ms;
 }
 
-double modem::end_silence() const
+int modem::end_silence() const
 {
-    return end_silence_duration_s;
+    return end_silence_duration_ms;
 }
 
-void modem::tx_delay(double d)
+void modem::tx_delay(int ms)
 {
-    if (d < 0.0) d = 0.0;
-    tx_delay_ms = d;
+    if (ms < 0) ms = 0;
+    tx_delay_ms = ms;
 }
 
 double modem::tx_delay() const
@@ -340,10 +366,10 @@ double modem::tx_delay() const
     return tx_delay_ms;
 }
 
-void modem::tx_tail(double d)
+void modem::tx_tail(int ms)
 {
-    if (d < 0.0) d = 0.0;
-    tx_tail_ms = d;
+    if (ms < 0) ms = 0;
+    tx_tail_ms = ms;
 }
 
 double modem::tx_tail() const
@@ -388,17 +414,25 @@ bool null_ptt_control::ptt()
 //                                                                  //
 // **************************************************************** //
 
+serial_port_ptt_control::serial_port_ptt_control() = default;
+
 serial_port_ptt_control::serial_port_ptt_control(serial_port_base& serial_port) : serial_port_(std::ref(serial_port))
 {
 #if LIBMODEM_AUTO_PTT_DISABLE
-    ptt(false);
+    if (serial_port.is_open())
+    {
+        ptt(false);
+    }
 #endif // LIBMODEM_AUTO_PTT_DISABLE
 }
 
 serial_port_ptt_control::serial_port_ptt_control(serial_port_base& serial_port, serial_port_ptt_line line, serial_port_ptt_trigger trigger) : serial_port_(std::ref(serial_port)), line_(line), trigger_(trigger)
 {
 #if LIBMODEM_AUTO_PTT_DISABLE
-    ptt(false);
+    if (serial_port.is_open())
+    {
+        ptt(false);
+    }
 #endif // LIBMODEM_AUTO_PTT_DISABLE
 }
 
@@ -477,6 +511,35 @@ bool library_ptt_control::ptt()
     if (library_.has_value())
     {
         return library_->get().ptt();
+    }
+    return false;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_ptt_control::tcp_ptt_control(tcp_ptt_control_client& client) : client_(client)
+{
+}
+
+void tcp_ptt_control::ptt(bool enable)
+{
+    if (client_.has_value())
+    {
+        client_->get().ptt(enable);
+    }
+}
+
+bool tcp_ptt_control::ptt()
+{
+    if (client_.has_value())
+    {
+        return client_->get().ptt();
     }
     return false;
 }

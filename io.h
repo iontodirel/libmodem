@@ -215,14 +215,61 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// tcp_server_base                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_server_base_impl;
+struct tcp_client_connection_impl;
+
+class tcp_server_base
+{
+public:
+    tcp_server_base();
+    tcp_server_base& operator=(const tcp_server_base&) = delete;
+    tcp_server_base(const tcp_server_base&) = delete;
+    tcp_server_base& operator=(tcp_server_base&&) noexcept;
+    tcp_server_base(tcp_server_base&&) noexcept;
+    virtual ~tcp_server_base();
+
+    virtual bool start(const std::string& host, int port);
+    virtual void stop();
+
+    bool running() const;
+
+    bool faulted();
+    void throw_if_faulted();
+
+protected:
+    virtual std::string handle_request(const std::string& data) = 0;
+    virtual void handle_client(std::shared_ptr<tcp_client_connection_impl> connection);
+
+private:
+    void run();
+    void run_internal();
+
+    std::unique_ptr<tcp_server_base_impl> impl_;
+    std::jthread thread_;
+    std::atomic<bool> running_ = false;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::mutex clients_mutex_;
+    std::vector<std::jthread> client_threads_;
+    std::vector<std::weak_ptr<tcp_client_connection_impl>> client_connections_;
+    bool ready_ = false;
+    std::exception_ptr exception_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_serial_port_server                                           //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct tcp_serial_port_server_impl;
-
-class tcp_serial_port_server
+class tcp_serial_port_server : public tcp_server_base
 {
 public:
     tcp_serial_port_server();
@@ -231,23 +278,16 @@ public:
     tcp_serial_port_server(const tcp_serial_port_server&) = delete;
     tcp_serial_port_server& operator=(tcp_serial_port_server&&) noexcept;
     tcp_serial_port_server(tcp_serial_port_server&&) noexcept;
-    ~tcp_serial_port_server();
+    virtual ~tcp_serial_port_server();
 
-    bool start(const std::string& host, int port);
-    void stop();
+    virtual bool start(const std::string& host, int port) override;
+
+protected:
+    virtual std::string handle_request(const std::string& data) override;
 
 private:
-    void run();
-    void run_internal();
-    std::string handle_request(const std::string& data);
-
     std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
-    std::unique_ptr<tcp_serial_port_server_impl> impl_;
-    std::jthread thread_;
-    std::atomic<bool> running_ = false;
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    bool ready_ = false;
+    std::mutex serial_port_mutex_;
 };
 
 // **************************************************************** //
@@ -294,5 +334,123 @@ private:
     uninit_fptr uninit_fptr_ = nullptr;
     bool loaded_ = false;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control_client                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_ptt_control_client_impl;
+
+class tcp_ptt_control_client
+{
+public:
+    tcp_ptt_control_client();
+    tcp_ptt_control_client& operator=(const tcp_ptt_control_client&) = delete;
+    tcp_ptt_control_client(const tcp_ptt_control_client&) = delete;
+    tcp_ptt_control_client& operator=(tcp_ptt_control_client&&) noexcept;
+    tcp_ptt_control_client(tcp_ptt_control_client&&) noexcept;
+    ~tcp_ptt_control_client();
+
+    bool connect(const std::string& host, int port);
+    void disconnect();
+
+    bool connected() const;
+
+    void ptt(bool ptt_state);
+    bool ptt();
+
+private:
+    std::unique_ptr<tcp_ptt_control_client_impl> impl_;
+    bool connected_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control_server                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class tcp_ptt_control_server : public tcp_server_base
+{
+public:
+    tcp_ptt_control_server();
+
+    template<typename Func, typename ... Args>
+        requires std::invocable<std::decay_t<Func>, bool, std::decay_t<Args>...>
+    tcp_ptt_control_server(Func&& f, Args&& ... args);
+
+    tcp_ptt_control_server& operator=(const tcp_ptt_control_server&) = delete;
+    tcp_ptt_control_server(const tcp_ptt_control_server&) = delete;
+    tcp_ptt_control_server& operator=(tcp_ptt_control_server&&) noexcept;
+    tcp_ptt_control_server(tcp_ptt_control_server&&) noexcept;
+    ~tcp_ptt_control_server();
+
+    virtual bool start(const std::string& host, int port) override;
+
+protected:
+    virtual std::string handle_request(const std::string& data) override;
+
+private:
+    struct ptt_callable_base
+    {
+        virtual void invoke(bool ptt_state) = 0;
+
+        virtual ~ptt_callable_base() = default;
+    };
+
+    template<typename Func, typename ... Args>
+    struct ptt_callable : public ptt_callable_base
+    {
+        template<typename F, typename... A>
+        ptt_callable(F&& f, A&&... a);
+
+        void invoke(bool ptt_state) override;
+
+    private:
+        Func func_;
+        std::tuple<Args...> args_;
+    };
+
+    std::unique_ptr<ptt_callable_base> ptt_callable_;
+};
+
+template<typename Func, typename ... Args>
+    requires std::invocable<std::decay_t<Func>, bool, std::decay_t<Args>...>
+inline tcp_ptt_control_server::tcp_ptt_control_server(Func&& f, Args&& ... args) : tcp_ptt_control_server()
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        ptt_callable_ = std::make_unique<ptt_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        ptt_callable_ = std::make_unique<ptt_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename ... Args>
+template<typename F, typename... A>
+inline tcp_ptt_control_server::ptt_callable<Func, Args...>::ptt_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+{
+}
+
+template<typename Func, typename ... Args>
+inline void tcp_ptt_control_server::ptt_callable<Func, Args...>::invoke(bool ptt_state)
+{
+    if constexpr (std::is_pointer_v<Func>)
+    {
+        std::apply(*func_, std::tuple_cat(std::make_tuple(ptt_state), args_));
+    }
+    else
+    {
+        std::apply(func_, std::tuple_cat(std::make_tuple(ptt_state), args_));
+    }
+}
 
 LIBMODEM_NAMESPACE_END

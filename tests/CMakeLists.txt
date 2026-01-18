@@ -172,7 +172,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 file(DOWNLOAD https://raw.githubusercontent.com/iontodirel/libaprsroute/main/aprsroute.hpp ${CMAKE_SOURCE_DIR}/external/aprsroute.hpp)
 file(DOWNLOAD https://raw.githubusercontent.com/iontodirel/libaprstrack/refs/heads/main/aprstrack.hpp ${CMAKE_SOURCE_DIR}/external/aprstrack.hpp)
 
-add_executable(tests "tests.cpp" "../audio_stream.cpp" "../modulator.cpp" "../modem.cpp" "../bitstream.h" "../bitstream.cpp" "../io.cpp")
+add_executable(tests "tests.cpp" "../audio_stream.cpp" "../modulator.cpp" "../modem.cpp" "../bitstream.h" "../bitstream.cpp" "../io.cpp" "../kiss.cpp")
 target_include_directories(tests PRIVATE "../" )
 target_link_libraries(tests PRIVATE GTest::gtest_main gtest gtest_main nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct)
 target_compile_definitions(tests PRIVATE ATEST_EXE_PATH="${ATEST_EXE_PATH}"  PYTHON_EXE_PATH="${Python3_EXECUTABLE}" LIBMODEM_PACKET_NAMESPACE_REFERENCE=aprs::router:: APRS_ROUTER_ENABLE_PACKET_SUPPORT=true)

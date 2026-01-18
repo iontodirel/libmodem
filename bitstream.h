@@ -41,25 +41,6 @@
 #include <span>
 #include <tuple>
 
-// Typedef for the packet type and packet type customization
-// A packet type has to be supplied externally, and it allows sharing of the type across various projects
-// 
-// The packet type has the following interface:
-//
-// struct packet
-// {
-//     std::string from;
-//     std::string to;
-//     std::vector<std::string> path;
-//     std::string data;
-// };
-
-#ifndef LIBMODEM_PACKET_NAMESPACE_REFERENCE
-#define LIBMODEM_PACKET_NAMESPACE_REFERENCE
-#endif
-
-typedef LIBMODEM_PACKET_NAMESPACE_REFERENCE packet packet_type;
-
 #ifndef LIBMODEM_AX25_NAMESPACE_BEGIN
 #define LIBMODEM_AX25_NAMESPACE_BEGIN namespace ax25 {
 #endif
@@ -123,6 +104,34 @@ bool try_parse_address_with_used_flag(std::string_view address, std::string& add
 std::string to_string(const struct address& address);
 std::string to_string(const struct address& address, bool ignore_mark);
 bool try_parse_int(std::string_view string, int& value);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// packet                                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct packet
+{
+    packet() = default;
+    packet(const packet& other) = default;
+    packet& operator=(const packet& other) = default;
+    packet(const std::string& from, const std::string& to, const std::vector<std::string>& path, const std::string& data);
+    packet(const char* packet_string);
+    packet(const std::string& packet_string);
+    operator std::string() const;
+
+    std::string from;
+    std::string to;
+    std::vector<std::string> path;
+    std::string data;
+};
+
+bool operator==(const packet& lhs, const packet& rhs);
+std::string to_string(const packet& p);
+bool try_decode_packet(std::string_view packet_string, packet& result);
 
 // **************************************************************** //
 //                                                                  //
@@ -196,7 +205,7 @@ struct frame
     uint8_t pid = 0;
 };
 
-packet_type to_packet(const struct frame& frame);
+packet to_packet(const struct frame& frame);
 
 LIBMODEM_AX25_NAMESPACE_END
 
@@ -257,9 +266,9 @@ LIBMODEM_AX25_NAMESPACE_END
 
 struct basic_bitstream_converter
 {
-    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read);
-    bool try_decode(uint8_t bit, packet_type& p);
+    std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read);
+    bool try_decode(uint8_t bit, packet& p);
     void reset();
 
 private:
@@ -276,8 +285,8 @@ private:
 
 struct fx25_bitstream_converter
 {
-    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read);
+    std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read);
     void reset();
 };
 
@@ -291,9 +300,9 @@ struct fx25_bitstream_converter
 
 struct bitstream_converter_base
 {
-    virtual std::vector<uint8_t> encode(const packet_type& p, int preamble_flags, int postamble_flags) const = 0;
-    virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) = 0;
-    virtual bool try_decode(uint8_t bit, packet_type& p) = 0;
+    virtual std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const = 0;
+    virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) = 0;
+    virtual bool try_decode(uint8_t bit, packet& p) = 0;
     virtual void reset() = 0;
     virtual ~bitstream_converter_base();
 };
@@ -308,9 +317,9 @@ struct bitstream_converter_base
 
 struct basic_bitstream_converter_adapter : public bitstream_converter_base
 {
-    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags = 45, int postamble_flags = 5) const override;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) override;
-    bool try_decode(uint8_t bit, packet_type& p) override;
+    std::vector<uint8_t> encode(const packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) override;
+    bool try_decode(uint8_t bit, packet& p) override;
     void reset() override;
 
 private:
@@ -327,9 +336,9 @@ private:
 
 struct fx25_bitstream_converter_adapter : public bitstream_converter_base
 {
-    std::vector<uint8_t> encode(const packet_type& p, int preamble_flags = 45, int postamble_flags = 5) const override;
-    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read) override;
-    bool try_decode(uint8_t bit, packet_type& p) override;
+    std::vector<uint8_t> encode(const packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
+    bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) override;
+    bool try_decode(uint8_t bit, packet& p) override;
     void reset() override;
 
 private:
@@ -856,7 +865,7 @@ bool try_parse_address(std::string_view data, struct address& address);
 
 void parse_addresses(std::string_view data, std::vector<address>& addresses);
 
-std::vector<uint8_t> encode_frame(const packet_type& p);
+std::vector<uint8_t> encode_frame(const packet& p);
 std::vector<uint8_t> encode_frame(const struct frame& frame);
 
 template <typename InputIt>
@@ -868,13 +877,13 @@ Container encode_frame(const address& from, const address& to, const std::vector
 template <typename PathInputIt, typename DataInputIt, typename BidirIt>
 BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out);
 
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p);
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc);
 
 template<class InputIt>
-bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p);
+bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet& p);
 
 template<class InputIt>
 bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct frame& frame);
@@ -888,7 +897,7 @@ std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_f
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc);
 
-std::vector<uint8_t> encode_header(const packet_type& p);
+std::vector<uint8_t> encode_header(const packet& p);
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path);
 
 template<typename OutputIt>
@@ -909,8 +918,8 @@ std::array<uint8_t, 7> encode_address(const struct address& address, bool last);
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last);
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool mark, bool last, std::array<uint8_t, 2> reserved_bits);
 
-std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags);
-std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags);
+std::vector<uint8_t> encode_basic_bitstream(const packet& p, int preamble_flags, int postamble_flags);
+std::vector<uint8_t> encode_basic_bitstream(const packet& p, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags);
 std::vector<uint8_t> encode_basic_bitstream(const frame& f, int preamble_flags, int postamble_flags);
 std::vector<uint8_t> encode_basic_bitstream(const frame& f, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags);
 std::vector<uint8_t> encode_basic_bitstream(const std::vector<uint8_t>& frame, int preamble_flags, int postamble_flags);
@@ -935,8 +944,8 @@ template<typename InputIt, typename BidirIt>
 BidirIt encode_basic_bitstream(InputIt frame_first, InputIt frame_last, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags, BidirIt out);
 
 bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state);
-bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state);
-bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state);
+bool try_decode_basic_bitstream(uint8_t bit, packet& packet, bitstream_state& state);
+bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state);
 
 template <typename InputIt, typename OutputIt>
 LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first_it, InputIt last_it, OutputIt out, int& ssid, bool& mark)
@@ -1123,7 +1132,7 @@ LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, Pat
 }
 
 template<class InputIt>
-LIBMODEM_INLINE bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet_type& p)
+LIBMODEM_INLINE bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet& p)
 {
     // Decode an AX.25 packet from an NRZI bitstream
     // The frame inside the bitstream is set between frame_it_first and frame_it_last
@@ -1140,7 +1149,7 @@ LIBMODEM_INLINE bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_
 }
 
 template<class InputIt>
-LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct frame& frame)
+LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct frame& frame) // iterator
 {
     // Decode an AX.25 frame from an NRZI bitstream
     // The frame inside the bitstream is set between frame_it_first and frame_it_last
@@ -1461,7 +1470,7 @@ std::vector<uint8_t> encode_fx25_frame(InputIt frame_it_first, InputIt frame_it_
 template<typename InputIt>
 std::vector<uint8_t> encode_fx25_bitstream(InputIt frame_it_first, InputIt frame_it_last, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
 
-std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
+std::vector<uint8_t> encode_fx25_bitstream(const packet& p, int preamble_flags, int postamble_flags, size_t min_check_bytes = 0);
 
 template<typename InputIt>
 LIBMODEM_INLINE std::vector<uint8_t> encode_fx25_frame(InputIt frame_it_first, InputIt frame_it_last, size_t min_check_bytes)
@@ -1532,7 +1541,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     return bitstream;
 }
 
-std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes);
+std::vector<uint8_t> encode_fx25_bitstream(const packet& p, int preamble_flags, int postamble_flags, size_t min_check_bytes);
 
 LIBMODEM_FX25_NAMESPACE_END
 

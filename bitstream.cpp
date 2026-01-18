@@ -35,6 +35,7 @@
 #include <string>
 #include <cassert>
 #include <tuple>
+#include <charconv>
 
 extern "C" {
 #include <correct.h>
@@ -239,6 +240,170 @@ bool try_parse_int(std::string_view string, int& value)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// packet                                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+packet::packet(const std::string& from, const std::string& to, const std::vector<std::string>& path, const std::string& data) : from(from), to(to), path(path), data(data)
+{
+}
+
+packet::packet(const char* packet_string)
+{
+    bool result = try_decode_packet(packet_string, *this);
+    (void)result;
+    assert(result);
+}
+
+packet::packet(const std::string& packet_string)
+{
+    bool result = try_decode_packet(packet_string, *this);
+    (void)result;
+    assert(result);
+}
+
+packet::operator std::string() const
+{
+    return to_string(*this);
+}
+
+bool operator==(const packet& lhs, const packet& rhs)
+{
+    return lhs.from == rhs.from &&
+        lhs.to == rhs.to &&
+        lhs.path == rhs.path &&
+        lhs.data == rhs.data;
+}
+
+std::string to_string(const struct packet& packet)
+{
+    // Does not guarantee formatting a correct packet string
+    // if the input packet is invalid ex: missing path
+
+    std::string result = packet.from + ">" + packet.to;
+
+    if (!packet.path.empty())
+    {
+        for (const auto& address : packet.path)
+        {
+            result += "," + address;
+        }
+    }
+
+    result += ":" + packet.data;
+
+    return result;
+}
+
+bool try_decode_packet(std::string_view packet_string, packet& result)
+{
+    // Parse a packet: N0CALL>APRS,CALLA,CALLB*,CALLC,CALLD,CALLE,CALLF,CALLG:data
+    //                 ~~~~~~ ~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~
+    //                 from   to   path                                       data
+    //
+    // This function does the minimum required to parse a packet string.
+    // If packet string is invalid, filling of the the packet fields is not guaranteed,
+    // e.g. missing data separator ":", or missig "path"
+
+    result.path.clear();
+
+    // Find the from address, and the end of the packet header
+    //
+    // N0CALL>APRS,CALLA,CALLB*,CALLC,CALLD,CALLE,CALLF,CALLG:data
+    //       ~                                               ~
+    //       from_end_pos                                    colon_pos
+    //
+    // If we cannot find the from position, or the end of the header, we fail the parsing
+
+    size_t from_end_pos = packet_string.find('>');
+
+    if (from_end_pos == std::string_view::npos)
+    {
+        return false;
+    }
+
+    size_t colon_pos = packet_string.find(':', from_end_pos);
+
+    if (colon_pos == std::string_view::npos)
+    {
+        return false;
+    }
+
+    result.from = packet_string.substr(0, from_end_pos);
+
+    // Find the 'to' address, and the 'path'
+    //
+    // N0CALL>APRS,CALLA,CALLB*,CALLC,CALLD,CALLE,CALLF,CALLG:data
+    //        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    //        to_and_path
+
+    std::string_view to_and_path = packet_string.substr(from_end_pos + 1, colon_pos - from_end_pos - 1);
+
+    size_t comma_pos = to_and_path.find(',');
+
+    // If we cannot find the comma, comma_pos will be set to the largest positive unsigned integer
+    // with 'to' containing the remaining string, and with path being empty
+    //
+    // comma_pos = 18446744073709551615
+    // 
+    // N0CALL>APRS:data
+    //        ~~~~
+    //        to
+
+    result.to = to_and_path.substr(0, comma_pos);
+
+    if (comma_pos != std::string_view::npos)
+    {
+        std::string_view path = to_and_path.substr(comma_pos + 1);
+
+        // Keep consuming the path until we reach the end of the header (colon_pos)
+        // We use remove_prefix, which just changes the beginning of the string_view
+        // It does not modify the string, nor copy it
+        //
+        // 1st iteration: CALLA,CALLB*,CALLC,CALLD,CALLE,CALLF,CALLG
+        //                ~~~~~
+        // 2nd iteration: CALLB*,CALLC,CALLD,CALLE,CALLF,CALLG
+        //                ~~~~~~
+        // 3rd iteration: CALLC,CALLD,CALLE,CALLF,CALLG
+        //                ~~~~~
+        // 4th iteration: CALLD,CALLE,CALLF,CALLG
+        //                ~~~~~
+        // 5th iteration: CALLE,CALLF,CALLG
+        //                ~~~~~
+        // 6th iteration: CALLF,CALLG
+        //                ~~~~~
+        // 7th iteration: CALLG
+        //                ~~~~~
+
+        while (!path.empty())
+        {
+            comma_pos = path.find(',');
+
+            std::string_view address = path.substr(0, comma_pos);
+
+            result.path.emplace_back(address);
+
+            if (comma_pos == std::string_view::npos)
+            {
+                break;
+            }
+
+            // No copy or string modification, just update the string_view beginning
+            path.remove_prefix(comma_pos + 1);
+        }
+    }
+
+    // The remaining string after the colon_pos is the data
+
+    result.data = packet_string.substr(colon_pos + 1);
+
+    return true;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // frame                                                            //
 //                                                                  //
 //                                                                  //
@@ -246,9 +411,9 @@ bool try_parse_int(std::string_view string, int& value)
 
 LIBMODEM_AX25_NAMESPACE_BEGIN
 
-packet_type to_packet(const struct frame& frame)
+packet to_packet(const struct frame& frame)
 {
-    packet_type p;
+    packet p;
 
     p.from = to_string(frame.from, true); // ignore mark in from address
     p.to = to_string(frame.to, true); // ignore mark in to address
@@ -309,21 +474,21 @@ LIBMODEM_AX25_NAMESPACE_END
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> basic_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> basic_bitstream_converter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
     return encode_basic_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+bool basic_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
     return try_decode_basic_bitstream(bitstream, offset, p, read, state);
 }
 
-bool basic_bitstream_converter::try_decode(uint8_t bit, packet_type& p)
+bool basic_bitstream_converter::try_decode(uint8_t bit, packet& p)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -343,14 +508,14 @@ void basic_bitstream_converter::reset()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> fx25_bitstream_converter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> fx25_bitstream_converter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
 LIBMODEM_FX25_USING_NAMESPACE
 
     return encode_fx25_bitstream(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+bool fx25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read)
 {
 LIBMODEM_FX25_USING_NAMESPACE
 
@@ -386,17 +551,17 @@ bitstream_converter_base::~bitstream_converter_base()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> basic_bitstream_converter_adapter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+bool basic_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
 }
 
-bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
+bool basic_bitstream_converter_adapter::try_decode(uint8_t bit, packet& p)
 {
     return converter.try_decode(bit, p);
 }
@@ -414,17 +579,17 @@ void basic_bitstream_converter_adapter::reset()
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet_type& p, int preamble_flags, int postamble_flags) const
+std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
     return converter.encode(p, preamble_flags, postamble_flags);
 }
 
-bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& p, size_t& read)
+bool fx25_bitstream_converter_adapter::try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read)
 {
     return converter.try_decode(bitstream, offset, p, read);
 }
 
-bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, packet_type& p)
+bool fx25_bitstream_converter_adapter::try_decode(uint8_t bit, packet& p)
 {
     (void)bit;
     (void)p;
@@ -592,7 +757,7 @@ void parse_addresses(std::string_view data, std::vector<address>& addresses)
     }
 }
 
-std::vector<uint8_t> encode_frame(const packet_type& p)
+std::vector<uint8_t> encode_frame(const packet& p)
 {
     address to_address;
     LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, to_address);
@@ -621,7 +786,7 @@ std::vector<uint8_t> encode_frame(const address& from, const address& to, const 
     return encode_frame(from, to, path, data.begin(), data.end());
 }
 
-bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet_type& p)
+bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p)
 {
     address from;
     address to;
@@ -793,12 +958,12 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool m
     return data;
 }
 
-std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, int preamble_flags, int postamble_flags)
+std::vector<uint8_t> encode_basic_bitstream(const packet& p, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(encode_frame(p), preamble_flags, postamble_flags);
 }
 
-std::vector<uint8_t> encode_basic_bitstream(const packet_type& p, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags)
+std::vector<uint8_t> encode_basic_bitstream(const packet& p, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags)
 {
     return encode_basic_bitstream(encode_frame(p), initial_nrzi_level, preamble_flags, postamble_flags);
 }
@@ -1007,7 +1172,7 @@ bool try_decode_basic_bitstream(uint8_t bit, bitstream_state& state)
     return false; // No complete packet yet
 }
 
-bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_state& state)
+bool try_decode_basic_bitstream(uint8_t bit, packet& packet, bitstream_state& state)
 {
     bool result = try_decode_basic_bitstream(bit, state);
     if (result)
@@ -1017,7 +1182,7 @@ bool try_decode_basic_bitstream(uint8_t bit, packet_type& packet, bitstream_stat
     return result;
 }
 
-bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet_type& packet, size_t& read, bitstream_state& state)
+bool try_decode_basic_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state)
 {
     for (size_t i = offset; i < bitstream.size(); i++)
     {
@@ -1223,7 +1388,7 @@ std::vector<uint8_t> encode_fx25_frame(std::span<const uint8_t> frame_bytes, siz
     return output;
 }
 
-std::vector<uint8_t> encode_fx25_bitstream(const packet_type& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
+std::vector<uint8_t> encode_fx25_bitstream(const packet& p, int preamble_flags, int postamble_flags, size_t min_check_bytes)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 

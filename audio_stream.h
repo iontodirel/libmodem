@@ -43,6 +43,7 @@
 #include <thread>
 #include <condition_variable>
 #include <exception>
+#include <array>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -829,6 +830,7 @@ private:
 // **************************************************************** //
 
 struct tcp_audio_stream_control_server_impl;
+struct tcp_audio_stream_control_client_connection_impl;
 
 class tcp_audio_stream_control_server
 {
@@ -850,6 +852,7 @@ public:
 private:
     void run();
     void run_internal();
+    void handle_client(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection);
     std::string handle_request(const std::string& data);
 
     std::optional<std::reference_wrapper<audio_stream_base>> stream_;
@@ -859,6 +862,9 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::exception_ptr exception_;
+    std::mutex clients_mutex_;
+    std::vector<std::jthread> client_threads_;
+    std::vector<std::weak_ptr<tcp_audio_stream_control_client_connection_impl>> client_connections_;
     bool ready_ = false;
 };
 

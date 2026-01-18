@@ -920,65 +920,71 @@ void tcp_serial_port_client::flush()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// tcp_serial_port_server_impl                                      //
+// tcp_server_base_impl                                             //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct tcp_serial_port_server_impl
+struct tcp_server_base_impl
 {
     boost::asio::io_context io_context;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor;
-    std::unique_ptr<boost::asio::ip::tcp::socket> client_socket;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// tcp_serial_port_server                                           //
+// tcp_client_connection_impl                                       //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-tcp_serial_port_server::tcp_serial_port_server() : impl_(std::make_unique<tcp_serial_port_server_impl>())
+struct tcp_client_connection_impl
+{
+    explicit tcp_client_connection_impl(boost::asio::io_context& io) : socket(io)
+    {
+    }
+
+    boost::asio::ip::tcp::socket socket;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_server_base                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_server_base::tcp_server_base() : impl_(std::make_unique<tcp_server_base_impl>())
 {
 }
 
-tcp_serial_port_server::tcp_serial_port_server(serial_port_base& serial_port) : serial_port_(serial_port), impl_(std::make_unique<tcp_serial_port_server_impl>())
-{
-}
-
-tcp_serial_port_server::tcp_serial_port_server(tcp_serial_port_server&& other) noexcept : serial_port_(std::move(other.serial_port_)), impl_(std::make_unique<tcp_serial_port_server_impl>())
+tcp_server_base::tcp_server_base(tcp_server_base&& other) noexcept : impl_(std::make_unique<tcp_server_base_impl>())
 {
     assert(!other.running_);
 }
 
-tcp_serial_port_server& tcp_serial_port_server::operator=(tcp_serial_port_server&& other) noexcept
+tcp_server_base& tcp_server_base::operator=(tcp_server_base&& other) noexcept
 {
     if (this != &other)
     {
         assert(!running_);
         assert(!other.running_);
 
-        serial_port_ = std::move(other.serial_port_);
-        impl_ = std::make_unique<tcp_serial_port_server_impl>();
+        impl_ = std::make_unique<tcp_server_base_impl>();
     }
 
     return *this;
 }
 
-tcp_serial_port_server::~tcp_serial_port_server()
+tcp_server_base::~tcp_server_base()
 {
     stop();
 }
 
-bool tcp_serial_port_server::start(const std::string& host, int port)
+bool tcp_server_base::start(const std::string& host, int port)
 {
-    if (!serial_port_.has_value())
-    {
-        return false;
-    }
-
     try
     {
         boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
@@ -986,7 +992,7 @@ bool tcp_serial_port_server::start(const std::string& host, int port)
         impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         running_ = true;
 
-        thread_ = std::jthread(&tcp_serial_port_server::run, this);
+        thread_ = std::jthread(&tcp_server_base::run, this);
 
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this]() { return ready_; });
@@ -999,18 +1005,25 @@ bool tcp_serial_port_server::start(const std::string& host, int port)
     }
 }
 
-void tcp_serial_port_server::stop()
+void tcp_server_base::stop()
 {
     running_ = false;
 
-    if (impl_ != nullptr && impl_->client_socket != nullptr && impl_->client_socket->is_open())
     {
-        boost::system::error_code ec;
-        impl_->client_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        impl_->client_socket->close(ec);
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        for (auto& wp : client_connections_)
+        {
+            if (auto sp = wp.lock())
+            {
+                boost::system::error_code ec;
+                sp->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+                sp->socket.close(ec);
+            }
+        }
+        client_connections_.clear();
     }
 
-    if (impl_ != nullptr && impl_->acceptor != nullptr && impl_->acceptor->is_open())
+    if (impl_ && impl_->acceptor && impl_->acceptor->is_open())
     {
         boost::system::error_code ec;
         impl_->acceptor->close(ec);
@@ -1020,9 +1033,36 @@ void tcp_serial_port_server::stop()
     {
         thread_.join();
     }
+
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        client_threads_.clear();
+    }
 }
 
-void tcp_serial_port_server::run()
+bool tcp_server_base::running() const
+{
+    return running_;
+}
+
+void tcp_server_base::throw_if_faulted()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (exception_)
+    {
+        std::exception_ptr ex = exception_;
+        exception_ = nullptr;
+        std::rethrow_exception(ex);
+    }
+}
+
+bool tcp_server_base::faulted()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return exception_ != nullptr;
+}
+
+void tcp_server_base::run()
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1045,66 +1085,141 @@ void tcp_serial_port_server::run()
     catch (...)
     {
         running_ = false;
-        throw;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::current_exception();
+        }
+        cv_.notify_all();
     }
 
     running_ = false;
 }
 
-void tcp_serial_port_server::run_internal()
+void tcp_server_base::run_internal()
 {
     while (running_)
     {
-        impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
-        impl_->acceptor->accept(*impl_->client_socket);
+        auto connection = std::make_shared<tcp_client_connection_impl>(impl_->io_context);
 
-        while (running_ && impl_->client_socket->is_open())
+        try
         {
-            try
-            {
-                // Read the request from the client
-                // Read the request length, then read the request data
-                // Parse the request, identify the command and handle it, encode the response as a string
-                // Write the response length, then write the response data to the client
+            impl_->acceptor->accept(connection->socket);
+        }
+        catch (const boost::system::system_error&)
+        {
+            break;
+        }
 
-                uint32_t request_length;
-                boost::asio::read(*impl_->client_socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
 
-                std::string request_data(boost::endian::big_to_native(request_length), '\0');
-                boost::asio::read(*impl_->client_socket, boost::asio::buffer(request_data.data(), request_data.size()));
+            client_connections_.push_back(connection);
 
-                std::string response_data;
+            std::erase_if(client_connections_, [](const std::weak_ptr<tcp_client_connection_impl>& wp) {
+                return wp.expired();
+            });
 
-                try
-                {
-                    response_data = handle_request(request_data);
-                }
-                catch (const std::exception& e)
-                {
-                    response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
-                }
-
-                uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
-
-                boost::asio::write(*impl_->client_socket, boost::asio::buffer(&response_length, sizeof(response_length)));
-                boost::asio::write(*impl_->client_socket, boost::asio::buffer(response_data));
-
-            }
-            catch (const boost::system::system_error& e)
-            {
-                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset)
-                {
-                    break;
-                }
-                throw;
-            }
+            client_threads_.emplace_back(&tcp_server_base::handle_client, this, connection);
         }
     }
+
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    client_threads_.clear();
+}
+
+void tcp_server_base::handle_client(std::shared_ptr<tcp_client_connection_impl> connection)
+{
+    while (running_ && connection->socket.is_open())
+    {
+        try
+        {
+            // Read the request from the client
+            // Read the request length, then read the request data
+            // Parse the request, identify the command and handle it, encode the response as a string
+            // Write the response length, then write the response data to the client
+
+            uint32_t request_length;
+            boost::asio::read(connection->socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+
+            std::string request_data(boost::endian::big_to_native(request_length), '\0');
+            boost::asio::read(connection->socket, boost::asio::buffer(request_data.data(), request_data.size()));
+
+            std::string response_data;
+
+            try
+            {
+                response_data = handle_request(request_data);
+            }
+            catch (const std::exception& e)
+            {
+                response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
+            }
+
+            uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
+
+            boost::asio::write(connection->socket, boost::asio::buffer(&response_length, sizeof(response_length)));
+            boost::asio::write(connection->socket, boost::asio::buffer(response_data));
+        }
+        catch (const boost::system::system_error&)
+        {
+            break;
+        }
+    }
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_serial_port_server                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_serial_port_server::tcp_serial_port_server() : tcp_server_base()
+{
+}
+
+tcp_serial_port_server::tcp_serial_port_server(serial_port_base& serial_port) : tcp_server_base(), serial_port_(serial_port)
+{
+}
+
+tcp_serial_port_server::tcp_serial_port_server(tcp_serial_port_server&& other) noexcept : tcp_server_base(std::move(other)), serial_port_(std::move(other.serial_port_))
+{
+    assert(!other.running());
+}
+
+tcp_serial_port_server& tcp_serial_port_server::operator=(tcp_serial_port_server&& other) noexcept
+{
+    if (this != &other)
+    {
+        assert(!running());
+        assert(!other.running());
+
+        tcp_server_base::operator=(std::move(other));
+        serial_port_ = std::move(other.serial_port_);
+    }
+
+    return *this;
+}
+
+tcp_serial_port_server::~tcp_serial_port_server() = default;
+
+bool tcp_serial_port_server::start(const std::string& host, int port)
+{
+    if (!serial_port_.has_value())
+    {
+        return false;
+    }
+
+    return tcp_server_base::start(host, port);
 }
 
 std::string tcp_serial_port_server::handle_request(const std::string& data)
 {
     serial_port_base& serial_port = serial_port_->get();
+
+    std::lock_guard<std::mutex> lock(serial_port_mutex_);
 
     nlohmann::json request = nlohmann::json::parse(data);
 
@@ -1435,6 +1550,240 @@ bool ptt_control_library::ptt()
 ptt_control_library::operator bool() const
 {
     return loaded_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control_client_impl                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_ptt_control_client_impl
+{
+    boost::asio::io_context io_context;
+    boost::asio::ip::tcp::socket socket{ io_context };
+};
+
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// request (helper for tcp_ptt_control_client)                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+nlohmann::json handle_request(tcp_ptt_control_client& client, tcp_ptt_control_client_impl& impl, const nlohmann::json& request)
+{
+    if (!client.connected())
+    {
+        throw std::runtime_error("Client not connected");
+    }
+
+    // Send the request
+
+    std::string data = request.dump();
+    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+
+    boost::asio::write(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+    boost::asio::write(impl.socket, boost::asio::buffer(data));
+
+    // Receive the response
+
+    boost::asio::read(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+    data.resize(boost::endian::big_to_native(length));
+    boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
+
+    nlohmann::json response = nlohmann::json::parse(data);
+
+    if (response.contains("error"))
+    {
+        std::string error_message = response["error"].get<std::string>();
+        throw std::runtime_error(error_message);
+    }
+
+    return response;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control_client                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_ptt_control_client::tcp_ptt_control_client() : impl_(std::make_unique<tcp_ptt_control_client_impl>())
+{
+}
+
+tcp_ptt_control_client& tcp_ptt_control_client::operator=(tcp_ptt_control_client&& other) noexcept
+{
+    if (this != &other)
+    {
+        try
+        {
+            disconnect();
+        }
+        catch (...)
+        {
+            // Ignore
+        }
+
+        impl_ = std::move(other.impl_);
+        connected_ = other.connected_;
+        other.connected_ = false;
+    }
+
+    return *this;
+}
+
+tcp_ptt_control_client::tcp_ptt_control_client(tcp_ptt_control_client&& other) noexcept : impl_(std::move(other.impl_)), connected_(other.connected_)
+{
+    other.connected_ = false;
+}
+
+tcp_ptt_control_client::~tcp_ptt_control_client() = default;
+
+bool tcp_ptt_control_client::connect(const std::string& host, int port)
+{
+    try
+    {
+        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
+        auto endpoints = resolver.resolve(host, std::to_string(port));
+        boost::asio::connect(impl_->socket, endpoints);
+        connected_ = true;
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void tcp_ptt_control_client::disconnect()
+{
+    if (connected_)
+    {
+        boost::system::error_code ec;
+        impl_->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        impl_->socket.close(ec);
+        connected_ = false;
+    }
+}
+
+bool tcp_ptt_control_client::connected() const
+{
+    return connected_;
+}
+
+void tcp_ptt_control_client::ptt(bool ptt_state)
+{
+    // Send request to set PTT
+    //
+    // Request: { "command": "set_ptt", "value": <bool> }
+    // Response: { "value": "ok" }
+
+    handle_request(*this, *impl_, { {"command", "set_ptt"}, {"value", ptt_state} });
+}
+
+bool tcp_ptt_control_client::ptt()
+{
+    // Send request to get PTT state
+    //
+    // Request: { "command": "get_ptt" }
+    // Response: { "value": "<bool>" }
+
+    return handle_request(*this, *impl_, { {"command", "get_ptt"} })["value"].get<bool>();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// tcp_ptt_control_server                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+tcp_ptt_control_server::tcp_ptt_control_server() : tcp_server_base()
+{
+}
+
+tcp_ptt_control_server::tcp_ptt_control_server(tcp_ptt_control_server&& other) noexcept : tcp_server_base(std::move(other)), ptt_callable_(std::move(other.ptt_callable_))
+{
+    assert(!other.running());
+    other.ptt_callable_ = nullptr;
+}
+
+tcp_ptt_control_server& tcp_ptt_control_server::operator=(tcp_ptt_control_server&& other) noexcept
+{
+    if (this != &other)
+    {
+        assert(!running());
+        assert(!other.running());
+
+        tcp_server_base::operator=(std::move(other));
+
+        ptt_callable_ = std::move(other.ptt_callable_);
+        other.ptt_callable_ = nullptr;
+    }
+
+    return *this;
+}
+
+tcp_ptt_control_server::~tcp_ptt_control_server() = default;
+
+bool tcp_ptt_control_server::start(const std::string& host, int port)
+{
+    if (!ptt_callable_)
+    {
+        return false;
+    }
+
+    return tcp_server_base::start(host, port);
+}
+
+std::string tcp_ptt_control_server::handle_request(const std::string& data)
+{
+    nlohmann::json request = nlohmann::json::parse(data);
+
+    std::string command = request.value("command", "");
+
+    nlohmann::json response;
+
+    if (command == "set_ptt")
+    {
+        // Set PTT
+        //
+        // Request: { "command": "set_ptt", "value": <bool> }
+        // Response: { "value": "ok" }
+
+        ptt_callable_->invoke(request.value("value", false));
+        response["value"] = "ok";
+    }
+    else if (command == "get_ptt")
+    {
+        // Get PTT
+        //
+        // Request: { "command": "get_ptt" }
+        // Response: { "value": <bool> }
+
+        response["value"] = false;
+    }
+    else
+    {
+        // Unknown command
+        //
+        // Response: { "error": "unknown command: <command>" }
+
+        response["error"] = "unknown command: " + command;
+    }
+
+    std::string response_string = response.dump();
+
+    return response_string;
 }
 
 LIBMODEM_NAMESPACE_END

@@ -4726,6 +4726,23 @@ struct tcp_audio_stream_control_server_impl
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// tcp_audio_stream_control_client_connection_impl                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_audio_stream_control_client_connection_impl
+{
+    explicit tcp_audio_stream_control_client_connection_impl(boost::asio::io_context& io) : socket(io)
+    {
+    }
+
+    boost::asio::ip::tcp::socket socket;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_audio_stream_control_server                                  //
 //                                                                  //
 //                                                                  //
@@ -4794,14 +4811,21 @@ void tcp_audio_stream_control_server::stop()
 {
     running_ = false;
 
-    if (impl_ != nullptr && impl_->client_socket != nullptr && impl_->client_socket->is_open())
     {
-        boost::system::error_code ec;
-        impl_->client_socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        impl_->client_socket->close(ec);
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        for (auto& wp : client_connections_)
+        {
+            if (auto sp = wp.lock())
+            {
+                boost::system::error_code ec;
+                sp->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+                sp->socket.close(ec);
+            }
+        }
+        client_connections_.clear();
     }
 
-    if (impl_ != nullptr && impl_->acceptor != nullptr && impl_->acceptor->is_open())
+    if (impl_ && impl_->acceptor && impl_->acceptor->is_open())
     {
         boost::system::error_code ec;
         impl_->acceptor->close(ec);
@@ -4810,6 +4834,11 @@ void tcp_audio_stream_control_server::stop()
     if (thread_.joinable())
     {
         thread_.join();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        client_threads_.clear();
     }
 }
 
@@ -4858,41 +4887,77 @@ void tcp_audio_stream_control_server::run_internal()
 {
     while (running_)
     {
-        impl_->client_socket = std::make_unique<boost::asio::ip::tcp::socket>(impl_->io_context);
-        impl_->acceptor->accept(*impl_->client_socket);
+        auto connection = std::make_shared<tcp_audio_stream_control_client_connection_impl>(impl_->io_context);
 
-        while (running_ && impl_->client_socket->is_open())
+        try
         {
+            impl_->acceptor->accept(connection->socket);
+        }
+        catch (const boost::system::system_error&)
+        {
+            break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+
+            client_connections_.push_back(connection);
+
+            std::erase_if(client_connections_, [](const std::weak_ptr<tcp_audio_stream_control_client_connection_impl>& wp) {
+                return wp.expired();
+            });
+
+            client_threads_.emplace_back([this, connection]() {
+                handle_client(connection);
+            });
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    client_threads_.clear();
+}
+
+void tcp_audio_stream_control_server::handle_client(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection)
+{
+    while (running_ && connection->socket.is_open())
+    {
+        try
+        {
+            // Read the request from the client
+            // Read the request length, then read the request data
+            // Parse the request, identify the command and handle it, encode the response as a string
+            // Write the response length, then write the response data to the client
+
+            uint32_t request_length;
+            boost::asio::read(connection->socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+
+            std::string request_data(boost::endian::big_to_native(request_length), '\0');
+            boost::asio::read(connection->socket, boost::asio::buffer(request_data.data(), request_data.size()));
+
+            std::string response_data;
+
             try
             {
-                // Read the request from the client
-                // Read the request length, then read the request data
-                // Parse the request, identify the command and handle it, encode the response as a string
-                // Write the response length, then write the response data to the client
-
-                uint32_t request_length;
-                boost::asio::read(*impl_->client_socket, boost::asio::buffer(&request_length, sizeof(request_length)));
-
-                std::string request_data(boost::endian::big_to_native(request_length), '\0');
-                boost::asio::read(*impl_->client_socket, boost::asio::buffer(request_data.data(), request_data.size()));
-
-                std::string response_data = handle_request(request_data);
-
-                uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
-
-                boost::asio::write(*impl_->client_socket, boost::asio::buffer(&response_length, sizeof(response_length)));
-                boost::asio::write(*impl_->client_socket, boost::asio::buffer(response_data));
-
+                response_data = handle_request(request_data);
             }
-            catch (const boost::system::system_error& e)
+            catch (const std::exception& e)
             {
-                if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset ||
-                    e.code() == boost::asio::error::connection_aborted || e.code() == boost::asio::error::broken_pipe)
-                {
-                    break;
-                }
-                throw;
+                response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
             }
+
+            uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
+
+            boost::asio::write(connection->socket, boost::asio::buffer(&response_length, sizeof(response_length)));
+            boost::asio::write(connection->socket, boost::asio::buffer(response_data));
+        }
+        catch (const boost::system::system_error& e)
+        {
+            if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset ||
+                e.code() == boost::asio::error::connection_aborted || e.code() == boost::asio::error::broken_pipe)
+            {
+                break;
+            }
+            throw;
         }
     }
 }

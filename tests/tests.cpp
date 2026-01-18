@@ -29,16 +29,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#define APRS_ROUTER_ENABLE_PACKET_SUPPORT true
-
-#include "external/aprsroute.hpp"
-
-#define LIBMODEM_PACKET_NAMESPACE_REFERENCE aprs::router::
-
 #include <bitstream.h>
 #include <audio_stream.h>
 #include <modem.h>
 #include <modulator.h>
+#include <kiss.h>
 
 #include <random>
 #include <fstream>
@@ -1648,6 +1643,296 @@ LIBMODEM_FX25_USING_NAMESPACE
         0x02, 0xFC, 0xED, 0x9F, 0x4B, 0x8E, 0x6A, 0x33,
         0xA6, 0x03, 0x4B, 0x67, 0x45, 0x3B, 0xAB, 0x7E
     }));
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// kiss tests                                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+TEST(kiss, decoder)
+{
+    libmodem::kiss::decoder decoder;
+
+    // decode twice or more in a row to test sticky state
+    {
+        std::string data = std::string("\xC0""\0foo\xC0", 6);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o'}));
+    }
+
+    // decode twice or more in a row to test sticky state
+    {
+        std::string data = std::string("\xC0""\0bar\xC0", 6);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 2);
+        EXPECT_TRUE((decoder.frames()[1].data == std::vector<unsigned char>{'b', 'a', 'r'}));
+    }
+
+    // decode twice or more in a row to test sticky state
+    {
+        std::string data = std::string("\xC0""\0zebra\xC0", 8);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 3);
+        EXPECT_TRUE((decoder.frames()[2].data == std::vector<unsigned char>{'z', 'e', 'b', 'r', 'a'}));
+    }
+
+    // parse multiple packets in one go
+    decoder = libmodem::kiss::decoder();
+    {
+        std::string data = std::string("\xC0""\0foo\xC0""\xC0""\0bar\xC0", 12);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 2);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o'}));
+        EXPECT_TRUE((decoder.frames()[1].data == std::vector<unsigned char>{'b', 'a', 'r'}));
+    }
+
+    // **************************************************************** //
+    // parse incomplete chunks                                          //
+    // **************************************************************** //
+
+    decoder = libmodem::kiss::decoder();
+    {
+        std::string data = std::string("\xC0""\0foo", 5);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = " bar";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = " zebra";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = "\xC0";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', ' ', 'b', 'a', 'r', ' ', 'z', 'e', 'b', 'r', 'a'}));
+    }
+
+    // **************************************************************** //
+    // parse more incomplete chunks                                     //
+    // **************************************************************** //
+
+    decoder = libmodem::kiss::decoder();
+    {
+        std::string data = std::string("\xC0""\0foo", 5);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = " bar";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = " zebra";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+    }
+
+    {
+        std::string data = std::string(" tar\xC0""\xC0""\0foo", 10);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false)); // incompletely decoded packets
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', ' ', 'b', 'a', 'r', ' ', 'z', 'e', 'b', 'r', 'a', ' ', 't', 'a', 'r'}));
+    }
+
+    {
+        std::string data = " bar\xC0";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 2);
+        EXPECT_TRUE((decoder.frames()[1].data == std::vector<unsigned char>{'f', 'o', 'o', ' ', 'b', 'a', 'r'}));
+    }
+
+    // **************************************************************** //
+    // parse incomplete chunks while clearing processed data            //
+    // **************************************************************** //
+
+    decoder.reset();
+
+    {
+        std::string data = std::string("\xC0""\0foo", 5);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 0);
+    }
+
+    {
+        std::string data = std::string("\xC0\xC0""\0bar", 6);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == false));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o'}));
+    }
+
+    decoder.clear();
+
+    {
+        std::string data = "\xC0";
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'b', 'a', 'r'}));
+    }
+
+    decoder.reset();
+
+    // we want a frame end marker in between "foo" and "bar"
+    {
+        std::string data = std::string("\xC0""\0foo""\xDB""\xDC""bar""\xC0", 11);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', 0xC0, 'b', 'a', 'r'}));
+    }
+
+    // we want to make sure that we can have 0xDB 0xDC 
+    decoder = libmodem::kiss::decoder();
+    {
+        std::string data = std::string("\xC0""\0foo""\xDB\xDD\xDC""bar""\xC0", 12);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', 0xDB, 0xDC, 'b', 'a', 'r'}));
+    }
+
+    decoder = libmodem::kiss::decoder();
+
+    // we want a frame escape marker in between "foo" and "bar"
+    {
+        std::string data = std::string("\xC0""\0foo""\xDB\xDD""bar""\xC0", 11);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', 0xDB, 'b', 'a', 'r'}));
+    }
+
+    decoder = libmodem::kiss::decoder();
+
+    // we want to make sure that we can have 0xDB 0xDD bytes in the data stream
+    {
+        std::string data = std::string("\xC0""\0foo""\xDB\xDD\xDD""bar""\xC0", 12);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', 0xDB, 0xDD, 'b', 'a', 'r'}));
+    }
+
+    decoder = libmodem::kiss::decoder();
+
+    // make sure we can insert 0xDC and 0xDD in the data stream
+    {
+        std::string data = std::string("\xC0""\0foo\xDC\xDD""bar\xC0", 11);
+        EXPECT_TRUE((decoder.decode(data.begin(), data.end()) == true));
+        EXPECT_TRUE(decoder.count() == 1);
+        EXPECT_TRUE((decoder.frames()[0].data == std::vector<unsigned char>{'f', 'o', 'o', 0xDC, 0xDD, 'b', 'a', 'r'}));
+    }
+}
+
+TEST(kiss, decode)
+{
+LIBMODEM_KISS_USING_NAMESPACE
+
+    decoder_state state;
+    uint8_t result;
+
+    // frame start
+    EXPECT_FALSE(decode(0xC0, result, state));
+    EXPECT_TRUE(state.in_kiss_frame);
+    EXPECT_FALSE(state.completed);
+
+    // command byte (typically discarded by caller)
+    EXPECT_TRUE(decode(0x00, result, state));
+    EXPECT_EQ(result, 0x00);
+
+    // regular data bytes
+    EXPECT_TRUE(decode('f', result, state));
+    EXPECT_EQ(result, 'f');
+    EXPECT_TRUE(decode('o', result, state));
+    EXPECT_EQ(result, 'o');
+    EXPECT_TRUE(decode('o', result, state));
+    EXPECT_EQ(result, 'o');
+
+    // escape sequence: 0xDB 0xDC -> 0xC0
+    EXPECT_FALSE(decode(0xDB, result, state));
+    EXPECT_TRUE(state.in_escape_mode);
+    EXPECT_TRUE(decode(0xDC, result, state));
+    EXPECT_EQ(result, 0xC0);
+    EXPECT_FALSE(state.in_escape_mode);
+
+    // escape sequence: 0xDB 0xDD -> 0xDB
+    EXPECT_FALSE(decode(0xDB, result, state));
+    EXPECT_TRUE(decode(0xDD, result, state));
+    EXPECT_EQ(result, 0xDB);
+
+    // frame end
+    EXPECT_FALSE(decode(0xC0, result, state));
+    EXPECT_TRUE(state.completed);
+}
+
+TEST(kiss, encode)
+{
+LIBMODEM_KISS_USING_NAMESPACE;
+
+    // basic encoding
+    {
+        std::vector<unsigned char> data = { 'f', 'o', 'o' };
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_TRUE(success);
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xC0}));
+    }
+
+    // empty input
+    {
+        std::vector<unsigned char> data = {};
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_FALSE(success);
+        EXPECT_TRUE(output.empty());
+    }
+
+    // escape 0xC0 -> 0xDB 0xDC
+    {
+        std::vector<unsigned char> data = { 'f', 'o', 'o', 0xC0, 'b', 'a', 'r' };
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_TRUE(success);
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xDB, 0xDC, 'b', 'a', 'r', 0xC0}));
+    }
+
+    // escape 0xDB -> 0xDB 0xDD
+    {
+        std::vector<unsigned char> data = { 'f', 'o', 'o', 0xDB, 'b', 'a', 'r' };
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_TRUE(success);
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xDB, 0xDD, 'b', 'a', 'r', 0xC0}));
+    }
+
+    // 0xDC and 0xDD pass through unescaped
+    {
+        std::vector<unsigned char> data = { 'f', 'o', 'o', 0xDC, 0xDD, 'b', 'a', 'r' };
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_TRUE(success);
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xDC, 0xDD, 'b', 'a', 'r', 0xC0}));
+    }
+
+    // multiple escapes: 0xDB 0xC0 -> 0xDB 0xDD 0xDB 0xDC
+    {
+        std::vector<unsigned char> data = { 'f', 'o', 'o', 0xDB, 0xC0, 'b', 'a', 'r' };
+        std::vector<unsigned char> output;
+        auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
+        EXPECT_TRUE(success);
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xDB, 0xDD, 0xDB, 0xDC, 'b', 'a', 'r', 0xC0}));
+    }
 }
 
 // **************************************************************** //
@@ -3932,7 +4217,8 @@ APRS_TRACK_NAMESPACE_USE
 APRS_TRACK_DETAIL_NAMESPACE_USE
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
     
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4342,7 +4628,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Write back to a wav file and demodulate with Direwolf
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4431,7 +4718,8 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
     // Write back to a wav file and demodulate with Direwolf
 
     // N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}
-    std::string packet_string = encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2);
+    std::string packet_string;
+    encode_mic_e_packet_no_message("N0CALL", "WIDE1-1", 49.176666666667, -123.94916666667, mic_e_status::in_service, 3, 15.999, '/', '[', 0, 154.2, std::back_inserter(packet_string));
 
     EXPECT_TRUE(packet_string == "N0CALL>T9QPVP,WIDE1-1:`3T{m\\\x1f[/\"4F}");
 
@@ -4536,6 +4824,189 @@ TEST(ptt_control_library, ptt_control_library)
 #if WIN32
     lib.unload();
 #endif
+}
+
+bool global_tcp_ptt_control_ppt_state = false;
+
+void tcp_ptt_control_callback_function(bool ptt_state)
+{
+    global_tcp_ptt_control_ppt_state = ptt_state;
+}
+
+struct tcp_ptt_control_functor
+{
+    void operator()(bool ptt_state)
+    {
+        this->ptt_state = ptt_state;
+    }
+
+    bool ptt_state = false;
+};
+
+TEST(tcp_ptt_control_server, tcp_ptt_control_server)
+{
+    {
+        bool ppt_state = false;
+
+        tcp_ptt_control_server server([&](bool ptt) {
+            ppt_state = ptt;
+        });
+
+        server.start("127.0.0.1", 1234);
+
+        tcp_ptt_control_client client;
+
+        client.connect("127.0.0.1", 1234);
+
+        EXPECT_TRUE(ppt_state == false);
+
+        client.ptt(true);
+
+        EXPECT_TRUE(ppt_state == true);
+
+        client.ptt(false);
+
+        EXPECT_TRUE(ppt_state == false);
+
+        tcp_ptt_control control(client);
+
+        control.ptt(true);
+
+        EXPECT_TRUE(ppt_state == true);
+
+        control.ptt(false);
+
+        EXPECT_TRUE(ppt_state == false);
+
+        client.disconnect();
+
+        server.stop();
+
+        server = tcp_ptt_control_server();
+
+        server = tcp_ptt_control_server(&tcp_ptt_control_callback_function);
+
+        tcp_ptt_control_functor functor;
+
+        server = tcp_ptt_control_server(functor);
+    }
+
+    {
+        tcp_ptt_control_server server(&tcp_ptt_control_callback_function);
+
+        server.start("127.0.0.1", 1234);
+
+        tcp_ptt_control_client client;
+
+        client.connect("127.0.0.1", 1234);
+
+        EXPECT_TRUE(global_tcp_ptt_control_ppt_state == false);
+
+        client.ptt(true);
+
+        EXPECT_TRUE(global_tcp_ptt_control_ppt_state == true);
+
+        client.ptt(false);
+
+        EXPECT_TRUE(global_tcp_ptt_control_ppt_state == false);
+    }
+
+    {
+        tcp_ptt_control_functor functor;
+
+        tcp_ptt_control_server server(functor);
+
+        server.start("127.0.0.1", 1234);
+
+        tcp_ptt_control_client client;
+
+        client.connect("127.0.0.1", 1234);
+
+        EXPECT_TRUE(functor.ptt_state == false);
+
+        client.ptt(true);
+
+        EXPECT_TRUE(functor.ptt_state == true);
+
+        client.ptt(false);
+
+        EXPECT_TRUE(functor.ptt_state == false);
+    }
+
+    {
+        bool ptt_state = false;
+
+        tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; });
+
+        server.start("127.0.0.1", 1235);
+
+        tcp_ptt_control_client client1;
+        tcp_ptt_control_client client2;
+
+        client1.connect("127.0.0.1", 1235);
+        client2.connect("127.0.0.1", 1235);
+
+        client1.ptt(true);
+
+        EXPECT_TRUE(ptt_state == true);
+
+        client2.ptt(false);
+
+        EXPECT_TRUE(ptt_state == false);
+    }
+
+    {
+        bool ptt_state = false;
+        tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; });
+
+        server.start("127.0.0.1", 1236);
+
+        tcp_ptt_control_client client;
+        client.connect("127.0.0.1", 1236);
+        client.ptt(true);
+        EXPECT_TRUE(ptt_state == true);
+
+        client.disconnect();
+        ptt_state = false;
+
+        client.connect("127.0.0.1", 1236);
+        client.ptt(true);
+        EXPECT_TRUE(ptt_state == true);
+    }
+
+    {
+        bool ptt_state = false;
+        tcp_ptt_control_server server([&](bool ptt) { ptt_state = ptt; });
+
+        server.start("127.0.0.1", 1237);
+        server.stop();
+
+        ptt_state = false;
+        server.start("127.0.0.1", 1237);
+
+        tcp_ptt_control_client client;
+        client.connect("127.0.0.1", 1237);
+        client.ptt(true);
+        EXPECT_TRUE(ptt_state == true);
+    }
+
+    {
+        bool ptt_state = false;
+        int channel = 0;
+
+        tcp_ptt_control_server server([&](bool ptt, int ch) {
+            ptt_state = ptt;
+            channel = ch;
+        }, 42);
+
+        server.start("127.0.0.1", 1238);
+        tcp_ptt_control_client client;
+        client.connect("127.0.0.1", 1238);
+
+        client.ptt(true);
+        EXPECT_TRUE(ptt_state == true);
+        EXPECT_EQ(channel, 42);
+    }
 }
 
 // **************************************************************** //
