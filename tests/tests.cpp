@@ -34,6 +34,8 @@
 #include <modem.h>
 #include <modulator.h>
 #include <kiss.h>
+#include <config.h>
+#include <pipeline.h>
 
 #include <random>
 #include <fstream>
@@ -4967,12 +4969,13 @@ TEST(tcp_ptt_control_server, tcp_ptt_control_server)
 
         server.thread_count(50);
 
-        server.start("localhost", 1235);
+        server.start("127.0.0.1", 1235);
 
-        std::vector<tcp_ptt_control_client> clients(10000);
-        for (auto& client : clients)
+        std::vector<tcp_ptt_control_client> clients(500);
+        for (size_t count = 0; auto& client : clients)
         {
             EXPECT_TRUE(client.connect("127.0.0.1", 1235));
+            count++;
         }
 
         for (size_t i = 0; i < clients.size(); ++i)

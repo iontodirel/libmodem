@@ -44,6 +44,7 @@
 #include <condition_variable>
 #include <exception>
 #include <array>
+#include <unordered_set>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -846,25 +847,31 @@ public:
     bool start(const std::string& host, int port);
     void stop();
 
+    void thread_count(std::size_t size);
+    std::size_t thread_count() const;
+
     bool faulted();
     void throw_if_faulted();
 
 private:
     void run();
-    void run_internal();
-    void handle_client(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection);
+    void accept_async();
+    void read_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection);
+    void write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::string response);
     std::string handle_request(const std::string& data);
 
     std::optional<std::reference_wrapper<audio_stream_base>> stream_;
     std::unique_ptr<tcp_audio_stream_control_server_impl> impl_;
-    std::jthread thread_;
+    std::vector<std::jthread> threads_;
+    std::size_t thread_count_ = 1;
     std::atomic<bool> running_ = false;
     std::mutex mutex_;
     std::condition_variable cv_;
     std::exception_ptr exception_;
     std::mutex clients_mutex_;
     std::vector<std::jthread> client_threads_;
-    std::vector<std::weak_ptr<tcp_audio_stream_control_client_connection_impl>> client_connections_;
+    std::mutex connections_mutex_;
+    std::unordered_set<std::shared_ptr<tcp_audio_stream_control_client_connection_impl>> connections_;
     bool ready_ = false;
 };
 

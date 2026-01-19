@@ -1007,16 +1007,14 @@ bool tcp_server_base::start(const std::string& host, int port)
 
         impl_->io_context.restart();
 
-        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
-        auto endpoints = resolver.resolve(host, std::to_string(port));
-        boost::asio::ip::tcp::endpoint endpoint = *endpoints.begin();
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
 
         impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context);
 
         impl_->acceptor->open(endpoint.protocol());
         impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         impl_->acceptor->bind(endpoint);
-        impl_->acceptor->listen();
+        impl_->acceptor->listen(boost::asio::socket_base::max_listen_connections);
 
         running_ = true;
 

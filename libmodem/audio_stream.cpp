@@ -2774,35 +2774,85 @@ void alsa_audio_stream_control::volume(int percent)
 
     if (type_ == audio_stream_type::input)
     {
-        if (snd_mixer_selem_has_capture_volume(elem))
+        long min_dB, max_dB;
+        if (snd_mixer_selem_get_capture_dB_range(elem, &min_dB, &max_dB) == 0 && min_dB < max_dB)
         {
-            if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+            long target_dB;
+            if (percent <= 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                target_dB = min_dB;
+            }
+            else if (percent >= 100)
+            {
+                target_dB = max_dB;
+            }
+            else
+            {
+                target_dB = min_dB + (max_dB - min_dB) * percent / 100;
             }
 
-            long volume = min + (max - min) * percent / 100;
-
-            if ((err = snd_mixer_selem_set_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+            if ((err = snd_mixer_selem_set_capture_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), target_dB, 0)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_volume: ") + snd_strerror(err));
+                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_dB: ") + snd_strerror(err));
+            }
+        }
+        else
+        {
+            if (snd_mixer_selem_has_capture_volume(elem))
+            {
+                if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                }
+
+                long volume = min + (max - min) * percent / 100;
+
+                if ((err = snd_mixer_selem_set_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_set_capture_volume: ") + snd_strerror(err));
+                }
             }
         }
     }
     else
     {
-        if (snd_mixer_selem_has_playback_volume(elem))
+        long min_dB, max_dB;
+        if (snd_mixer_selem_get_playback_dB_range(elem, &min_dB, &max_dB) == 0 && min_dB < max_dB)
         {
-            if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+            long target_dB;
+            if (percent <= 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                target_dB = min_dB;
+            }
+            else if (percent >= 100)
+            {
+                target_dB = max_dB;
+            }
+            else
+            {
+                target_dB = min_dB + (max_dB - min_dB) * percent / 100;
             }
 
-            long volume = min + (max - min) * percent / 100;
-
-            if ((err = snd_mixer_selem_set_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+            if ((err = snd_mixer_selem_set_playback_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), target_dB, 0)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err));
+                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_dB: ") + snd_strerror(err));
+            }
+        }
+        else
+        {
+            if (snd_mixer_selem_has_playback_volume(elem))
+            {
+                if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                }
+
+                long volume = min + (max - min) * percent / 100;
+
+                if ((err = snd_mixer_selem_set_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err));
+                }
             }
         }
     }
@@ -2860,41 +2910,69 @@ int alsa_audio_stream_control::volume()
 
     if (type_ == audio_stream_type::input)
     {
-        if (snd_mixer_selem_has_capture_volume(elem))
+        long min_dB, max_dB, current_dB;
+        if (snd_mixer_selem_get_capture_dB_range(elem, &min_dB, &max_dB) == 0 && min_dB < max_dB)
         {
-            if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+            if ((err = snd_mixer_selem_get_capture_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &current_dB)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_dB: ") + snd_strerror(err));
             }
 
-            if ((err = snd_mixer_selem_get_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+            percent = static_cast<int>(100 * (current_dB - min_dB) / (max_dB - min_dB));
+            percent = std::clamp(percent, 0, 100);
+        }
+        else
+        {
+            if (snd_mixer_selem_has_capture_volume(elem))
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume: ") + snd_strerror(err));
-            }
+                if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                }
 
-            if (max > min)
-            {
-                percent = static_cast<int>(100 * (volume - min) / (max - min));
+                if ((err = snd_mixer_selem_get_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume: ") + snd_strerror(err));
+                }
+
+                if (max > min)
+                {
+                    percent = static_cast<int>(100 * (volume - min) / (max - min));
+                }
             }
         }
     }
     else
     {
-        if (snd_mixer_selem_has_playback_volume(elem))
+        long min_dB, max_dB, current_dB;
+        if (snd_mixer_selem_get_playback_dB_range(elem, &min_dB, &max_dB) == 0 && min_dB < max_dB)
         {
-            if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+            if ((err = snd_mixer_selem_get_playback_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &current_dB)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_dB: ") + snd_strerror(err));
             }
 
-            if ((err = snd_mixer_selem_get_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+            percent = static_cast<int>(100 * (current_dB - min_dB) / (max_dB - min_dB));
+            percent = std::clamp(percent, 0, 100);
+        }
+        else
+        {
+            if (snd_mixer_selem_has_playback_volume(elem))
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err));
-            }
+                if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                }
 
-            if (max > min)
-            {
-                percent = static_cast<int>(100 * (volume - min) / (max - min));
+                if ((err = snd_mixer_selem_get_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
+                {
+                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err));
+                }
+
+                if (max > min)
+                {
+                    percent = static_cast<int>(100 * (volume - min) / (max - min));
+                }
             }
         }
     }
@@ -4721,7 +4799,6 @@ struct tcp_audio_stream_control_server_impl
 {
     boost::asio::io_context io_context;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor;
-    std::unique_ptr<boost::asio::ip::tcp::socket> client_socket;
 };
 
 // **************************************************************** //
@@ -4734,18 +4811,41 @@ struct tcp_audio_stream_control_server_impl
 
 struct tcp_audio_stream_control_client_connection_impl
 {
-    explicit tcp_audio_stream_control_client_connection_impl(boost::asio::io_context& io) : socket(io)
+    explicit tcp_audio_stream_control_client_connection_impl(boost::asio::io_context& io) : strand(boost::asio::make_strand(io)), socket(strand)
     {
     }
 
+    boost::asio::strand<boost::asio::io_context::executor_type> strand;
     boost::asio::ip::tcp::socket socket;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// close_socket                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+namespace
+{
+    void close_socket(boost::asio::ip::tcp::socket& socket)
+    {
+        boost::system::error_code ec;
+        socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        socket.close(ec);
+    }
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_audio_stream_control_server                                  //
 //                                                                  //
+// this class duplicates TCP server code found in io.h/io.cpp       //
+// but it is done so deliberatly to provide an example of a         //
+// reusable async multi-threaded TCP server that can be used        //
+// standalone                                                       //
 //                                                                  //
 // **************************************************************** //
 
@@ -4790,12 +4890,27 @@ bool tcp_audio_stream_control_server::start(const std::string& host, int port)
 
     try
     {
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(host), static_cast<unsigned short>(port));
-        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context, endpoint);
+        ready_ = false;
+
+        impl_->io_context.restart();
+
+        boost::asio::ip::tcp::resolver resolver(impl_->io_context);
+        boost::asio::ip::tcp::endpoint endpoint = *resolver.resolve(host, std::to_string(port)).begin();
+
+        impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context);
+
+        impl_->acceptor->open(endpoint.protocol());
         impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        impl_->acceptor->bind(endpoint);
+        impl_->acceptor->listen();
+
         running_ = true;
 
-        thread_ = std::jthread(&tcp_audio_stream_control_server::run, this);
+        threads_.clear();
+        for (std::size_t i = 0; i < thread_count_; ++i)
+        {
+            threads_.emplace_back(&tcp_audio_stream_control_server::run, this);
+        }
 
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this]() { return ready_; });
@@ -4810,37 +4925,49 @@ bool tcp_audio_stream_control_server::start(const std::string& host, int port)
 
 void tcp_audio_stream_control_server::stop()
 {
+    if (!running_)
+    {
+        return;
+    }
     running_ = false;
 
     {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        for (auto& wp : client_connections_)
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        for (auto& conn : connections_)
         {
-            if (auto sp = wp.lock())
-            {
-                boost::system::error_code ec;
-                sp->socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-                sp->socket.close(ec);
-            }
+            close_socket(conn->socket);
         }
-        client_connections_.clear();
+        connections_.clear();
     }
 
-    if (impl_ && impl_->acceptor && impl_->acceptor->is_open())
+    boost::asio::post(impl_->io_context, [] { /* cancel all pending ops if needed */ });
+
+    impl_->io_context.stop();
+
+    if (impl_->acceptor && impl_->acceptor->is_open())
     {
         boost::system::error_code ec;
         impl_->acceptor->close(ec);
     }
 
-    if (thread_.joinable())
+    for (auto& thread : threads_)
     {
-        thread_.join();
+        if (thread.joinable())
+        {
+            thread.join();
+        }
     }
+    threads_.clear();
+}
 
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        client_threads_.clear();
-    }
+void tcp_audio_stream_control_server::thread_count(std::size_t size)
+{
+    thread_count_ = size > 0 ? size : 1;
+}
+
+std::size_t tcp_audio_stream_control_server::thread_count() const
+{
+    return thread_count_;
 }
 
 void tcp_audio_stream_control_server::throw_if_faulted()
@@ -4860,107 +4987,167 @@ bool tcp_audio_stream_control_server::faulted()
     return exception_ != nullptr;
 }
 
+
 void tcp_audio_stream_control_server::run()
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        ready_ = true;
+        if (!ready_)
+        {
+            accept_async();
+            ready_ = true;
+        }
     }
     cv_.notify_one();
 
     try
     {
-        run_internal();
+        impl_->io_context.run();
+    }
+    catch (const boost::system::system_error& e)
+    {
+        running_ = false;
+
+        if (e.code() != boost::asio::error::operation_aborted)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::make_exception_ptr(e);
+            cv_.notify_all();
+        }
     }
     catch (...)
     {
         running_ = false;
 
-        std::lock_guard<std::mutex> lock(mutex_);
-        exception_ = std::current_exception();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::current_exception();
+        }
         cv_.notify_all();
     }
 
     running_ = false;
 }
 
-void tcp_audio_stream_control_server::run_internal()
+void tcp_audio_stream_control_server::accept_async()
 {
-    while (running_)
-    {
-        auto connection = std::make_shared<tcp_audio_stream_control_client_connection_impl>(impl_->io_context);
+    auto connection = std::make_shared<tcp_audio_stream_control_client_connection_impl>(impl_->io_context);
 
-        try
+    impl_->acceptor->async_accept(connection->socket, [this, connection](boost::system::error_code ec) {
+        if (!running_)
         {
-            impl_->acceptor->accept(connection->socket);
-        }
-        catch (const boost::system::system_error&)
-        {
-            break;
+            return;
         }
 
+        if (!ec)
         {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
+            {
+                std::lock_guard<std::mutex> lock(connections_mutex_);
+                connections_.insert(connection);
+            }
 
-            client_connections_.push_back(connection);
-
-            std::erase_if(client_connections_, [](const std::weak_ptr<tcp_audio_stream_control_client_connection_impl>& wp) {
-                return wp.expired();
-            });
-
-            client_threads_.emplace_back([this, connection]() {
-                handle_client(connection);
-            });
+            read_async(connection);
         }
-    }
+        else if (ec != boost::asio::error::operation_aborted)
+        {
+            return;
+        }
 
-    std::lock_guard<std::mutex> lock(clients_mutex_);
-    client_threads_.clear();
+        accept_async();
+    });
 }
 
-void tcp_audio_stream_control_server::handle_client(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection)
+void tcp_audio_stream_control_server::read_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection)
 {
-    while (running_ && connection->socket.is_open())
-    {
-        try
-        {
-            // Read the request from the client
-            // Read the request length, then read the request data
-            // Parse the request, identify the command and handle it, encode the response as a string
-            // Write the response length, then write the response data to the client
+    auto length_buffer = std::make_shared<uint32_t>(0);
 
-            uint32_t request_length;
-            boost::asio::read(connection->socket, boost::asio::buffer(&request_length, sizeof(request_length)));
+    boost::asio::async_read(
+        connection->socket,
+        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
+        boost::asio::bind_executor(connection->strand,
+            [this, connection, length_buffer](boost::system::error_code ec, std::size_t) {
+                if (ec || !running_)
+                {
+                    close_socket(connection->socket);
 
-            std::string request_data(boost::endian::big_to_native(request_length), '\0');
-            boost::asio::read(connection->socket, boost::asio::buffer(request_data.data(), request_data.size()));
+                    {
+                        std::lock_guard<std::mutex> lock(connections_mutex_);
+                        connections_.erase(connection);
+                    }
 
-            std::string response_data;
+                    return;
+                }
 
-            try
-            {
-                response_data = handle_request(request_data);
+                auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
+
+                boost::asio::async_read(
+                    connection->socket,
+                    boost::asio::buffer(request->data(), request->size()),
+                    boost::asio::bind_executor(connection->strand,
+                        [this, connection, request](boost::system::error_code ec, std::size_t) {
+                            if (ec || !running_)
+                            {
+                                close_socket(connection->socket);
+
+                                {
+                                    std::lock_guard<std::mutex> lock(connections_mutex_);
+                                    connections_.erase(connection);
+                                }
+
+                                return;
+                            }
+
+                            std::string response;
+                            try
+                            {
+                                response = handle_request(*request);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                response = nlohmann::json{ {"error", e.what()} }.dump();
+                            }
+
+                            write_async(connection, std::move(response));
+                        }
+                    )
+                );
             }
-            catch (const std::exception& e)
-            {
-                response_data = "{ \"error\": \"" + std::string(e.what()) + "\" }";
-            }
+        )
+    );
+}
 
-            uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response_data.size()));
+void tcp_audio_stream_control_server::write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::string response)
+{
+    auto data_buffer = std::make_shared<std::string>(std::move(response));
 
-            boost::asio::write(connection->socket, boost::asio::buffer(&response_length, sizeof(response_length)));
-            boost::asio::write(connection->socket, boost::asio::buffer(response_data));
-        }
-        catch (const boost::system::system_error& e)
-        {
-            if (e.code() == boost::asio::error::eof || e.code() == boost::asio::error::connection_reset ||
-                e.code() == boost::asio::error::connection_aborted || e.code() == boost::asio::error::broken_pipe)
-            {
-                break;
+    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data_buffer->size()));
+    auto length_buffer = std::make_shared<uint32_t>(length);
+
+    std::array<boost::asio::const_buffer, 2> buffers = {
+        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
+        boost::asio::buffer(*data_buffer)
+    };
+
+    boost::asio::async_write(
+        connection->socket,
+        buffers,
+        boost::asio::bind_executor(connection->strand,
+            [this, connection, data_buffer, length_buffer](boost::system::error_code ec, std::size_t) {
+                if (ec || !running_)
+                {
+                    close_socket(connection->socket);
+
+                    {
+                        std::lock_guard<std::mutex> lock(connections_mutex_);
+                        connections_.erase(connection);
+                    }
+
+                    return;
+                }
+                read_async(connection);
             }
-            throw;
-        }
-    }
+        )
+    );
 }
 
 std::string tcp_audio_stream_control_server::handle_request(const std::string& data)
