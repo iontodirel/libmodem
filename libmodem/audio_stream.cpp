@@ -1027,6 +1027,7 @@ bool try_get_audio_device_by_id(const std::string& id, audio_device& device)
         int id_int = std::atoi(id.c_str());
         return dev.card_id == id_int;
 #endif // __linux__
+        return false;
     });
 
     if (it != devices.end())

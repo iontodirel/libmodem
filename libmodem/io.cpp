@@ -43,11 +43,11 @@
 
 #endif // WIN32
 
-#if __linux__
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <dlfcn.h>
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
 
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>
@@ -273,7 +273,7 @@ void serial_port::rts(bool enable)
         }
         rts_ = enable;
 #endif // WIN32
-#if __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         if (enable)
@@ -285,7 +285,7 @@ void serial_port::rts(bool enable)
             status &= ~TIOCM_RTS;
         }
         ::ioctl(impl_->serial_port.native_handle(), TIOCMSET, &status);
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -305,11 +305,11 @@ bool serial_port::rts()
         // Note: GetCommModemStatus doesn't return RTS state directly
         return rts_;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_RTS) != 0;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -337,7 +337,7 @@ void serial_port::dtr(bool enable)
         }
         dtr_ = enable;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         if (enable)
@@ -349,7 +349,7 @@ void serial_port::dtr(bool enable)
             status &= ~TIOCM_DTR;
         }
         ::ioctl(impl_->serial_port.native_handle(), TIOCMSET, &status);
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -369,11 +369,11 @@ bool serial_port::dtr()
         // Note: GetCommModemStatus doesn't return DTR state directly
         return dtr_;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DTR) != 0;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -395,11 +395,11 @@ bool serial_port::cts()
         ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_CTS_ON) != 0;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CTS) != 0;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -421,11 +421,11 @@ bool serial_port::dsr()
         ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_DSR_ON) != 0;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_DSR) != 0;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -447,11 +447,11 @@ bool serial_port::dcd()
         ::GetCommModemStatus(impl_->serial_port.native_handle(), &status);
         return (status & MS_RLSD_ON) != 0;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int status;
         ::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status);
         return (status & TIOCM_CAR) != 0;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -584,11 +584,11 @@ std::size_t serial_port::bytes_available()
         }
         return 0;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         int bytes_available = 0;
         ::ioctl(impl_->serial_port.native_handle(), FIONREAD, &bytes_available);
         return bytes_available;
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
     }
     catch (...)
     {
@@ -606,9 +606,9 @@ void serial_port::flush()
 #ifdef WIN32
     ::FlushFileBuffers(impl_->serial_port.native_handle());
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     ::tcflush(impl_->serial_port.native_handle(), TCIOFLUSH);
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
 }
 
 void serial_port::timeout(unsigned int milliseconds)
@@ -627,13 +627,13 @@ void serial_port::timeout(unsigned int milliseconds)
     timeouts.WriteTotalTimeoutMultiplier = 0;
     ::SetCommTimeouts(impl_->serial_port.native_handle(), &timeouts);
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     struct termios tty;
     ::tcgetattr(impl_->serial_port.native_handle(), &tty);
     tty.c_cc[VTIME] = milliseconds / 100;  // Convert to deciseconds
     tty.c_cc[VMIN] = 0;
     ::tcsetattr(impl_->serial_port.native_handle(), TCSANOW, &tty);
-#endif // __linux__
+#endif // defined(__linux__) || defined(__APPLE__)
 }
 
 // **************************************************************** //
@@ -1499,9 +1499,9 @@ struct ptt_control_library_impl
 #if WIN32
     HMODULE handle = nullptr;
 #endif // WIN32
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     void* handle = nullptr;
-#endif
+#endif // __linux__ || defined(__APPLE__)
 };
 
 // **************************************************************** //
@@ -1550,8 +1550,9 @@ void ptt_control_library::load(const std::string& library_path, void* context)
     set_ptt_fptr_ = reinterpret_cast<set_ptt_fptr>(GetProcAddress(pimpl_->handle, "set_ptt"));
     get_ptt_fptr_ = reinterpret_cast<get_ptt_fptr>(GetProcAddress(pimpl_->handle, "get_ptt"));
 
-#endif
-#ifdef __linux__
+#endif // WIN32
+
+#if defined(__linux__) || defined(__APPLE__)
 
     pimpl_->handle = dlopen(library_path.c_str(), RTLD_NOW);
 
@@ -1565,7 +1566,7 @@ void ptt_control_library::load(const std::string& library_path, void* context)
     set_ptt_fptr_ = reinterpret_cast<set_ptt_fptr>(dlsym(pimpl_->handle, "set_ptt"));
     get_ptt_fptr_ = reinterpret_cast<get_ptt_fptr>(dlsym(pimpl_->handle, "get_ptt"));
 
-#endif
+#endif // __linux__ || defined(__APPLE__)
 
     loaded_ = true;
 
@@ -1603,7 +1604,7 @@ void ptt_control_library::unload()
 #if WIN32
     FreeLibrary(pimpl_->handle);
 #endif
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     dlclose(pimpl_->handle);
 #endif
 

@@ -59,7 +59,18 @@
 #endif
 
 #include <io.h>
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif // __clang__
+
 #include <boost/process.hpp>
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif // __clang__
+
 #include <gtest/gtest.h>
 
 #include <thread>
@@ -4797,6 +4808,9 @@ TEST(ptt_control_library, ptt_control_library)
 #endif
 #ifdef __linux__
     lib.load("./libptt_library_example.so", reinterpret_cast<void*>(+callback));
+#endif
+#if __APPLE__
+    lib.load("./libptt_library_example.dylib", reinterpret_cast<void*>(+callback));
 #endif
 
     library_ptt_control ptt_control(lib);
