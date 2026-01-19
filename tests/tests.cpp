@@ -1509,11 +1509,11 @@ LIBMODEM_FX25_USING_NAMESPACE
 
     packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
-    // Using encode_fx25_frame with iterators
+    // Using encode_frame with iterators
 
     std::vector<uint8_t> frame_bytes = encode_frame(p);
 
-    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes.begin(), frame_bytes.end(), 0);
+    std::vector<uint8_t> fx25_frame_bytes = encode_frame(frame_bytes.begin(), frame_bytes.end(), 0);
 
     EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
         // FX.25 Correlation Tag
@@ -1552,7 +1552,7 @@ LIBMODEM_FX25_USING_NAMESPACE
 
     // packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
-    // Using encode_fx25_frame with a container
+    // Using encode_frame with a container
 
     std::vector<uint8_t> frame_bytes = {
         // Destination: T7SVVQ
@@ -1571,7 +1571,7 @@ LIBMODEM_FX25_USING_NAMESPACE
         0x99, 0x3C,
     };
 
-    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes, 0);
+    std::vector<uint8_t> fx25_frame_bytes = encode_frame(frame_bytes, 0);
 
     EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
         // FX.25 Correlation Tag
@@ -1610,7 +1610,7 @@ LIBMODEM_FX25_USING_NAMESPACE
 
     // packet p = { "W7ION-5", "T7SVVQ", { "WIDE1-1", "WIDE2-1" }, R"(`2(al"|[/>"3u}hello world^)" };
 
-    // Using encode_fx25_frame with a span
+    // Using encode_frame with a span
 
     uint8_t frame_bytes[] = {
         // Destination: T7SVVQ
@@ -1629,7 +1629,7 @@ LIBMODEM_FX25_USING_NAMESPACE
         0x99, 0x3C,
     };
 
-    std::vector<uint8_t> fx25_frame_bytes = encode_fx25_frame(frame_bytes, 0);
+    std::vector<uint8_t> fx25_frame_bytes = encode_frame(frame_bytes, 0);
 
     EXPECT_TRUE(fx25_frame_bytes == std::vector<uint8_t>({
         // FX.25 Correlation Tag
@@ -2293,7 +2293,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 }
 
-TEST(bitstream, encode_basic_bitstream)
+TEST(bitstream, encode_bitstream)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -2329,7 +2329,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
-    std::vector<uint8_t> bitstream = encode_basic_bitstream(p, 1, 1);
+    std::vector<uint8_t> bitstream = encode_bitstream(p, 1, 1);
 
     EXPECT_TRUE(bitstream.size() == 368);
 
@@ -2416,7 +2416,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     uint8_t bitstream[500] = { 0 }; // 500 bytes stack buffer
 
     // AX.25 to final bitstream
-    auto bitstream_end_it = encode_basic_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, std::begin(bitstream));
+    auto bitstream_end_it = encode_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, std::begin(bitstream));
 
     size_t bitstream_size = std::distance(std::begin(bitstream), bitstream_end_it);
 
@@ -2506,7 +2506,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::list<uint8_t> bitstream(500, 0);
 
     // AX.25 to final bitstream
-    auto bitstream_end_it = encode_basic_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, bitstream.begin());
+    auto bitstream_end_it = encode_bitstream(std::begin(frame_bytes), frame_bytes_end_it, 1, 1, bitstream.begin());
 
     size_t bitstream_size = std::distance(bitstream.begin(), bitstream_end_it);
 
@@ -2579,7 +2579,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
 
-    std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+    std::vector<uint8_t> bitstream = encode_bitstream(p, 1, 1);
 
     EXPECT_TRUE(bitstream.size() == 720);
 
@@ -3037,7 +3037,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }));
 }
 
-TEST(bitstream, try_decode_basic_bitstream)
+TEST(bitstream, try_decode_bitstream)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
@@ -3104,7 +3104,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_basic_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state))
         {
             break;
         }
@@ -3179,7 +3179,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     size_t read = 0;
     bitstream_state state;
-    EXPECT_TRUE(try_decode_basic_bitstream(bitstream, 0, p, read, state));
+    EXPECT_TRUE(try_decode_bitstream(bitstream, 0, p, read, state));
 
     // The entire bitstream should be consumed
     EXPECT_TRUE(read == bitstream.size());
@@ -3223,7 +3223,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         {
             size_t read = 0;
             packet packet;
-            if (try_decode_basic_bitstream(buffer, offset, packet, read, state))
+            if (try_decode_bitstream(buffer, offset, packet, read, state))
             {
                 packets.push_back(packet);
             }
@@ -3251,13 +3251,13 @@ LIBMODEM_AX25_USING_NAMESPACE
     // three phases to catch different classes of bugs:
     //
     //   1. Basic decode with packet output
-    //     - Feeds raw bits through try_decode_basic_bitstream(bit, packet, state)
+    //     - Feeds raw bits through try_decode_bitstream(bit, packet, state)
     //     - Verifies the decoder finds exactly 1005 packets
     //     - Confirms state.complete is set on each successful decode
     //     - Tests the high-level API that returns packets directly
     //
     //   2. Frame-level decode with explicit conversion
-    //     - Uses try_decode_basic_bitstream(bit, state) to get raw frames
+    //     - Uses try_decode_bitstream(bit, state) to get raw frames
     //     - Manually converts frames to packets via to_packet()
     //     - Verifies both API variants produce the same count
     //     - Tests the low-level API for users who need frame access
@@ -3297,7 +3297,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, packet, state))
+            if (try_decode_bitstream(bit, packet, state))
             {
                 EXPECT_TRUE(state.complete == true);
 
@@ -3318,7 +3318,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, state))
+            if (try_decode_bitstream(bit, state))
             {
                 packet = to_packet(state.frame);
                 packets.push_back(packet);
@@ -3353,7 +3353,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, state))
+            if (try_decode_bitstream(bit, state))
             {
                 packet = to_packet(state.frame);
                 std::string packet_str = to_string(packet); // packet to string
@@ -3418,7 +3418,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     // Round-trip test for AX.25 bitstream encoding/decoding
     //
-    // This test verifies that encode_basic_bitstream produces bit-for-bit identical output
+    // This test verifies that encode_bitstream produces bit-for-bit identical output
     // to a reference implementation (Direwolf) by:
     //
     //   1. Reading a raw bitstream captured from Direwolf with DEBUG5 enabled
@@ -3465,7 +3465,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (uint8_t bit : bitstream)
     {
         packet packet;
-        if (try_decode_basic_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state))
         {
             std::vector<uint8_t> packet_bitstream;
 
@@ -3490,7 +3490,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         struct frame frame = states[i].frame;
 
-        std::vector<uint8_t> encoded_bitstream = encode_basic_bitstream(
+        std::vector<uint8_t> encoded_bitstream = encode_bitstream(
             frame,
             packet_bitstream_nrzi_levels[i],
             frame_preamble_postambles[i].first,
@@ -3524,7 +3524,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_basic_bitstream(bit, state))
+        if (try_decode_bitstream(bit, state))
         {
             packet packet = to_packet(state.frame);
             std::string packet_str = to_string(packet); // packet to string
@@ -3569,7 +3569,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_basic_bitstream(bit, state)) // AX.25 only
+        if (try_decode_bitstream(bit, state)) // AX.25 only
         {
             const frame& f = state.frame; // decoded frame
 
@@ -3630,7 +3630,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (uint8_t bit : bitstream)
     {
         packet packet;
-        if (try_decode_basic_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state))
         {
             std::vector<uint8_t> packet_bitstream;
 
@@ -3661,7 +3661,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
             }
@@ -3713,7 +3713,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         buffer.push_back(bit);
 
         packet packet;
-        if (try_decode_basic_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state))
         {
             packets.push_back(packet);
 
@@ -3744,7 +3744,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
             }
@@ -3810,7 +3810,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         }
 
         packet packet;
-        if (try_decode_basic_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state))
         {
             packets.push_back(packet);
 
@@ -3843,7 +3843,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_basic_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state))
             {
                 restored_packets.push_back(packet);
             }
@@ -3949,7 +3949,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (uint8_t bit : combined_bitstream)
     {
         packet p;
-        if (try_decode_basic_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state))
         {
             packets.push_back(p);
         }
@@ -4005,7 +4005,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (uint8_t bit : bitstream)
     {
         packet p;
-        if (try_decode_basic_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state))
         {
             packets.push_back(p);
         }
@@ -4023,7 +4023,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     {
         packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" }; // 239
 
-        std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+        std::vector<uint8_t> bitstream = encode_bitstream(p, 1, 1);
 
         EXPECT_TRUE(bitstream.size() == 2120);
     }
@@ -4031,7 +4031,7 @@ LIBMODEM_FX25_USING_NAMESPACE
     {
         packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS! ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890" }; // 241
 
-        std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 1, 1);
+        std::vector<uint8_t> bitstream = encode_bitstream(p, 1, 1);
 
         EXPECT_TRUE(bitstream.empty());
     }
@@ -4057,7 +4057,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
 
     {
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
-        basic_bitstream_converter_adapter bitstream_converter;
+        ax25_bitstream_converter_adapter bitstream_converter;
         wav_audio_output_stream wav_stream("test.wav", 48000);
 
         modem m;
@@ -4092,7 +4092,7 @@ TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
     {
         {
             dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, rate);
-            basic_bitstream_converter_adapter bitstream_converter;
+            ax25_bitstream_converter_adapter bitstream_converter;
             wav_audio_output_stream wav_stream("test.wav", rate);
 
             modem m;
@@ -4152,7 +4152,7 @@ LIBMODEM_FX25_USING_NAMESPACE
             m.gain(0.3);
             m.initialize(wav_stream, modulator);
 
-            std::vector<uint8_t> bitstream = encode_fx25_bitstream(p, 45, 30, check_lengths[i]);
+            std::vector<uint8_t> bitstream = encode_bitstream(p, 45, 30, check_lengths[i]);
 
             m.transmit(bitstream);
 
@@ -4242,7 +4242,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
     wav_audio_output_stream wav_stream("test.wav", 48000);
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     modem m;
     m.baud_rate(1200);
@@ -4292,7 +4292,7 @@ TEST(modem, modulate_1005_afsk_1200_ax25_packet)
 
     {
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
-        basic_bitstream_converter_adapter bitstream_converter;
+        ax25_bitstream_converter_adapter bitstream_converter;
         wav_audio_output_stream wav_stream("test.wav", 48000);
 
         modem m;
@@ -4390,7 +4390,7 @@ TEST(dds_afsk_modulator, samples_per_bit)
     {
         // The next_samples_per_bit function should be constant when the sample rate is an integer multiple of the baud rate
 
-        basic_bitstream_converter bitstream_converter;
+        ax25_bitstream_converter bitstream_converter;
 
         std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 1, 1);
 
@@ -4423,7 +4423,7 @@ TEST(dds_afsk_modulator, samples_per_bit)
     {
         std::vector<double> audio_buffer;
 
-        basic_bitstream_converter bitstream_converter;
+        ax25_bitstream_converter bitstream_converter;
 
         std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 45, 30);
 
@@ -4656,7 +4656,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
         wav_audio_output_stream wav_stream("test.wav", 48000);
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
-        basic_bitstream_converter_adapter bitstream_converter;
+        ax25_bitstream_converter_adapter bitstream_converter;
 
         modem m;
         m.baud_rate(1200);
@@ -4746,7 +4746,7 @@ APRS_TRACK_DETAIL_NAMESPACE_USE
 
         wav_audio_output_stream wav_stream("test.wav", 48000);
         dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
-        basic_bitstream_converter_adapter bitstream_converter;
+        ax25_bitstream_converter_adapter bitstream_converter;
 
         modem m;
         m.baud_rate(1200);
@@ -5123,7 +5123,7 @@ TEST(modem, transmit_hardware_demo)
     serial_port_ptt_control ptt_control(port, serial_port_ptt_line::rts, serial_port_ptt_trigger::on);
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     modem m;
     m.baud_rate(1200);
@@ -5206,7 +5206,7 @@ TEST(modem, transmit_hardware_demo_virtual_serial_port)
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     // Using a start silence of 1 second to see real-world the delay between PTT and audio being sent
     // This is not necessary and it's only used for debugging purposes
@@ -5296,7 +5296,7 @@ TEST(audio_stream, modem_transmit_afsk_1200)
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     modem m;
     m.baud_rate(1200);
@@ -5809,7 +5809,7 @@ TEST(audio_stream, modem_transmit_10_afsk_1200)
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     modem m;
     m.baud_rate(1200);
@@ -5839,7 +5839,7 @@ TEST(audio_stream, modem_transmit_10_continuous_afsk_1200)
 
     audio_stream stream = device.stream();
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
-    basic_bitstream_converter_adapter bitstream_converter;
+    ax25_bitstream_converter_adapter bitstream_converter;
 
     std::vector<uint8_t> bitstream;
 

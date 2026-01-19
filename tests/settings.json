@@ -30,13 +30,13 @@
       "space_freq_hz": 2200.0,
       "tx_delay_ms": 300,
       "tx_tail_ms": 30,
-      "gain": 0.3, 
+      "gain": 0.3,
       "preemphasis": true,
       "begin_silence_ms": 100,
       "end_silence_ms": 100,
-      "output_audio_streams": [ "wasapi_audio_stream_default" ],
-      "input_data_streams": [ "tcp_default" ],
-      "output_ptt_streams": [ "serial_ptt_default", "gpio_ptt_raspberrypi", "gpio_ptt_raspberrypi_2" ]
+      "audio_output_streams": [ "wasapi_audio_stream_default" ],
+      "data_streams": [ "tcp_default" ],
+      "ptt_controls": [ "serial_ptt_default", "gpio_ptt_raspberrypi", "gpio_ptt_raspberrypi_2" ]
     },
     {
       "name": "1200 APRS modulator (wav renderer)",
