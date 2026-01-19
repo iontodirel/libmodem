@@ -979,6 +979,7 @@ tcp_server_base::tcp_server_base() : impl_(std::make_unique<tcp_server_base_impl
 tcp_server_base::tcp_server_base(tcp_server_base&& other) noexcept : impl_(std::make_unique<tcp_server_base_impl>())
 {
     assert(!other.running_);
+    (void)other;
 }
 
 tcp_server_base& tcp_server_base::operator=(tcp_server_base&& other) noexcept
