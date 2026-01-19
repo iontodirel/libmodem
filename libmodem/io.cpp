@@ -702,7 +702,10 @@ tcp_serial_port_client::tcp_serial_port_client() : impl_(std::make_unique<tcp_se
 {
 }
 
-tcp_serial_port_client::~tcp_serial_port_client() = default;
+tcp_serial_port_client::~tcp_serial_port_client()
+{
+    disconnect();
+}
 
 tcp_serial_port_client::tcp_serial_port_client(tcp_serial_port_client&& other) noexcept : impl_(std::move(other.impl_)), connected_(other.connected_)
 {
@@ -1746,7 +1749,10 @@ tcp_ptt_control_client::tcp_ptt_control_client(tcp_ptt_control_client&& other) n
     other.connected_ = false;
 }
 
-tcp_ptt_control_client::~tcp_ptt_control_client() = default;
+tcp_ptt_control_client::~tcp_ptt_control_client()
+{
+    disconnect();
+}
 
 bool tcp_ptt_control_client::connect(const std::string& host, int port)
 {
