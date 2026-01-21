@@ -4973,6 +4973,80 @@ std::size_t tcp_audio_stream_control_server::thread_count() const
     return thread_count_;
 }
 
+void tcp_audio_stream_control_server::no_delay(bool enable)
+{
+    no_delay_ = enable;
+}
+
+bool tcp_audio_stream_control_server::no_delay() const
+{
+    return no_delay_;
+}
+
+void tcp_audio_stream_control_server::keep_alive(bool enable)
+{
+    keep_alive_ = enable;
+}
+
+bool tcp_audio_stream_control_server::keep_alive() const
+{
+    return keep_alive_;
+}
+
+#ifdef __linux__
+
+void tcp_audio_stream_control_server::keep_alive_idle(int seconds)
+{
+    keep_alive_idle_ = seconds;
+}
+
+int tcp_audio_stream_control_server::keep_alive_idle() const
+{
+    return keep_alive_idle_;
+}
+
+void tcp_audio_stream_control_server::keep_alive_interval(int seconds)
+{
+    keep_alive_interval_ = seconds;
+}
+
+int tcp_audio_stream_control_server::keep_alive_interval() const
+{
+    return keep_alive_interval_;
+}
+
+void tcp_audio_stream_control_server::keep_alive_count(int count)
+{
+    keep_alive_count_ = count;
+}
+
+int tcp_audio_stream_control_server::keep_alive_count() const
+{
+    return keep_alive_count_;
+}
+
+#endif
+
+void tcp_audio_stream_control_server::linger(bool enable)
+{
+    linger_ = enable;
+}
+
+bool tcp_audio_stream_control_server::linger() const
+{
+    return linger_;
+}
+
+void tcp_audio_stream_control_server::linger_time(int seconds)
+{
+    linger_time_ = seconds;
+}
+
+int tcp_audio_stream_control_server::linger_time() const
+{
+    return linger_time_;
+}
+
 void tcp_audio_stream_control_server::throw_if_faulted()
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -5040,6 +5114,31 @@ void tcp_audio_stream_control_server::accept_async()
         if (!running_)
         {
             return;
+        }
+
+        if (no_delay_)
+        {
+            connection->socket.set_option(boost::asio::ip::tcp::no_delay(true));
+        }
+
+        if (keep_alive_)
+        {
+            connection->socket.set_option(boost::asio::socket_base::keep_alive(true));
+        }
+
+#ifdef __linux__
+        if (keep_alive_idle_ > 0)
+        {
+            int fd = connection->socket.native_handle();
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keep_alive_idle_, sizeof(keep_alive_idle_));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keep_alive_interval_, sizeof(keep_alive_interval_));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keep_alive_count_, sizeof(keep_alive_count_));
+        }
+#endif
+
+        if (linger_)
+        {
+            connection->socket.set_option(boost::asio::socket_base::linger(true, linger_time_));
         }
 
         if (!ec)

@@ -850,6 +850,23 @@ public:
     void thread_count(std::size_t size);
     std::size_t thread_count() const;
 
+    void no_delay(bool enable);
+    bool no_delay() const;
+    void keep_alive(bool enable);
+    bool keep_alive() const;
+#ifdef __linux__
+    void keep_alive_idle(int seconds);
+    int keep_alive_idle() const;
+    void keep_alive_interval(int seconds);
+    int keep_alive_interval() const;
+    void keep_alive_count(int count);
+    int keep_alive_count() const;
+#endif
+    void linger(bool enable);
+    bool linger() const;
+    void linger_time(int seconds);
+    int linger_time() const;
+
     bool faulted();
     void throw_if_faulted();
 
@@ -873,6 +890,15 @@ private:
     std::mutex connections_mutex_;
     std::unordered_set<std::shared_ptr<tcp_audio_stream_control_client_connection_impl>> connections_;
     bool ready_ = false;
+    bool no_delay_ = true;
+    bool keep_alive_ = true;
+#ifdef __linux__
+    int keep_alive_idle_ = 30;
+    int keep_alive_interval_ = 10;
+    int keep_alive_count_ = 5;
+#endif
+    bool linger_ = false;
+    int linger_time_ = 0;
 };
 
 LIBMODEM_NAMESPACE_END
