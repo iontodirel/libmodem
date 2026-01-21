@@ -38,6 +38,9 @@ audio_stream_config_type parse_audio_stream_type(const std::string& type_str);
 audio_stream_config parse_audio_stream(const nlohmann::json& j);
 ptt_control_config_type parse_ptt_control_type(const std::string& type_str);
 ptt_control_config parse_ptt_control(const nlohmann::json& j);
+modulator_config parse_modulator(const nlohmann::json& j);
+modulator_config_type parse_modulator_type(const std::string& type_str);
+bitstream_convertor_config_type parse_convertor_type(const std::string& type_str);
 
 config read_config(const std::string& filename)
 {
@@ -50,6 +53,14 @@ config read_config(const std::string& filename)
     }
 
     nlohmann::json j = nlohmann::json::parse(file, nullptr, true, true);
+
+    if (j.contains("modulators") && j["modulators"].is_array())
+    {
+        for (const auto& mod : j["modulators"])
+        {
+            c.modulators.push_back(parse_modulator(mod));
+        }
+    }
 
     if (j.contains("audio_streams") && j["audio_streams"].is_array())
     {
@@ -79,6 +90,7 @@ audio_stream_config parse_audio_stream(const nlohmann::json& j)
     c.device_name = j.value("device_name", "");
     c.device_id = j.value("device_id", "");
     c.volume = j.value("volume", 100);
+    c.sample_rate = j.value("sample_rate", 48000);
     c.host = j.value("host", "");
     c.audio_port = j.value("audio_port", 0);
     c.control_port = j.value("control_port", 0);
@@ -105,6 +117,51 @@ ptt_control_config parse_ptt_control(const nlohmann::json& j)
     return c;
 }
 
+modulator_config parse_modulator(const nlohmann::json& j)
+{
+    modulator_config c;
+
+    c.name = j.value("name", "");
+    c.type = parse_modulator_type(j.value("type", ""));
+    c.converter = parse_convertor_type(j.value("convertor", ""));
+    c.enabled = j.value("enabled", true);
+    c.baud_rate = j.value("baud_rate", 1200);
+    c.f_mark = j.value("mark_freq_hz", 1200.0);
+    c.f_space = j.value("space_freq_hz", 2200.0);
+    c.tx_delay_ms = j.value("tx_delay_ms", 0);
+    c.tx_tail_ms = j.value("tx_tail_ms", 0);
+    c.gain = j.value("gain", 1.0);
+    c.preemphasis = j.value("preemphasis", false);
+    c.begin_silence_ms = j.value("begin_silence_ms", 0);
+    c.end_silence_ms = j.value("end_silence_ms", 0);
+
+    if (j.contains("audio_output_streams") && j["audio_output_streams"].is_array())
+    {
+        for (const auto& s : j["audio_output_streams"])
+        {
+            c.audio_output_streams.push_back(s.get<std::string>());
+        }
+    }
+
+    if (j.contains("ptt_controls") && j["ptt_controls"].is_array())
+    {
+        for (const auto& s : j["ptt_controls"])
+        {
+            c.ptt_controls.push_back(s.get<std::string>());
+        }
+    }
+
+    if (j.contains("data_streams") && j["data_streams"].is_array())
+    {
+        for (const auto& s : j["data_streams"])
+        {
+            c.data_streams.push_back(s.get<std::string>());
+        }
+    }
+
+    return c;
+}
+
 audio_stream_config_type parse_audio_stream_type(const std::string& type_str)
 {
     if (type_str == "null_audio_stream") return audio_stream_config_type::null_audio_stream;
@@ -126,4 +183,18 @@ ptt_control_config_type parse_ptt_control_type(const std::string& type_str)
     if (type_str == "null_ptt_stream") return ptt_control_config_type::null_ptt_control;
 
     return ptt_control_config_type::unknown;
+}
+
+modulator_config_type parse_modulator_type(const std::string& type_str)
+{
+    if (type_str == "dds_afsk_modulator") return modulator_config_type::dds_afsk_modulator_double;
+
+    return modulator_config_type::unknown;
+}
+
+bitstream_convertor_config_type parse_convertor_type(const std::string& type_str)
+{
+    if (type_str == "ax25_bitstream_convertor") return bitstream_convertor_config_type::ax25_bitstream_convertor;
+
+    return bitstream_convertor_config_type::unknown;
 }

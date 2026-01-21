@@ -34,6 +34,9 @@
 #include <cmath>
 #include <algorithm>
 #include <optional>
+#include <vector>
+#include <functional>
+#include <initializer_list>
 
 #include "audio_stream.h"
 #include "modulator.h"
@@ -109,9 +112,13 @@ struct modem
     void initialize(audio_stream_base& stream, modulator_base& modulator, bitstream_converter_base& converter, ptt_control_base& ptt_control);
 
     void output_stream(audio_stream_base& stream);
+    audio_stream_base& output_stream();
     void modulator(modulator_base& modulator);
+    modulator_base& modulator();
     void converter(bitstream_converter_base& converter);
+    bitstream_converter_base& converter();
     void ptt_control(ptt_control_base& ptt_control);
+    ptt_control_base& ptt_control();
 
     void transmit();
     void transmit(packet p);
@@ -306,6 +313,34 @@ public:
 
 private:
     bool ptt_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// chained_ptt_control                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class chained_ptt_control : public ptt_control_base
+{
+public:
+    chained_ptt_control();
+    chained_ptt_control(std::initializer_list<std::reference_wrapper<ptt_control_base>> controls);
+
+    void add(ptt_control_base& control);
+    void remove(ptt_control_base& control);
+    void clear();
+
+    void ptt(bool enable) override;
+    bool ptt() override;
+
+    size_t size() const;
+    bool empty() const;
+
+private:
+    std::vector<std::reference_wrapper<ptt_control_base>> controls_;
 };
 
 // **************************************************************** //

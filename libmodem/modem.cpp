@@ -37,6 +37,7 @@
 
 #include <memory>
 #include <thread>
+#include <algorithm>
 
 // Turns out opening the port can assert the RTS line to on
 // If this macro is defined, we will call ptt(false) in the ctor of serial_port_ptt_control
@@ -92,9 +93,27 @@ void modem::output_stream(audio_stream_base& stream)
     audio = std::ref(stream);
 }
 
+audio_stream_base& modem::output_stream()
+{
+    if (!audio.has_value())
+    {
+        throw std::runtime_error("No audio stream");
+    }
+    return audio.value().get();
+}
+
 void modem::modulator(modulator_base& modulator)
 {
     mod = std::ref(modulator);
+}
+
+modulator_base& modem::modulator()
+{
+    if (!mod.has_value())
+    {
+        throw std::runtime_error("No modulator");
+    }
+    return mod.value().get();
 }
 
 void modem::converter(bitstream_converter_base& converter)
@@ -102,9 +121,27 @@ void modem::converter(bitstream_converter_base& converter)
     conv = std::ref(converter);
 }
 
+bitstream_converter_base& modem::converter()
+{
+    if (!conv.has_value())
+    {
+        throw std::runtime_error("No bitstream converter");
+    }
+    return conv.value().get();
+}
+
 void modem::ptt_control(ptt_control_base& ptt_control)
 {
     ptt_control_ = std::ref(ptt_control);
+}
+
+ptt_control_base& modem::ptt_control()
+{
+    if (!ptt_control_.has_value())
+    {
+        throw std::runtime_error("No PTT control");
+    }
+    return ptt_control_.value().get();
 }
 
 void modem::transmit()
@@ -404,6 +441,61 @@ void null_ptt_control::ptt(bool enable)
 bool null_ptt_control::ptt()
 {
     return ptt_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// chained_ptt_control                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+chained_ptt_control::chained_ptt_control() = default;
+
+chained_ptt_control::chained_ptt_control(std::initializer_list<std::reference_wrapper<ptt_control_base>> controls) : controls_(controls)
+{
+}
+
+void chained_ptt_control::add(ptt_control_base& control)
+{
+    controls_.push_back(control);
+}
+
+void chained_ptt_control::remove(ptt_control_base& control)
+{
+    controls_.erase(std::remove_if(controls_.begin(), controls_.end(), [&control](const auto& ref) {
+        return &ref.get() == &control;
+    }), controls_.end());
+}
+
+void chained_ptt_control::clear()
+{
+    controls_.clear();
+}
+
+void chained_ptt_control::ptt(bool enable)
+{
+    for (auto& control : controls_)
+    {
+        control.get().ptt(enable);
+    }
+}
+
+bool chained_ptt_control::ptt()
+{
+    // Returns true if any of the PTT controls is true
+    return std::any_of(controls_.begin(), controls_.end(), [](const auto& control) { return control.get().ptt(); });
+}
+
+size_t chained_ptt_control::size() const
+{
+    return controls_.size();
+}
+
+bool chained_ptt_control::empty() const
+{
+    return controls_.empty();
 }
 
 // **************************************************************** //

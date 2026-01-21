@@ -53,6 +53,7 @@ struct audio_stream_config
     std::string device_name;
     std::string device_id;
     int volume = 100;
+    int sample_rate = 48000;
     std::string host;
     int audio_port = 0;
     int control_port = 0;
@@ -82,10 +83,45 @@ struct ptt_control_config
     std::string platform = "";
 };
 
+enum class modulator_config_type
+{
+    unknown,
+    dds_afsk_modulator_double,
+};
+
+enum class bitstream_convertor_config_type
+{
+    unknown,
+    ax25_bitstream_convertor,
+    fx25_bitstream_converter
+};
+
+struct modulator_config
+{
+    std::string name;
+    modulator_config_type type;
+    bitstream_convertor_config_type converter;
+    bool enabled = true;
+    int baud_rate = 1200;
+    double f_mark = 1200.0;
+    double f_space = 2200.0;
+    double tau = 1.0;
+    int tx_delay_ms = 0;
+    int tx_tail_ms = 0;
+    double gain = 1.0;
+    bool preemphasis = false;
+    int begin_silence_ms = 0;
+    int end_silence_ms = 0;
+    std::vector<std::string> audio_output_streams;
+    std::vector<std::string> ptt_controls;
+    std::vector<std::string> data_streams;
+};
+
 struct config
 {
     std::vector<audio_stream_config> audio_streams;
     std::vector<ptt_control_config> ptt_controls;
+    std::vector<modulator_config> modulators;
 };
 
 config read_config(const std::string& filename);

@@ -242,19 +242,37 @@ public:
     void thread_count(std::size_t size);
     std::size_t thread_count() const;
 
+    void no_delay(bool enable);
+    bool no_delay() const;
+    void keep_alive(bool enable);
+    bool keep_alive() const;
+#ifdef __linux__
+    void keep_alive_idle(int seconds);
+    int keep_alive_idle() const;
+    void keep_alive_interval(int seconds);
+    int keep_alive_interval() const;
+    void keep_alive_count(int count);
+    int keep_alive_count() const;
+#endif
+    void linger(bool enable);
+    bool linger() const;
+    void linger_time(int seconds);
+    int linger_time() const;
+
     bool running() const;
 
     bool faulted();
     void throw_if_faulted();
 
 protected:
-    virtual std::string handle_request(const std::string& data) = 0;
+    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) = 0;
 
 private:
     void run();
     void accept_async();
     void read_async(std::shared_ptr<tcp_client_connection_impl> connection);
     void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response);
+    void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> response);
 
     std::unique_ptr<tcp_server_base_impl> impl_;
     std::vector<std::jthread> threads_;
@@ -266,6 +284,15 @@ private:
     std::exception_ptr exception_;
     std::mutex connections_mutex_;
     std::unordered_set<std::shared_ptr<tcp_client_connection_impl>> connections_;
+    bool no_delay_ = true;
+    bool keep_alive_ = true;
+#ifdef __linux__
+    int keep_alive_idle_ = 30;
+    int keep_alive_interval_ = 10;
+    int keep_alive_count_ = 5;
+#endif
+    bool linger_ = false;
+    int linger_time_ = 0;
 };
 
 // **************************************************************** //
@@ -290,7 +317,7 @@ public:
     virtual bool start(const std::string& host, int port) override;
 
 protected:
-    virtual std::string handle_request(const std::string& data) override;
+    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) override;
 
 private:
     std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
@@ -401,7 +428,7 @@ public:
     virtual bool start(const std::string& host, int port) override;
 
 protected:
-    virtual std::string handle_request(const std::string& data) override;
+    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) override;
 
 private:
     struct ptt_callable_base

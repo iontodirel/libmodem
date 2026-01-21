@@ -5081,7 +5081,7 @@ void tcp_audio_stream_control_server::read_async(std::shared_ptr<tcp_audio_strea
                     return;
                 }
 
-                auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
+                auto request = std::make_shared<std::vector<uint8_t>>(boost::endian::big_to_native(*length_buffer), '\0');
 
                 boost::asio::async_read(
                     connection->socket,
@@ -5100,14 +5100,15 @@ void tcp_audio_stream_control_server::read_async(std::shared_ptr<tcp_audio_strea
                                 return;
                             }
 
-                            std::string response;
+                            std::vector<uint8_t> response;
                             try
                             {
                                 response = handle_request(*request);
                             }
                             catch (const std::exception& e)
                             {
-                                response = nlohmann::json{ {"error", e.what()} }.dump();
+                                std::string error_response = nlohmann::json{ {"error", e.what()} }.dump();
+                                response = std::vector<uint8_t>(error_response.begin(), error_response.end());
                             }
 
                             write_async(connection, std::move(response));
@@ -5119,9 +5120,9 @@ void tcp_audio_stream_control_server::read_async(std::shared_ptr<tcp_audio_strea
     );
 }
 
-void tcp_audio_stream_control_server::write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::string response)
+void tcp_audio_stream_control_server::write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::vector<uint8_t> response)
 {
-    auto data_buffer = std::make_shared<std::string>(std::move(response));
+    auto data_buffer = std::make_shared<std::vector<uint8_t>>(std::move(response));
 
     uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data_buffer->size()));
     auto length_buffer = std::make_shared<uint32_t>(length);
@@ -5153,11 +5154,13 @@ void tcp_audio_stream_control_server::write_async(std::shared_ptr<tcp_audio_stre
     );
 }
 
-std::string tcp_audio_stream_control_server::handle_request(const std::string& data)
+std::vector<uint8_t> tcp_audio_stream_control_server::handle_request(const std::vector<uint8_t>& data)
 {
     audio_stream_base& stream = stream_->get();
 
-    nlohmann::json request = nlohmann::json::parse(data);
+    std::string data_str(data.begin(), data.end());
+
+    nlohmann::json request = nlohmann::json::parse(data_str);
 
     std::string command = request.value("command", "");
 
@@ -5250,7 +5253,7 @@ std::string tcp_audio_stream_control_server::handle_request(const std::string& d
 
     std::string response_string = response.dump();
 
-    return response_string;
+    return std::vector<uint8_t>(response_string.begin(), response_string.end());
 }
 
 LIBMODEM_NAMESPACE_END

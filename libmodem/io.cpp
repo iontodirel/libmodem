@@ -1087,6 +1087,46 @@ size_t tcp_server_base::thread_count() const
     return thread_count_;
 }
 
+void tcp_server_base::no_delay(bool enable)
+{
+    no_delay_ = enable;
+}
+
+bool tcp_server_base::no_delay() const
+{
+    return no_delay_;
+}
+
+void tcp_server_base::keep_alive(bool enable)
+{
+    keep_alive_ = enable;
+}
+
+bool tcp_server_base::keep_alive() const
+{
+    return keep_alive_;
+}
+
+void tcp_server_base::linger(bool enable)
+{
+    linger_ = enable;
+}
+
+bool tcp_server_base::linger() const
+{
+    return linger_;
+}
+
+void tcp_server_base::linger_time(int seconds)
+{
+    linger_time_ = seconds;
+}
+
+int tcp_server_base::linger_time() const
+{
+    return linger_time_;
+}
+
 bool tcp_server_base::running() const
 {
     return running_;
@@ -1160,6 +1200,31 @@ void tcp_server_base::accept_async()
             return;
         }
 
+        if (no_delay_)
+        {
+            connection->socket.set_option(boost::asio::ip::tcp::no_delay(true));
+        }
+
+        if (keep_alive_)
+        {
+            connection->socket.set_option(boost::asio::socket_base::keep_alive(true));
+        }
+
+#ifdef __linux__
+        if (keep_alive_idle_ > 0)
+        {
+            int fd = connection->socket.native_handle();
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keep_alive_idle_, sizeof(keep_alive_idle_));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keep_alive_interval_, sizeof(keep_alive_interval_));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keep_alive_count_, sizeof(keep_alive_count_));
+        }
+#endif
+
+        if (linger_)
+        {
+            connection->socket.set_option(boost::asio::socket_base::linger(true, linger_time_));
+        }
+
         if (!ec)
         {
             {
@@ -1199,7 +1264,7 @@ void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> con
                     return;
                 }
 
-                auto request = std::make_shared<std::string>(boost::endian::big_to_native(*length_buffer), '\0');
+                auto request = std::make_shared<std::vector<uint8_t>>(boost::endian::big_to_native(*length_buffer), '\0');
 
                 boost::asio::async_read(
                     connection->socket,
@@ -1218,14 +1283,14 @@ void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> con
                                 return;
                             }
 
-                            std::string response;
+                            std::vector<uint8_t> response;
                             try
                             {
                                 response = handle_request(*request);
                             }
-                            catch (const std::exception& e)
+                            catch (const std::exception&)
                             {
-                                response = nlohmann::json{ {"error", e.what()} }.dump();
+                                return;
                             }
 
                             write_async(connection, std::move(response));
@@ -1239,7 +1304,12 @@ void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> con
 
 void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response)
 {
-    auto data_buffer = std::make_shared<std::string>(std::move(response));
+    write_async(connection, std::vector<uint8_t>(response.begin(), response.end()));
+}
+
+void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> response)
+{
+    auto data_buffer = std::make_shared<std::vector<uint8_t>>(std::move(response));
 
     uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data_buffer->size()));
     auto length_buffer = std::make_shared<uint32_t>(length);
@@ -1318,13 +1388,15 @@ bool tcp_serial_port_server::start(const std::string& host, int port)
     return tcp_server_base::start(host, port);
 }
 
-std::string tcp_serial_port_server::handle_request(const std::string& data)
+std::vector<uint8_t> tcp_serial_port_server::handle_request(const std::vector<uint8_t>& data)
 {
     serial_port_base& serial_port = serial_port_->get();
 
     std::lock_guard<std::mutex> lock(serial_port_mutex_);
 
-    nlohmann::json request = nlohmann::json::parse(data);
+    std::string data_str(data.begin(), data.end());
+
+    nlohmann::json request = nlohmann::json::parse(data_str);
 
     std::string command = request.value("command", "");
 
@@ -1487,7 +1559,7 @@ std::string tcp_serial_port_server::handle_request(const std::string& data)
 
     std::string response_string = response.dump();
 
-    return response_string;
+    return std::vector<uint8_t>(response_string.begin(), response_string.end());
 }
 
 // **************************************************************** //
@@ -1852,9 +1924,11 @@ bool tcp_ptt_control_server::start(const std::string& host, int port)
     return tcp_server_base::start(host, port);
 }
 
-std::string tcp_ptt_control_server::handle_request(const std::string& data)
+std::vector<uint8_t> tcp_ptt_control_server::handle_request(const std::vector<uint8_t>& data)
 {
-    nlohmann::json request = nlohmann::json::parse(data);
+    std::string data_str(data.begin(), data.end());
+
+    nlohmann::json request = nlohmann::json::parse(data_str);
 
     std::string command = request.value("command", "");
 
@@ -1890,7 +1964,7 @@ std::string tcp_ptt_control_server::handle_request(const std::string& data)
 
     std::string response_string = response.dump();
 
-    return response_string;
+    return std::vector<uint8_t>(response_string.begin(), response_string.end());
 }
 
 LIBMODEM_NAMESPACE_END

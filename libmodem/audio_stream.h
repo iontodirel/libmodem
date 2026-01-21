@@ -857,8 +857,8 @@ private:
     void run();
     void accept_async();
     void read_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection);
-    void write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::string response);
-    std::string handle_request(const std::string& data);
+    void write_async(std::shared_ptr<tcp_audio_stream_control_client_connection_impl> connection, std::vector<uint8_t> response);
+    std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data);
 
     std::optional<std::reference_wrapper<audio_stream_base>> stream_;
     std::unique_ptr<tcp_audio_stream_control_server_impl> impl_;

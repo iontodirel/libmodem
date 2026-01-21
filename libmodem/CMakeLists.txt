@@ -153,7 +153,8 @@ set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)
 set_target_properties(libmodem PROPERTIES PREFIX "")
 
 if(UNIX AND NOT APPLE)
-  target_link_libraries(libmodem PRIVATE asound)
+  find_package(ALSA REQUIRED)
+  target_link_libraries(libmodem PRIVATE asound ALSA::ALSA)
 endif()
 
 if(APPLE)
