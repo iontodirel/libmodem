@@ -5116,6 +5116,16 @@ void tcp_audio_stream_control_server::accept_async()
             return;
         }
 
+        if (ec)
+        {
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                return;
+            }
+            accept_async();
+            return;
+        }
+
         if (no_delay_)
         {
             connection->socket.set_option(boost::asio::ip::tcp::no_delay(true));
@@ -5141,20 +5151,12 @@ void tcp_audio_stream_control_server::accept_async()
             connection->socket.set_option(boost::asio::socket_base::linger(true, linger_time_));
         }
 
-        if (!ec)
         {
-            {
-                std::lock_guard<std::mutex> lock(connections_mutex_);
-                connections_.insert(connection);
-            }
-
-            read_async(connection);
-        }
-        else if (ec != boost::asio::error::operation_aborted)
-        {
-            return;
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            connections_.insert(connection);
         }
 
+        read_async(connection);
         accept_async();
     });
 }
