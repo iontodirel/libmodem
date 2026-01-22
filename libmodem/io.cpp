@@ -950,6 +950,7 @@ struct tcp_client_connection_impl : public std::enable_shared_from_this<tcp_clie
 
     boost::asio::strand<boost::asio::io_context::executor_type> strand;
     boost::asio::ip::tcp::socket socket;
+    size_t id;
 };
 
 // **************************************************************** //
@@ -1050,9 +1051,9 @@ void tcp_server_base::stop()
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
-        for (auto& conn : connections_)
+        for (auto& connection : connections_)
         {
-            close_socket(conn->socket);
+            close_socket(connection.second->socket);
         }
         connections_.clear();
     }
@@ -1132,6 +1133,12 @@ bool tcp_server_base::running() const
     return running_;
 }
 
+bool tcp_server_base::faulted()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return exception_ != nullptr;
+}
+
 void tcp_server_base::throw_if_faulted()
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1143,10 +1150,30 @@ void tcp_server_base::throw_if_faulted()
     }
 }
 
-bool tcp_server_base::faulted()
+void tcp_server_base::broadcast(const std::vector<uint8_t>& message)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return exception_ != nullptr;
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    for (auto& connection : connections_)
+    {
+        write_async(connection.second, message);
+    }
+}
+
+void tcp_server_base::send(const tcp_client_connection& connection, std::vector<uint8_t> data)
+{
+    std::shared_ptr<tcp_client_connection_impl> impl;
+
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(connection.id);
+        if (it == connections_.end())
+        {
+            return;
+        }
+        impl = it->second;
+    }
+
+    write_async(impl, std::move(data));
 }
 
 void tcp_server_base::run()
@@ -1235,112 +1262,99 @@ void tcp_server_base::accept_async()
             connection->socket.set_option(boost::asio::socket_base::linger(true, linger_time_));
         }
 
+        std::size_t id = next_connection_id_++;
+        connection->id = id;
+
         {
             std::lock_guard<std::mutex> lock(connections_mutex_);
-            connections_.insert(connection);
+            connections_[id] = connection;
         }
 
         read_async(connection);
+
         accept_async();
     });
 }
 
 void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> connection)
 {
-    auto length_buffer = std::make_shared<uint32_t>(0); // Buffer for the 4-byte length prefix
+    auto buffer = std::make_shared<std::array<uint8_t, 4096>>();
 
-    boost::asio::async_read(
-        connection->socket,
-        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
+    connection->socket.async_read_some(
+        boost::asio::buffer(*buffer),
         boost::asio::bind_executor(connection->strand,
-            [this, connection, length_buffer](boost::system::error_code ec, std::size_t) {
+            [this, connection, buffer](boost::system::error_code ec, std::size_t bytes_read) {
                 if (ec || !running_)
                 {
+                    on_client_disconnected(connection);
+
                     close_socket(connection->socket);
 
                     {
                         std::lock_guard<std::mutex> lock(connections_mutex_);
-                        connections_.erase(connection);
+                        connections_.erase(connection->id);
                     }
 
                     return;
                 }
 
-                auto request = std::make_shared<std::vector<uint8_t>>(boost::endian::big_to_native(*length_buffer), '\0');
+                on_data_received(connection, std::vector<uint8_t>(buffer->begin(), buffer->begin() + bytes_read));
 
-                boost::asio::async_read(
-                    connection->socket,
-                    boost::asio::buffer(request->data(), request->size()),
-                    boost::asio::bind_executor(connection->strand,
-                        [this, connection, request](boost::system::error_code ec, std::size_t) {
-                            if (ec || !running_)
-                            {
-                                close_socket(connection->socket);
-
-                                {
-                                    std::lock_guard<std::mutex> lock(connections_mutex_);
-                                    connections_.erase(connection);
-                                }
-
-                                return;
-                            }
-
-                            std::vector<uint8_t> response;
-                            try
-                            {
-                                response = handle_request(*request);
-                            }
-                            catch (const std::exception&)
-                            {
-                                return;
-                            }
-
-                            write_async(connection, std::move(response));
-                        }
-                    )
-                );
-            }
-        )
-    );
-}
-
-void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response)
-{
-    write_async(connection, std::vector<uint8_t>(response.begin(), response.end()));
-}
-
-void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> response)
-{
-    auto data_buffer = std::make_shared<std::vector<uint8_t>>(std::move(response));
-
-    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data_buffer->size()));
-    auto length_buffer = std::make_shared<uint32_t>(length);
-
-    std::array<boost::asio::const_buffer, 2> buffers = {
-        boost::asio::buffer(length_buffer.get(), sizeof(uint32_t)),
-        boost::asio::buffer(*data_buffer)
-    };
-
-    boost::asio::async_write(
-        connection->socket,
-        buffers,
-        boost::asio::bind_executor(connection->strand,
-            [this, connection, data_buffer, length_buffer](boost::system::error_code ec, std::size_t) {
-                if (ec || !running_)
-                {
-                    close_socket(connection->socket);
-
-                    {
-                        std::lock_guard<std::mutex> lock(connections_mutex_);
-                        connections_.erase(connection);
-                    }
-
-                    return;
-                }
                 read_async(connection);
             }
         )
     );
+}
+
+void tcp_server_base::write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> data)
+{
+    auto buffer = std::make_shared<std::vector<uint8_t>>(std::move(data));
+
+    boost::asio::async_write(
+        connection->socket,
+        boost::asio::buffer(*buffer),
+        boost::asio::bind_executor(connection->strand,
+            [this, connection, buffer](boost::system::error_code ec, std::size_t) {
+                if (ec || !running_)
+                {
+                    on_client_disconnected(connection);
+
+                    close_socket(connection->socket);
+
+                    {
+                        std::lock_guard<std::mutex> lock(connections_mutex_);
+                        connections_.erase(connection->id);
+                    }
+
+                    return;
+                }
+            }
+        )
+    );
+}
+
+void tcp_server_base::on_data_received(std::shared_ptr<tcp_client_connection_impl> connection, const std::vector<uint8_t>& data)
+{
+    auto endpoint = connection->socket.remote_endpoint();
+
+    tcp_client_connection client_connection;
+    client_connection.id = connection->id;
+    client_connection.remote_address = endpoint.address().to_string();
+    client_connection.remote_port = endpoint.port();
+
+    on_data_received(client_connection, data);
+}
+
+void tcp_server_base::on_client_disconnected(std::shared_ptr<tcp_client_connection_impl> connection)
+{
+    auto endpoint = connection->socket.remote_endpoint();
+
+    tcp_client_connection client_connection;
+    client_connection.id = connection->id;
+    client_connection.remote_address = endpoint.address().to_string();
+    client_connection.remote_port = endpoint.port();
+
+    on_client_disconnected(client_connection);
 }
 
 // **************************************************************** //
@@ -1378,7 +1392,10 @@ tcp_serial_port_server& tcp_serial_port_server::operator=(tcp_serial_port_server
     return *this;
 }
 
-tcp_serial_port_server::~tcp_serial_port_server() = default;
+tcp_serial_port_server::~tcp_serial_port_server()
+{
+    stop();
+}
 
 bool tcp_serial_port_server::start(const std::string& host, int port)
 {
@@ -1388,6 +1405,48 @@ bool tcp_serial_port_server::start(const std::string& host, int port)
     }
 
     return tcp_server_base::start(host, port);
+}
+
+void tcp_serial_port_server::on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t>* buffer;
+
+    {
+        std::lock_guard<std::mutex> lock(buffers_mutex_);
+        buffer = &buffers_[connection.id];
+    }
+
+    buffer->insert(buffer->end(), data.begin(), data.end());
+
+    while (buffer->size() >= sizeof(uint32_t))
+    {
+        uint32_t length;
+        std::memcpy(&length, buffer->data(), sizeof(uint32_t));
+        length = boost::endian::big_to_native(length);
+
+        if (buffer->size() < sizeof(uint32_t) + length)
+        {
+            break;
+        }
+
+        std::vector<uint8_t> request(buffer->begin() + sizeof(uint32_t), buffer->begin() + sizeof(uint32_t) + length);
+        buffer->erase(buffer->begin(), buffer->begin() + sizeof(uint32_t) + length);
+
+        std::vector<uint8_t> response = handle_request(request);
+
+        uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response.size()));
+        std::vector<uint8_t> framed_response(sizeof(uint32_t) + response.size());
+        std::memcpy(framed_response.data(), &response_length, sizeof(uint32_t));
+        std::memcpy(framed_response.data() + sizeof(uint32_t), response.data(), response.size());
+
+        send(connection, std::move(framed_response));
+    }
+}
+
+void tcp_serial_port_server::on_client_disconnected(const tcp_client_connection& connection)
+{
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+    buffers_.erase(connection.id);
 }
 
 std::vector<uint8_t> tcp_serial_port_server::handle_request(const std::vector<uint8_t>& data)
@@ -1914,7 +1973,10 @@ tcp_ptt_control_server& tcp_ptt_control_server::operator=(tcp_ptt_control_server
     return *this;
 }
 
-tcp_ptt_control_server::~tcp_ptt_control_server() = default;
+tcp_ptt_control_server::~tcp_ptt_control_server()
+{
+    stop();
+}
 
 bool tcp_ptt_control_server::start(const std::string& host, int port)
 {
@@ -1924,6 +1986,44 @@ bool tcp_ptt_control_server::start(const std::string& host, int port)
     }
 
     return tcp_server_base::start(host, port);
+}
+
+void tcp_ptt_control_server::on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data)
+{
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+
+    auto& buffer = buffers_[connection.id];
+    buffer.insert(buffer.end(), data.begin(), data.end());
+
+    while (buffer.size() >= sizeof(uint32_t))
+    {
+        uint32_t length;
+        std::memcpy(&length, buffer.data(), sizeof(uint32_t));
+        length = boost::endian::big_to_native(length);
+
+        if (buffer.size() < sizeof(uint32_t) + length)
+        {
+            break;
+        }
+
+        std::vector<uint8_t> request(buffer.begin() + sizeof(uint32_t), buffer.begin() + sizeof(uint32_t) + length);
+        buffer.erase(buffer.begin(), buffer.begin() + sizeof(uint32_t) + length);
+
+        std::vector<uint8_t> response = handle_request(request);
+
+        uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response.size()));
+        std::vector<uint8_t> framed_response(sizeof(uint32_t) + response.size());
+        std::memcpy(framed_response.data(), &response_length, sizeof(uint32_t));
+        std::memcpy(framed_response.data() + sizeof(uint32_t), response.data(), response.size());
+
+        send(connection, std::move(framed_response));
+    }
+}
+
+void tcp_ptt_control_server::on_client_disconnected(const tcp_client_connection& connection)
+{
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+    buffers_.erase(connection.id);
 }
 
 std::vector<uint8_t> tcp_ptt_control_server::handle_request(const std::vector<uint8_t>& data)

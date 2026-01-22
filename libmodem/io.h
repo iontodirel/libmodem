@@ -218,6 +218,21 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// tcp_client_connection                                            //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_client_connection
+{
+    std::string remote_address;
+    int remote_port = 0;
+    std::size_t id = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_server_base                                                  //
 //                                                                  //
 //                                                                  //
@@ -265,14 +280,18 @@ public:
     void throw_if_faulted();
 
 protected:
-    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) = 0;
+    virtual void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) = 0;
+    void broadcast(const std::vector<uint8_t>& data);
+    void send(const tcp_client_connection& connection, std::vector<uint8_t> data);
+    virtual void on_client_disconnected(const tcp_client_connection& connection) = 0;
 
 private:
     void run();
     void accept_async();
     void read_async(std::shared_ptr<tcp_client_connection_impl> connection);
-    void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::string response);
     void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> response);
+    void on_data_received(std::shared_ptr<tcp_client_connection_impl> connection, const std::vector<uint8_t>& data);
+    void on_client_disconnected(std::shared_ptr<tcp_client_connection_impl> connection);
 
     std::unique_ptr<tcp_server_base_impl> impl_;
     std::vector<std::jthread> threads_;
@@ -283,7 +302,8 @@ private:
     bool ready_ = false;
     std::exception_ptr exception_;
     std::mutex connections_mutex_;
-    std::unordered_set<std::shared_ptr<tcp_client_connection_impl>> connections_;
+    std::unordered_map<std::size_t, std::shared_ptr<tcp_client_connection_impl>> connections_;
+    std::size_t next_connection_id_ = 0;
     bool no_delay_ = true;
     bool keep_alive_ = true;
 #ifdef __linux__
@@ -317,11 +337,16 @@ public:
     virtual bool start(const std::string& host, int port) override;
 
 protected:
-    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) override;
+    void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
+    void on_client_disconnected(const tcp_client_connection& connection) override;
 
 private:
+    std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data);
+
     std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
     std::mutex serial_port_mutex_;
+    std::mutex buffers_mutex_;
+    std::unordered_map<std::size_t, std::vector<uint8_t>> buffers_;
 };
 
 // **************************************************************** //
@@ -428,9 +453,12 @@ public:
     virtual bool start(const std::string& host, int port) override;
 
 protected:
-    virtual std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data) override;
+    void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
+    void on_client_disconnected(const tcp_client_connection& connection) override;
 
 private:
+    std::vector<uint8_t> handle_request(const std::vector<uint8_t>& data);
+
     struct ptt_callable_base
     {
         virtual void invoke(bool ptt_state) = 0;
@@ -452,6 +480,8 @@ private:
     };
 
     std::unique_ptr<ptt_callable_base> ptt_callable_;
+    std::mutex buffers_mutex_;
+    std::unordered_map<std::size_t, std::vector<uint8_t>> buffers_;
 };
 
 template<typename Func, typename ... Args>
