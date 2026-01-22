@@ -892,6 +892,9 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc);
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, packet& p);
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
 
 template<class InputIt>
 bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet& p);
@@ -902,11 +905,20 @@ bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, struct fram
 template<typename InputIt>
 bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data, std::array<uint8_t, 2>& crc);
 
+template<typename InputIt>
+bool try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
+
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, std::array<uint8_t, 2>& crc);
 
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data);
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc);
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid);
 
 std::vector<uint8_t> encode_header(const packet& p);
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path);
@@ -1191,6 +1203,19 @@ LIBMODEM_INLINE bool try_decode_frame(InputIt frame_it_first, InputIt frame_it_l
     return result;
 }
 
+template<typename InputIt>
+LIBMODEM_INLINE bool try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
+{
+    // Decode an AX.25 frame from a byte range
+
+    path.clear();
+    data.clear();
+
+    auto [path_out_it, data_out_it, result] = try_decode_frame_no_fcs(frame_it_first, frame_it_last, from, to, std::back_inserter(path), std::back_inserter(data));
+
+    return result;
+}
+
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, std::array<uint8_t, 2>& crc)
 {
@@ -1206,7 +1231,7 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
 }
 
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
-LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc)
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data)
 {
     // Decode an AX.25 frame from a byte range
     //
@@ -1214,11 +1239,15 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
     // data - contains an output iterator to the data payload of the frame
     // path - contains an output iterator to the path addresses of the frame, each address is of the type "struct address"
 
-    static constexpr uint8_t s_frame_mask = 0x03;
-    static constexpr uint8_t s_frame = 0x01;  // (ctrl & 0x03) == 0x01
-    static constexpr uint8_t u_frame_mask = 0x03;
-    static constexpr uint8_t u_frame = 0x03;  // (ctrl & 0x03) == 0x03
+    uint8_t control = 0;
+    uint8_t pid = 0;
+    return try_decode_frame_no_fcs(frame_it_first, frame_it_last, from, to, path, data, control, pid);
+}
 
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc)
+{
     size_t frame_size = std::distance(frame_it_first, frame_it_last);
 
     if (frame_size < 18)
@@ -1233,6 +1262,31 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
 
     // Check CRC validity
     if (computed_crc != received_crc)
+    {
+        return { path, data, false };
+    }
+
+    return try_decode_frame_no_fcs(frame_it_first, frame_it_last - 2, from, to, path, data, control, pid);
+}
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid)
+{
+    // Decode an AX.25 frame from a byte range
+    //
+    // frame_it_first and frame_it_last - iterators to the start and end of the frame byte range
+    // data - contains an output iterator to the data payload of the frame
+    // path - contains an output iterator to the path addresses of the frame, each address is of the type "struct address"
+
+    static constexpr uint8_t s_frame_mask = 0x03;
+    static constexpr uint8_t s_frame = 0x01;  // (ctrl & 0x03) == 0x01
+    static constexpr uint8_t u_frame_mask = 0x03;
+    static constexpr uint8_t u_frame = 0x03;  // (ctrl & 0x03) == 0x03
+
+    size_t frame_size = std::distance(frame_it_first, frame_it_last);
+
+    // Minimum: 14 (addresses) + 2 (control/pid) = 16
+    if (frame_size < 16)
     {
         return { path, data, false };
     }
@@ -1297,15 +1351,15 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
     size_t info_field_start = addresses_end_position + 2; // skip the Control Field byte and the Protocol ID byte
 
     // Check bounds before calculating length so that we do not underflow
-    if (info_field_start > frame_size - 2)
+    if (info_field_start > frame_size)
     {
         return { path, data, false };
     }
 
-    size_t info_field_length = (frame_size - 2) - info_field_start; // subtract CRC bytes
+    size_t info_field_length = frame_size - info_field_start;
 
     // Ensure that the info field does not exceed frame bounds
-    if ((info_field_start + info_field_length) > (frame_size - 2))
+    if ((info_field_start + info_field_length) > frame_size)
     {
         return { path, data, false };
     }

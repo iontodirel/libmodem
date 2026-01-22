@@ -829,6 +829,43 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, ad
     return try_decode_frame(frame_bytes.begin(), frame_bytes.end(), from, to, path, data, crc);
 }
 
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, packet& p)
+{
+    address from;
+    address to;
+    std::vector<address> path;
+    std::vector<uint8_t> data;
+
+    if (try_decode_frame_no_fcs(frame_bytes, from, to, path, data))
+    {
+        p.from = to_string(from);
+        p.to = to_string(to);
+
+        p.path.clear();
+
+        for (const auto& path_address : path)
+        {
+            p.path.push_back(to_string(path_address));
+        }
+
+        p.data = std::string(data.begin(), data.end());
+
+        return true;
+    }
+
+    return false;
+}
+
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
+{
+    return try_decode_frame_no_fcs(frame_bytes, frame.from, frame.to, frame.path, frame.data);
+}
+
+bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
+{
+    return try_decode_frame_no_fcs(frame_bytes.begin(), frame_bytes.end(), from, to, path, data);
+}
+
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path)
 {
     std::vector<uint8_t> header;
