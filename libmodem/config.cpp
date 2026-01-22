@@ -34,6 +34,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 
+LIBMODEM_NAMESPACE_BEGIN
+
 audio_stream_config_type parse_audio_stream_type(const std::string& type_str);
 audio_stream_config parse_audio_stream(const nlohmann::json& j);
 ptt_control_config_type parse_ptt_control_type(const std::string& type_str);
@@ -198,3 +200,5 @@ bitstream_convertor_config_type parse_convertor_type(const std::string& type_str
 
     return bitstream_convertor_config_type::unknown;
 }
+
+LIBMODEM_NAMESPACE_END

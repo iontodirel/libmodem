@@ -56,6 +56,10 @@
 #define LIBMODEM_NAMESPACE_END }
 #endif
 
+#ifndef LIBMODEM_INLINE
+#define LIBMODEM_INLINE inline
+#endif
+
 LIBMODEM_NAMESPACE_BEGIN
 
 // **************************************************************** //
@@ -276,6 +280,8 @@ public:
 
     bool running() const;
 
+    void flush();
+
     bool faulted();
     void throw_if_faulted();
 
@@ -486,7 +492,7 @@ private:
 
 template<typename Func, typename ... Args>
     requires std::invocable<std::decay_t<Func>, bool, std::decay_t<Args>...>
-inline tcp_ptt_control_server::tcp_ptt_control_server(Func&& f, Args&& ... args) : tcp_ptt_control_server()
+LIBMODEM_INLINE tcp_ptt_control_server::tcp_ptt_control_server(Func&& f, Args&& ... args) : tcp_ptt_control_server()
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
     {
@@ -500,12 +506,12 @@ inline tcp_ptt_control_server::tcp_ptt_control_server(Func&& f, Args&& ... args)
 
 template<typename Func, typename ... Args>
 template<typename F, typename... A>
-inline tcp_ptt_control_server::ptt_callable<Func, Args...>::ptt_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+LIBMODEM_INLINE tcp_ptt_control_server::ptt_callable<Func, Args...>::ptt_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
 {
 }
 
 template<typename Func, typename ... Args>
-inline void tcp_ptt_control_server::ptt_callable<Func, Args...>::invoke(bool ptt_state)
+LIBMODEM_INLINE void tcp_ptt_control_server::ptt_callable<Func, Args...>::invoke(bool ptt_state)
 {
     if constexpr (std::is_pointer_v<Func>)
     {

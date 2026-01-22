@@ -34,6 +34,21 @@
 #include <string>
 #include <vector>
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_REFERENCE
+#define LIBMODEM_NAMESPACE_REFERENCE libmodem :: 
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 enum class audio_stream_config_type
 {
     unknown,
@@ -125,3 +140,5 @@ struct config
 };
 
 config read_config(const std::string& filename);
+
+LIBMODEM_NAMESPACE_END

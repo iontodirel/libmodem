@@ -1133,6 +1133,10 @@ bool tcp_server_base::running() const
     return running_;
 }
 
+void tcp_server_base::flush()
+{
+}
+
 bool tcp_server_base::faulted()
 {
     std::lock_guard<std::mutex> lock(mutex_);
