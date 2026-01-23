@@ -200,6 +200,7 @@ public:
     std::vector<uint8_t> read(std::size_t size);
     std::vector<uint8_t> read_some(std::size_t max_size);
     std::size_t bytes_available();
+    bool wait_data_received(int timeout_ms);
 
 private:
     std::unique_ptr<tcp_client_impl> impl_;
