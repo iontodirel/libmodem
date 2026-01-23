@@ -1814,6 +1814,14 @@ void wasapi_audio_output_stream::stop()
         if (impl_->audio_client_)
         {
             impl_->audio_client_->Stop();
+            impl_->audio_client_->Reset();
+        }
+
+        // Clear the ring buffer and reset the frame counter
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            impl_->ring_buffer_.clear();
+            total_frames_written_ = 0;
         }
 
         started_ = false;
@@ -2498,6 +2506,13 @@ void wasapi_audio_input_stream::stop()
         if (impl_->audio_client_)
         {
             impl_->audio_client_->Stop();
+            impl_->audio_client_->Reset();
+        }
+
+        // Clear the ring buffer to ensure clean state for next start
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            impl_->ring_buffer_.clear();
         }
 
         started_ = false;
