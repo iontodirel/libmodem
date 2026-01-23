@@ -43,10 +43,13 @@ LIBMODEM_NAMESPACE_BEGIN
 
 void tcp_transport::on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto& buffer = client_buffers_[connection.id];
-    buffer.insert(buffer.end(), data.begin(), data.end());
-    client_ids_.push_back(connection.id);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& buffer = client_buffers_[connection.id];
+        buffer.insert(buffer.end(), data.begin(), data.end());
+        client_ids_.push_back(connection.id);
+    }
+    cv_.notify_one();
 }
 
 void tcp_transport::on_client_disconnected(const tcp_client_connection& connection)
@@ -104,6 +107,21 @@ void tcp_transport::flush()
     tcp_server_base::flush();
 }
 
+bool tcp_transport::wait_data_received(int timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    if (timeout_ms < 0)
+    {
+        cv_.wait(lock, [this]() { return std::any_of(client_buffers_.begin(), client_buffers_.end(), [](const auto& pair) { return !pair.second.empty(); }); });
+        return true;
+    }
+    else
+    {
+        return cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]() { return std::any_of(client_buffers_.begin(), client_buffers_.end(), [](const auto& pair) { return !pair.second.empty(); }); });
+    }
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -139,6 +157,12 @@ std::vector<std::size_t> serial_transport::clients()
 
 void serial_transport::flush()
 {
+}
+
+bool serial_transport::wait_data_received(int timeout_ms)
+{
+    (void)timeout_ms;
+    return true;
 }
 
 // **************************************************************** //
@@ -291,4 +315,9 @@ bool data_source::try_receive(packet& p)
     return false;
 }
 
+bool data_source::wait_data_received(int timeout_ms)
+{
+    (void)timeout_ms;
+    return false;
+}
 LIBMODEM_NAMESPACE_END

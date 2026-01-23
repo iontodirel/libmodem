@@ -36,6 +36,7 @@
 #include <kiss.h>
 #include <config.h>
 #include <pipeline.h>
+#include <data_source.h>
 
 #include <random>
 #include <fstream>
@@ -1898,11 +1899,11 @@ LIBMODEM_KISS_USING_NAMESPACE;
 
     // basic encoding
     {
-        std::vector<unsigned char> data = { 'f', 'o', 'o' };
+        std::vector<unsigned char> data = { '\0', 'f', 'o', 'o' };
         std::vector<unsigned char> output;
         auto [it, success] = encode(data.begin(), data.end(), std::back_inserter(output));
         EXPECT_TRUE(success);
-        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, 'f', 'o', 'o', 0xC0}));
+        EXPECT_TRUE((output == std::vector<unsigned char>{0xC0, '\0', 'f', 'o', 'o', 0xC0}));
     }
 
     // empty input
@@ -5944,6 +5945,63 @@ TEST(audio_stream, capture_5s_stream)
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 
+
+#ifdef ENABLE_TNC_TEST
+
+TEST(data_source, send)
+{
+    std::ifstream file("packets_1d.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open packets_1d.txt";
+    }
+
+    std::vector<std::string> packets_string;
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        packets_string.push_back(line);
+    }
+
+    std::vector<packet> packets;
+
+    for (const auto& packet_string : packets_string)
+    {
+        packet p;
+        if (try_decode_packet(packet_string, p))
+        {
+            packets.push_back(p);
+        }
+    }
+
+    tcp_transport transport("127.0.0.1", 1234);
+    ax25_kiss_formatter formatter;
+
+    class data_source data_source;
+
+    data_source.transport(transport);
+    data_source.formatter(formatter);
+
+    transport.start();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    size_t i = 0;
+
+    while (i < packets.size())
+    {
+        data_source.send(packets[i++]);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    transport.stop();
+}
+
+#endif // ENABLE_TNC_TEST
+
 TEST(data_source, send_receive)
 {
     std::ifstream file("packets_1d.txt");
@@ -6021,7 +6079,7 @@ TEST(data_source, send_receive)
                     }
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            client.wait_data_received(100);
         }
 
         client.disconnect();
@@ -6056,6 +6114,53 @@ TEST(data_source, send_receive)
     }
 
     EXPECT_TRUE(actual_packets == expected_packets);
+}
+
+TEST(tcp_client, wait_data_received)
+{
+    tcp_transport transport("127.0.0.1", 1234);
+
+    transport.start();
+
+    tcp_client client;
+    EXPECT_TRUE(client.connect("127.0.0.1", 1234));
+
+    // Test timeout when no data
+    auto start = std::chrono::steady_clock::now();
+    bool result = client.wait_data_received(100);
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    EXPECT_FALSE(result);
+    EXPECT_GE(elapsed_ms, 90);  // Should wait ~100ms
+    EXPECT_LT(elapsed_ms, 200); // But not too long
+
+    // Test returns true when data arrives after delay
+    std::vector<uint8_t> test_data = { 0x01, 0x02, 0x03 };
+    std::jthread writer_thread([&]() {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        transport.write(test_data);
+    });
+
+    start = std::chrono::steady_clock::now();
+    result = client.wait_data_received(10000);
+    elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+
+    EXPECT_TRUE(result);
+    EXPECT_GE(elapsed_ms, 4900); // Should wait ~5 sec
+    EXPECT_LT(elapsed_ms, 6000); // But not too long
+
+    // Verify data is readable
+    auto data = client.read_some(4096);
+    EXPECT_EQ(data, test_data);
+
+    if (writer_thread.joinable())
+    {
+        writer_thread.join();
+    }
+
+    client.disconnect();
+
+    transport.stop();
 }
 
 int main(int argc, char** argv)

@@ -34,10 +34,13 @@
 #include "io.h"
 #include "bitstream.h"
 #include "kiss.h"
+#include "modem.h"
 
 #include <string>
 #include <memory>
 #include <queue>
+#include <atomic>
+#include <chrono>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -80,7 +83,26 @@ public:
     virtual std::vector<std::size_t> clients() = 0;
 
     virtual void flush() = 0;
+
+    template<typename Rep, typename Period>
+    bool wait_data_received(const std::chrono::duration<Rep, Period>& timeout_duration);
+
+    virtual bool wait_data_received(int timeout_ms = -1) = 0;
 };
+
+template<typename Rep, typename Period>
+LIBMODEM_INLINE bool transport::wait_data_received(const std::chrono::duration<Rep, Period>& timeout_duration)
+{
+    if (timeout_duration.count() < 0)
+    {
+        return wait_data_received(-1);
+    }
+    else
+    {
+        auto timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout_duration).count();
+        return wait_data_received(static_cast<int>(timeout_ms));
+    }
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -110,11 +132,14 @@ public:
     std::vector<std::size_t> clients() override;
     void flush() override;
 
+    bool wait_data_received(int timeout_ms = -1) override;
+
 private:
     void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
     void on_client_disconnected(const tcp_client_connection& connection) override;
 
     std::mutex mutex_;
+    std::condition_variable cv_;
     std::unordered_map<std::size_t, std::vector<uint8_t>> client_buffers_;
     std::vector<std::size_t> client_ids_;
     std::string hostname_;
@@ -142,6 +167,8 @@ public:
     std::vector<std::size_t> clients() override;
 
     void flush() override;
+
+    bool wait_data_received(int timeout_ms = -1) override;
 
 private:
     serial_port port_;
@@ -281,7 +308,7 @@ public:
 
     void send(packet p);
     bool try_receive(packet& p);
-    bool try_receive(kiss::frame& f);
+    bool wait_data_received(int timeout_ms = -1);
 
 private:
     std::optional<std::reference_wrapper<struct transport>> transport_;
