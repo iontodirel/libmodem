@@ -888,6 +888,9 @@ Container encode_frame(const address& from, const address& to, const std::vector
 template <typename PathInputIt, typename DataInputIt, typename BidirIt>
 BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out);
 
+template <typename BidirIt>
+BidirIt encode_frame(const packet& p, BidirIt out);
+
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
@@ -1150,6 +1153,28 @@ LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, Pat
     // Append CRC at the end of the frame
     std::array<uint8_t, 2> crc = compute_crc(frame_start, frame_end);
     out = std::copy(crc.begin(), crc.end(), out);
+
+    return out;
+}
+
+template <typename BidirIt>
+LIBMODEM_INLINE BidirIt encode_frame(const packet& p, BidirIt out)
+{
+    address to_address;
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, to_address);
+
+    address from_address;
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, from_address);
+
+    std::vector<address> path;
+    for (const auto& address_string : p.path)
+    {
+        address path_address;
+        LIBMODEM_NAMESPACE_REFERENCE try_parse_address(address_string, path_address);
+        path.push_back(path_address);
+    }
+
+    out = encode_frame(from_address, to_address, path.begin(), path.end(), p.data.begin(), p.data.end(), out);
 
     return out;
 }

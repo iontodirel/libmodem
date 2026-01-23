@@ -167,9 +167,10 @@ void formatter::invoke_on_command(const kiss::frame& frame)
 
 std::vector<uint8_t> ax25_kiss_formatter::encode(packet p)
 {
+    std::vector<uint8_t> kiss_bytes;
     std::vector<uint8_t> ax25_frame_bytes = ax25::encode_frame(p);
-    ax25_frame_bytes.insert(ax25_frame_bytes.begin(), 0);
-    return kiss::encode(ax25_frame_bytes);
+    kiss::encode(0, ax25_frame_bytes.begin(), ax25_frame_bytes.end() - 2, std::back_inserter(kiss_bytes));
+    return kiss_bytes;
 }
 
 bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, packet& p)

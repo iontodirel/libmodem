@@ -5944,6 +5944,120 @@ TEST(audio_stream, capture_5s_stream)
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 
+TEST(data_source, send_receive)
+{
+    std::ifstream file("packets_1d.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open packets_1d.txt";
+    }
+
+    std::vector<std::string> packets_string;
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        packets_string.push_back(line);
+    }
+
+    std::vector<packet> expected_packets;
+
+    for (const auto& packet_string : packets_string)
+    {
+        packet p;
+        if (try_decode_packet(packet_string, p))
+        {
+            expected_packets.push_back(p);
+        }
+    }
+
+    std::vector<uint8_t> received_data;
+    std::mutex received_mutex;
+    std::atomic<bool> stop_receiving { false };
+
+    tcp_transport transport("127.0.0.1", 1234);
+    ax25_kiss_formatter formatter;
+
+    class data_source data_source;
+
+    data_source.transport(transport);
+    data_source.formatter(formatter);
+
+    transport.start();
+
+    std::vector<packet> actual_packets;
+
+    std::jthread receiver_thread([&]() {
+        kiss::decoder decoder;
+
+        tcp_client client;
+        if (!client.connect("127.0.0.1", 1234))
+        {
+            return;
+        }
+
+        while (!stop_receiving.load())
+        {
+            if (client.bytes_available() > 0)
+            {
+                auto data = client.read_some(4096);
+                if (!data.empty())
+                {
+                    if (decoder.decode(data.begin(), data.end()))
+                    {
+                        auto frames = decoder.frames();
+                        decoder.clear();
+                        for (auto& frame : frames)
+                        {
+                            packet p;
+                            if (ax25::try_decode_frame_no_fcs(frame.data, p))
+                            {
+                                std::lock_guard<std::mutex> lock(received_mutex);
+                                actual_packets.push_back(p);
+                            }
+                        }
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        client.disconnect();
+    });
+
+    // Give the client time to connect
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    size_t i = 0;
+    while (i < expected_packets.size())
+    {
+        data_source.send(expected_packets[i++]);
+    }
+
+    while (true)
+    {
+        {
+            std::lock_guard<std::mutex> lock(received_mutex);
+            if (actual_packets.size() == expected_packets.size())
+            {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    stop_receiving.store(true);
+
+    if (receiver_thread.joinable())
+    {
+        receiver_thread.join();
+    }
+
+    EXPECT_TRUE(actual_packets == expected_packets);
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

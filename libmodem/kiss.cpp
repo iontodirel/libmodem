@@ -208,13 +208,26 @@ void decoder::clear()
 template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt>
 std::pair<OutputIt, bool> encode(InputIt input_it_begin, InputIt input_it_end, OutputIt output_it);
 
+template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt, bool Command>
+std::pair<OutputIt, bool> encode(uint8_t command_byte, InputIt input_it_begin, InputIt input_it_end, OutputIt output_it);
+
 std::vector<uint8_t> encode(const std::vector<uint8_t>& data);
+std::vector<uint8_t> encode(uint8_t command_byte, const std::vector<uint8_t>& data);
 
 std::vector<uint8_t> encode(const std::vector<uint8_t>& data)
 {
     std::vector<uint8_t> result;
 
     encode(data.begin(), data.end(), std::back_inserter(result));
+
+    return result;
+}
+
+std::vector<uint8_t> encode(uint8_t command_byte, const std::vector<uint8_t>& data)
+{
+    std::vector<uint8_t> result;
+
+    encode(command_byte, data.begin(), data.end(), std::back_inserter(result));
 
     return result;
 }

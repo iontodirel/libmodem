@@ -196,10 +196,20 @@ LIBMODEM_INLINE bool decoder::decode(InputIterator input_it_begin, InputIterator
 template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt>
 std::pair<OutputIt, bool> encode(InputIt input_it_begin, InputIt input_it_end, OutputIt output_it);
 
+template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt, bool Command = true>
+std::pair<OutputIt, bool> encode(uint8_t command_byte, InputIt input_it_begin, InputIt input_it_end, OutputIt output_it);
+
 std::vector<uint8_t> encode(const std::vector<uint8_t>& data);
+std::vector<uint8_t> encode(uint8_t command_byte, const std::vector<uint8_t>& data);
 
 template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt>
 LIBMODEM_INLINE std::pair<OutputIt, bool> encode(InputIt input_it_begin, InputIt input_it_end, OutputIt output_it)
+{
+    return encode<InputIt, OutputIt, false>(0, input_it_begin, input_it_end, output_it);
+}
+
+template <std::input_iterator InputIt, std::output_iterator<unsigned char> OutputIt, bool Command>
+LIBMODEM_INLINE std::pair<OutputIt, bool> encode(uint8_t command_byte, InputIt input_it_begin, InputIt input_it_end, OutputIt output_it)
 {
     if (input_it_begin == input_it_end)
     {
@@ -207,6 +217,11 @@ LIBMODEM_INLINE std::pair<OutputIt, bool> encode(InputIt input_it_begin, InputIt
     }
 
     *output_it++ = static_cast<unsigned char>(frame_marker::fend);
+
+    if constexpr (Command)
+    {
+        *output_it++ = command_byte;
+    }
 
     for (auto input_it = input_it_begin; input_it != input_it_end; ++input_it)
     {

@@ -174,27 +174,55 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// tcp_client                                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct tcp_client_impl;
+
+class tcp_client
+{
+public:
+    tcp_client();
+    tcp_client(const tcp_client&) = delete;
+    tcp_client& operator=(const tcp_client&) = delete;
+    tcp_client(tcp_client&&) noexcept;
+    tcp_client& operator=(tcp_client&&) noexcept;
+    virtual ~tcp_client();
+
+    bool connect(const std::string& host, int port);
+    void disconnect();
+    bool connected() const;
+
+    std::size_t write(const std::vector<uint8_t>& data);
+    std::size_t write(const std::string& data);
+    std::vector<uint8_t> read(std::size_t size);
+    std::vector<uint8_t> read_some(std::size_t max_size);
+    std::size_t bytes_available();
+
+private:
+    std::unique_ptr<tcp_client_impl> impl_;
+    bool connected_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_serial_port_client                                           //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct tcp_serial_port_client_impl;
-
-class tcp_serial_port_client : public serial_port_base
+class tcp_serial_port_client : public serial_port_base, public tcp_client
 {
 public:
-    tcp_serial_port_client();
+    tcp_serial_port_client() = default;
     tcp_serial_port_client& operator=(const tcp_serial_port_client&) = delete;
     tcp_serial_port_client(const tcp_serial_port_client&) = delete;
-    tcp_serial_port_client& operator=(tcp_serial_port_client&&) noexcept;
-    tcp_serial_port_client(tcp_serial_port_client&&) noexcept;
-    ~tcp_serial_port_client();
-
-    bool connect(const std::string& host, int port);
-    void disconnect();
-
-    bool connected() const;
+    tcp_serial_port_client& operator=(tcp_serial_port_client&&) noexcept = default;
+    tcp_serial_port_client(tcp_serial_port_client&&) noexcept = default;
+    ~tcp_serial_port_client() = default;
 
     void rts(bool enable) override;
     bool rts() override;
@@ -214,9 +242,7 @@ public:
     void flush() override;
 
 private:
-    std::unique_ptr<tcp_serial_port_client_impl> impl_;
     std::optional<std::reference_wrapper<serial_port_base>> serial_port_;
-    bool connected_ = false;
 };
 
 // **************************************************************** //
@@ -408,29 +434,18 @@ private:
 //                                                                  //
 // **************************************************************** //
 
-struct tcp_ptt_control_client_impl;
-
-class tcp_ptt_control_client
+class tcp_ptt_control_client : public tcp_client
 {
 public:
-    tcp_ptt_control_client();
+    tcp_ptt_control_client() = default;
     tcp_ptt_control_client& operator=(const tcp_ptt_control_client&) = delete;
     tcp_ptt_control_client(const tcp_ptt_control_client&) = delete;
-    tcp_ptt_control_client& operator=(tcp_ptt_control_client&&) noexcept;
-    tcp_ptt_control_client(tcp_ptt_control_client&&) noexcept;
-    ~tcp_ptt_control_client();
-
-    bool connect(const std::string& host, int port);
-    void disconnect();
-
-    bool connected() const;
+    tcp_ptt_control_client& operator=(tcp_ptt_control_client&&) noexcept = default;
+    tcp_ptt_control_client(tcp_ptt_control_client&&) noexcept = default;
+    ~tcp_ptt_control_client() = default;
 
     void ptt(bool ptt_state);
     bool ptt();
-
-private:
-    std::unique_ptr<tcp_ptt_control_client_impl> impl_;
-    bool connected_ = false;
 };
 
 // **************************************************************** //

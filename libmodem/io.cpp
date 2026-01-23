@@ -32,6 +32,7 @@
 #include "io.h"
 
 #include <cassert>
+#include <cstring>
 
 #ifdef WIN32
 
