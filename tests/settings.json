@@ -23,7 +23,7 @@
     {
       "name": "1200 APRS modulator",
       "type": "dds_afsk_modulator",
-      "convertor": "basic_bitstream_convertor",
+      "convertor": "ax25_bitstream_convertor",
       "enabled": true,
       "baud_rate": 1200,
       "mark_freq_hz": 1200.0,
@@ -76,6 +76,7 @@
       "name": "wav_file_default",
       "type": "wav_audio_output_stream",
       "file_path": "output.wav",
+      "sample_rate": 44100,
       "file_mode": "append",
       "max_size": "500MB",
       "max_files": 10
@@ -187,14 +188,16 @@
       "type": "serial_ptt_stream",
       "port": "COM4",
       "line": "dtr",
-      "active": "high"
+      "active": "high",
+      "platform": "windows"
     },
     {
       "name": "serial_ptt_default_2",
       "type": "serial_ptt_stream",
       "port": "COM5",
       "line": "rts",
-      "active": "low"
+      "active": "low",
+      "platform": "windows"
     },
     {
       "name": "library_ptt_1",
@@ -210,20 +213,3 @@
     }
   ]
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

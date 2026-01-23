@@ -36,7 +36,11 @@
 
 LIBMODEM_NAMESPACE_BEGIN
 
-audio_stream_config_type parse_audio_stream_type(const std::string& type_str);
+namespace
+{
+    audio_stream_config_type parse_audio_stream_type(const std::string& type_str);
+}
+
 audio_stream_config parse_audio_stream(const nlohmann::json& j);
 ptt_control_config_type parse_ptt_control_type(const std::string& type_str);
 ptt_control_config parse_ptt_control(const nlohmann::json& j);
@@ -164,17 +168,20 @@ modulator_config parse_modulator(const nlohmann::json& j)
     return c;
 }
 
-audio_stream_config_type parse_audio_stream_type(const std::string& type_str)
+namespace
 {
-    if (type_str == "null_audio_stream") return audio_stream_config_type::null_audio_stream;
-    if (type_str == "wasapi_audio_output_stream") return audio_stream_config_type::wasapi_audio_output_stream;
-    if (type_str == "wasapi_audio_input_stream") return audio_stream_config_type::wasapi_audio_input_stream;
-    if (type_str == "alsa_audio_output_stream") return audio_stream_config_type::alsa_audio_output_stream;
-    if (type_str == "alsa_audio_input_stream") return audio_stream_config_type::alsa_audio_input_stream;
-    if (type_str == "wav_audio_input_stream") return audio_stream_config_type::wav_audio_input_stream;
-    if (type_str == "wav_audio_output_stream") return audio_stream_config_type::wav_audio_output_stream;
+    audio_stream_config_type parse_audio_stream_type(const std::string& type_str)
+    {
+        if (type_str == "null_audio_stream") return audio_stream_config_type::null_audio_stream;
+        if (type_str == "wasapi_audio_output_stream") return audio_stream_config_type::wasapi_audio_output_stream;
+        if (type_str == "wasapi_audio_input_stream") return audio_stream_config_type::wasapi_audio_input_stream;
+        if (type_str == "alsa_audio_output_stream") return audio_stream_config_type::alsa_audio_output_stream;
+        if (type_str == "alsa_audio_input_stream") return audio_stream_config_type::alsa_audio_input_stream;
+        if (type_str == "wav_audio_input_stream") return audio_stream_config_type::wav_audio_input_stream;
+        if (type_str == "wav_audio_output_stream") return audio_stream_config_type::wav_audio_output_stream;
 
-    return audio_stream_config_type::unknown;
+        return audio_stream_config_type::unknown;
+    }
 }
 
 ptt_control_config_type parse_ptt_control_type(const std::string& type_str)

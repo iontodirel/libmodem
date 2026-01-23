@@ -312,6 +312,8 @@ public:
     bool faulted();
     void throw_if_faulted();
 
+    bool wait_stopped(int timeout_ms = -1);
+
 protected:
     virtual void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) = 0;
     void broadcast(const std::vector<uint8_t>& data);

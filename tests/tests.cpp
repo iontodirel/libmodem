@@ -5945,8 +5945,110 @@ TEST(audio_stream, capture_5s_stream)
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD_LONG_RUNNING
 
+TEST(config, read_config)
+{
+    config c = read_config("settings.json");
 
-#ifdef ENABLE_TNC_TEST
+    EXPECT_EQ(c.modulators.size(), 3);
+
+    // First modulator: "1200 APRS modulator"
+    EXPECT_EQ(c.modulators[0].name, "1200 APRS modulator");
+    EXPECT_EQ(c.modulators[0].type, modulator_config_type::dds_afsk_modulator_double);
+    EXPECT_EQ(c.modulators[0].converter, bitstream_convertor_config_type::ax25_bitstream_convertor);
+    EXPECT_EQ(c.modulators[0].enabled, true);
+    EXPECT_EQ(c.modulators[0].baud_rate, 1200);
+    EXPECT_DOUBLE_EQ(c.modulators[0].f_mark, 1200.0);
+    EXPECT_DOUBLE_EQ(c.modulators[0].f_space, 2200.0);
+    EXPECT_EQ(c.modulators[0].tx_delay_ms, 300);
+    EXPECT_EQ(c.modulators[0].tx_tail_ms, 30);
+    EXPECT_DOUBLE_EQ(c.modulators[0].gain, 0.3);
+    EXPECT_EQ(c.modulators[0].preemphasis, true);
+    EXPECT_EQ(c.modulators[0].begin_silence_ms, 100);
+    EXPECT_EQ(c.modulators[0].end_silence_ms, 100);
+    ASSERT_EQ(c.modulators[0].audio_output_streams.size(), 1);
+    EXPECT_EQ(c.modulators[0].audio_output_streams[0], "wasapi_audio_stream_default");
+    ASSERT_EQ(c.modulators[0].data_streams.size(), 1);
+    EXPECT_EQ(c.modulators[0].data_streams[0], "tcp_default");
+    ASSERT_EQ(c.modulators[0].ptt_controls.size(), 3);
+    EXPECT_EQ(c.modulators[0].ptt_controls[0], "serial_ptt_default");
+    EXPECT_EQ(c.modulators[0].ptt_controls[1], "gpio_ptt_raspberrypi");
+    EXPECT_EQ(c.modulators[0].ptt_controls[2], "gpio_ptt_raspberrypi_2");
+
+    // Second modulator: "1200 APRS modulator (wav renderer)"
+    EXPECT_EQ(c.modulators[1].name, "1200 APRS modulator (wav renderer)");
+    EXPECT_EQ(c.modulators[1].enabled, true);
+
+    // Third modulator: "1200 APRS modulator (multiple)"
+    EXPECT_EQ(c.modulators[2].name, "1200 APRS modulator (multiple)");
+    EXPECT_EQ(c.modulators[2].enabled, true);
+
+    ASSERT_EQ(c.audio_streams.size(), 6);
+
+    // wasapi_audio_stream_default
+    EXPECT_EQ(c.audio_streams[0].name, "wasapi_audio_stream_default");
+    EXPECT_EQ(c.audio_streams[0].type, audio_stream_config_type::wasapi_audio_output_stream);
+    EXPECT_EQ(c.audio_streams[0].device_name, "default");
+    EXPECT_EQ(c.audio_streams[0].volume, 20);
+
+    // wasapi_audio_stream_default2
+    EXPECT_EQ(c.audio_streams[1].name, "wasapi_audio_stream_default2");
+    EXPECT_EQ(c.audio_streams[1].type, audio_stream_config_type::wasapi_audio_input_stream);
+    EXPECT_EQ(c.audio_streams[1].device_name, "default");
+    EXPECT_EQ(c.audio_streams[1].volume, 20);
+
+    // alsa_audio_stream_default
+    EXPECT_EQ(c.audio_streams[2].name, "alsa_audio_stream_default");
+    EXPECT_EQ(c.audio_streams[2].type, audio_stream_config_type::alsa_audio_output_stream);
+    EXPECT_EQ(c.audio_streams[2].device_id, "hw:0,0");
+    EXPECT_EQ(c.audio_streams[2].volume, 10);
+
+    // wav_file_default
+    EXPECT_EQ(c.audio_streams[3].name, "wav_file_default");
+    EXPECT_EQ(c.audio_streams[3].type, audio_stream_config_type::wav_audio_output_stream);
+    EXPECT_EQ(c.audio_streams[3].filename, "output.wav");
+    EXPECT_EQ(c.audio_streams[3].sample_rate, 44100);
+
+    // modulator_test_wav_file
+    EXPECT_EQ(c.audio_streams[4].name, "modulator_test_wav_file");
+    EXPECT_EQ(c.audio_streams[4].type, audio_stream_config_type::wav_audio_input_stream);
+    EXPECT_EQ(c.audio_streams[4].filename, "test.wav");
+
+    // null_audio
+    EXPECT_EQ(c.audio_streams[5].name, "null_audio");
+    EXPECT_EQ(c.audio_streams[5].type, audio_stream_config_type::null_audio_stream);
+
+    ASSERT_EQ(c.ptt_controls.size(), 4);
+
+    // serial_ptt_default
+    EXPECT_EQ(c.ptt_controls[0].name, "serial_ptt_default");
+    EXPECT_EQ(c.ptt_controls[0].type, ptt_control_config_type::serial_port_ptt_control);
+    EXPECT_EQ(c.ptt_controls[0].serial_port, "COM4");
+    EXPECT_EQ(c.ptt_controls[0].line, "dtr");
+    EXPECT_EQ(c.ptt_controls[0].trigger, "high");
+    EXPECT_EQ(c.ptt_controls[0].platform, "windows");
+
+    // serial_ptt_default_2
+    EXPECT_EQ(c.ptt_controls[1].name, "serial_ptt_default_2");
+    EXPECT_EQ(c.ptt_controls[1].type, ptt_control_config_type::serial_port_ptt_control);
+    EXPECT_EQ(c.ptt_controls[1].serial_port, "COM5");
+    EXPECT_EQ(c.ptt_controls[1].line, "rts");
+    EXPECT_EQ(c.ptt_controls[1].trigger, "low");
+    EXPECT_EQ(c.ptt_controls[1].platform, "windows");
+
+    // library_ptt_1
+    EXPECT_EQ(c.ptt_controls[2].name, "library_ptt_1");
+    EXPECT_EQ(c.ptt_controls[2].type, ptt_control_config_type::library_ptt_control);
+    EXPECT_EQ(c.ptt_controls[2].library_path, "ptt_library.so");
+    EXPECT_EQ(c.ptt_controls[2].platform, "linux");
+
+    // library_ptt_2
+    EXPECT_EQ(c.ptt_controls[3].name, "library_ptt_2");
+    EXPECT_EQ(c.ptt_controls[3].type, ptt_control_config_type::library_ptt_control);
+    EXPECT_EQ(c.ptt_controls[3].library_path, "ptt_library.dll");
+    EXPECT_EQ(c.ptt_controls[3].platform, "windows");
+}
+
+#ifdef ENABLE_SLOW_TNC_TESTS
 
 TEST(data_source, send)
 {
@@ -6000,7 +6102,7 @@ TEST(data_source, send)
     transport.stop();
 }
 
-#endif // ENABLE_TNC_TEST
+#endif // ENABLE_SLOW_TNC_TESTS
 
 TEST(data_source, send_receive)
 {
@@ -6031,7 +6133,6 @@ TEST(data_source, send_receive)
         }
     }
 
-    std::vector<uint8_t> received_data;
     std::mutex received_mutex;
     std::atomic<bool> stop_receiving { false };
 
@@ -6162,6 +6263,86 @@ TEST(tcp_client, wait_data_received)
 
     transport.stop();
 }
+
+#ifdef ENABLE_SLOW_TNC_TESTS
+
+#ifdef ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
+
+TEST(data_source, modem_data_source_with_hardware_audio)
+{
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device));
+
+    audio_stream stream = device.stream();
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, stream.sample_rate());
+    ax25_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(100);
+    m.end_silence(100);
+    m.gain(0.3);
+    m.initialize(stream, modulator, bitstream_converter);
+
+    // Set audio stream volume to 20%
+    stream.volume(20);
+
+    tcp_transport transport("127.0.0.1", 1234);
+    ax25_kiss_formatter formatter;
+
+    modem_data_source data_source;
+
+    data_source.transport(transport);
+    data_source.formatter(formatter);
+    data_source.modem(m);
+
+    transport.start();
+
+    data_source.start();
+
+    while (data_source.wait_stopped(100))
+    {
+    }
+}
+
+#endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
+
+TEST(data_source, modem_data_source_with_wav_output)
+{
+    wav_audio_output_stream wav_stream("modem_data_source_test.wav", 48000);
+    dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
+    ax25_bitstream_converter_adapter bitstream_converter;
+
+    modem m;
+    m.baud_rate(1200);
+    m.tx_delay(300);
+    m.tx_tail(45);
+    m.start_silence(100);
+    m.end_silence(100);
+    m.gain(0.3);
+    m.initialize(wav_stream, modulator, bitstream_converter);
+
+    tcp_transport transport("127.0.0.1", 1234);
+    ax25_kiss_formatter formatter;
+
+    modem_data_source data_source;
+
+    data_source.transport(transport);
+    data_source.formatter(formatter);
+    data_source.modem(m);
+
+    transport.start();
+
+    data_source.start();
+
+    while (data_source.wait_stopped(100))
+    {
+    }
+}
+
+#endif // ENABLE_SLOW_TNC_TESTS
 
 int main(int argc, char** argv)
 {

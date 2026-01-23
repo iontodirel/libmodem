@@ -184,24 +184,18 @@ private:
 
 struct formatter
 {
-    formatter() = default;
-    virtual ~formatter() = default;
+    formatter();
+    formatter(const formatter& other);
+    virtual ~formatter();
 
     virtual std::unique_ptr<formatter> clone() const = 0;
     virtual std::vector<uint8_t> encode(packet p) = 0;
-    virtual bool try_decode(const std::vector<uint8_t>& data, packet& p) = 0;
+    virtual bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p) = 0;
 
     template<typename Func, typename... Args>
         requires std::invocable<std::decay_t<Func>, const kiss::frame&, std::decay_t<Args>...>
-    void add_on_command(Func&& f, Args&&... args);
 
-    formatter(const formatter& other)
-    {
-        if (other.on_command_callable_)
-        {
-            on_command_callable_ = other.on_command_callable_->clone();
-        }
-    }
+    void add_on_command(Func&& f, Args&&... args);
 
 protected:
     struct command_callable_base
@@ -282,8 +276,8 @@ struct ax25_kiss_formatter : public formatter
 public:
     std::unique_ptr<formatter> clone() const override;
     std::vector<uint8_t> encode(packet p) override;
-    bool try_decode(const std::vector<uint8_t>& data, packet& p) override;
-    bool try_decode(const std::vector<uint8_t>& data, kiss::frame& f);
+    bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p) override;
+    bool try_decode(const std::vector<uint8_t>& data, size_t count, kiss::frame& f);
 
 private:
     kiss::decoder kiss_decoder_;
@@ -301,19 +295,60 @@ private:
 class data_source
 {
 public:
-    std::string name;
+    data_source();
+    virtual ~data_source();
 
     void transport(struct transport& t);
     void formatter(struct formatter& f);
 
+    virtual void start();
+    virtual void stop();
+
     void send(packet p);
     bool try_receive(packet& p);
+
     bool wait_data_received(int timeout_ms = -1);
+
+    virtual bool wait_stopped(int timeout_ms = -1);
+
+    std::string name;
 
 private:
     std::optional<std::reference_wrapper<struct transport>> transport_;
     std::optional<std::reference_wrapper<struct formatter>> formatter_;
     std::unordered_map<std::size_t, std::unique_ptr<struct formatter>> client_formatters_;
+    std::vector<uint8_t> read_buffer_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// modem_data_source                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class modem_data_source : public data_source
+{
+public:
+    virtual ~modem_data_source();
+
+    void modem(struct modem& m);
+
+    virtual void start() override;
+    virtual void stop() override;
+
+    virtual bool wait_stopped(int timeout_ms = -1) override;
+
+private:
+    void receive_callback(std::stop_token stop_token);
+
+    std::optional<std::reference_wrapper<struct modem>> m_;
+    std::jthread receive_thread_;
+    std::atomic<bool> running_{ false };
+    std::condition_variable_any cv_;
+    std::mutex stop_mutex_;
+    std::condition_variable stop_cv_;
 };
 
 LIBMODEM_NAMESPACE_END

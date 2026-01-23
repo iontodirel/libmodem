@@ -161,8 +161,18 @@ void serial_transport::flush()
 
 bool serial_transport::wait_data_received(int timeout_ms)
 {
-    (void)timeout_ms;
-    return true;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+    while (timeout_ms < 0 || std::chrono::steady_clock::now() < deadline)
+    {
+        if (port_.bytes_available() > 0)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    return false;
 }
 
 // **************************************************************** //
@@ -172,6 +182,18 @@ bool serial_transport::wait_data_received(int timeout_ms)
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+formatter::formatter() = default;
+
+formatter::formatter(const formatter& other)
+{
+    if (other.on_command_callable_)
+    {
+        on_command_callable_ = other.on_command_callable_->clone();
+    }
+}
+
+formatter::~formatter() = default;
 
 void formatter::invoke_on_command(const kiss::frame& frame)
 {
@@ -197,10 +219,10 @@ std::vector<uint8_t> ax25_kiss_formatter::encode(packet p)
     return kiss_bytes;
 }
 
-bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, packet& p)
+bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, packet& p)
 {
     kiss::frame frame;
-    if (try_decode(data, frame))
+    if (try_decode(data, count, frame))
     {
         if (frame.command_byte == 0)
         {
@@ -215,11 +237,11 @@ bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, packet& p
     return false;
 }
 
-bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, kiss::frame& p)
+bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, kiss::frame& p)
 {
-    if (!data.empty())
+    if (count > 0)
     {
-        kiss_decoder_.decode(data.begin(), data.end());
+        kiss_decoder_.decode(data.begin(), data.begin() + count);
         for (const auto& frame : kiss_decoder_.frames())
         {
             pending_frames_.push(frame);
@@ -251,6 +273,16 @@ std::unique_ptr<formatter> ax25_kiss_formatter::clone() const
 //                                                                  //
 // **************************************************************** //
 
+data_source::data_source()
+{
+    read_buffer_.resize(4096);
+}
+
+data_source::~data_source()
+{
+    stop();
+}
+
 void data_source::transport(struct transport& t)
 {
     transport_ = t;
@@ -259,6 +291,14 @@ void data_source::transport(struct transport& t)
 void data_source::formatter(struct formatter& f)
 {
     formatter_ = f;
+}
+
+void data_source::start()
+{
+}
+
+void data_source::stop()
+{
 }
 
 void data_source::send(packet p)
@@ -279,16 +319,13 @@ bool data_source::try_receive(packet& p)
             client_formatter = formatter_->get().clone();
         }
 
-        std::vector<uint8_t> read_buffer;
-        read_buffer.resize(4096);
-        std::size_t bytes_read = transport_->get().read(client_id, read_buffer, read_buffer.size());
+        std::size_t bytes_read = transport_->get().read(client_id, read_buffer_, read_buffer_.size());
         if (bytes_read == 0)
         {
             continue;
         }
-        read_buffer.resize(bytes_read);
 
-        if (client_formatter->try_decode(read_buffer, p))
+        if (client_formatter->try_decode(read_buffer_, bytes_read, p))
         {
             return true;
         }
@@ -300,7 +337,7 @@ bool data_source::try_receive(packet& p)
     {
         if (std::find(current_clients.begin(), current_clients.end(), it->first) == current_clients.end())
         {
-            if (it->second->try_decode({}, p))
+            if (it->second->try_decode({}, 0, p))
             {
                 return true;  // Cleanup continues next call
             }
@@ -317,7 +354,98 @@ bool data_source::try_receive(packet& p)
 
 bool data_source::wait_data_received(int timeout_ms)
 {
+    return transport_->get().wait_data_received(timeout_ms);
+}
+
+bool data_source::wait_stopped(int timeout_ms)
+{
     (void)timeout_ms;
     return false;
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// modem_data_source                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+modem_data_source::~modem_data_source()
+{
+    stop();
+}
+
+void modem_data_source::modem(struct modem& m)
+{
+    m_ = m;
+}
+
+void modem_data_source::start()
+{
+    if (!m_)
+    {
+        throw std::runtime_error("modem_data_source: modem not set");
+    }
+
+    if (running_.exchange(true))
+    {
+        return;
+    }
+
+    receive_thread_ = std::jthread([this](std::stop_token stop_token) {
+        receive_callback(stop_token);
+    });
+}
+
+void modem_data_source::stop()
+{
+    if (!running_.exchange(false))
+    {
+        return;
+    }
+
+    if (receive_thread_.joinable())
+    {
+        receive_thread_.request_stop();
+        receive_thread_.join();
+    }
+
+    stop_cv_.notify_all();
+}
+
+void modem_data_source::receive_callback(std::stop_token stop_token)
+{
+    while (!stop_token.stop_requested())
+    {
+        packet p;
+        if (try_receive(p))
+        {
+            m_->get().transmit(p);
+        }
+
+        wait_data_received(10);
+    }
+}
+
+bool modem_data_source::wait_stopped(int timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(stop_mutex_);
+
+    if (!running_.load())
+    {
+        return true;
+    }
+
+    if (timeout_ms < 0)
+    {
+        stop_cv_.wait(lock, [this]() { return !running_.load(); });
+        return true;
+    }
+    else
+    {
+        return stop_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]() { return !running_.load(); });
+    }
+}
+
 LIBMODEM_NAMESPACE_END

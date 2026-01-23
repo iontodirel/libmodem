@@ -1253,6 +1253,20 @@ void tcp_server_base::throw_if_faulted()
     }
 }
 
+bool tcp_server_base::wait_stopped(int timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (timeout_ms < 0)
+    {
+        cv_.wait(lock, [this]() { return !running_; });
+        return true;
+    }
+    else
+    {
+        return cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]() { return !running_; });
+    }
+}
+
 void tcp_server_base::broadcast(const std::vector<uint8_t>& message)
 {
     std::lock_guard<std::mutex> lock(connections_mutex_);
