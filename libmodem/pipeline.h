@@ -41,13 +41,29 @@
 #include <memory>
 #include <set>
 
+#ifndef LIBMODEM_NAMESPACE
+#define LIBMODEM_NAMESPACE libmodem
+#endif
+#ifndef LIBMODEM_NAMESPACE_BEGIN
+#define LIBMODEM_NAMESPACE_BEGIN namespace LIBMODEM_NAMESPACE {
+#endif
+#ifndef LIBMODEM_NAMESPACE_REFERENCE
+#define LIBMODEM_NAMESPACE_REFERENCE libmodem :: 
+#endif
+#ifndef LIBMODEM_NAMESPACE_END
+#define LIBMODEM_NAMESPACE_END }
+#endif
+
+LIBMODEM_NAMESPACE_BEGIN
+
 struct audio_entry
 {
     std::string name;
     std::string display_name;
-    libmodem::audio_device device;
-    libmodem::audio_stream stream;
+    audio_device device;
+    audio_stream stream = nullptr;
     audio_stream_config config;
+    std::vector<std::string> referenced_by;
 };
 
 enum class ptt_control_type
@@ -64,18 +80,18 @@ struct ptt_entry
     std::string name;
     std::string display_name;
     ptt_control_type type = ptt_control_type::unknown;
-    std::unique_ptr<libmodem::ptt_control_base> ptt_control;
-    std::unique_ptr<libmodem::serial_port_base> serial_port;
-    libmodem::tcp_ptt_control_client tcp_ptt_client;
-    libmodem::ptt_control_library ptt_library;
+    std::unique_ptr<ptt_control_base> ptt_control;
+    std::unique_ptr<serial_port_base> serial_port;
+    tcp_ptt_control_client tcp_ptt_client;
+    ptt_control_library ptt_library;
     std::string port_name;
     unsigned int baud_rate = 9600;
     unsigned int data_bits = 8;
-    libmodem::parity parity = libmodem::parity::none;
-    libmodem::stop_bits stop_bits = libmodem::stop_bits::one;
-    libmodem::flow_control flow_control = libmodem::flow_control::none;
-    libmodem::serial_port_ptt_line serial_line = libmodem::serial_port_ptt_line::rts;
-    libmodem::serial_port_ptt_trigger serial_trigger = libmodem::serial_port_ptt_trigger::on;
+    enum parity parity = parity::none;
+    enum stop_bits stop_bits = stop_bits::one;
+    enum flow_control flow_control = flow_control::none;
+    enum serial_port_ptt_line serial_line = serial_port_ptt_line::rts;
+    enum serial_port_ptt_trigger serial_trigger = serial_port_ptt_trigger::on;
     std::string library_path;
     ptt_control_config config;
 };
@@ -83,22 +99,63 @@ struct ptt_entry
 struct modem_entry
 {
     std::string name;
-    libmodem::modem modem;
-    std::unique_ptr<libmodem::bitstream_converter_base> converter;
+    struct modem modem;
+    std::unique_ptr<bitstream_converter_base> converter;
+    std::unique_ptr<modulator_base> modulator;
+};
+
+struct pipeline_events
+{
 };
 
 class pipeline
 {
 public:
+    pipeline(const config& c);
+    ~pipeline();
+
+    void init();
+    void start();
+    void stop();
+    void wait_stopped();
+
+private:
+    void populate_audio_entries();
+    void populate_ptt_controls();
+    void populate_transmit_modems();
+    void populate_receive_modems();
+
+    bool can_add_audio_entry(const audio_stream_config& audio_config);
+    bool is_duplicate_audio_name(const std::string& name);
+    bool is_duplicate_audio_device(const std::string& device_id, audio_device_type type);
+    bool is_duplicate_audio_file(const std::string& filename);
+    bool is_valid_audio_config(const audio_stream_config& audio_config);
+    void register_audio_entry(const audio_entry& entry, const audio_stream_config& audio_config);
+    bool can_add_ptt_control(const ptt_control_config& ptt_config);
+    bool is_duplicate_ptt_name(const std::string& name);
+    bool is_duplicate_serial_port(const std::string& port);
+    bool is_duplicate_library_file(const std::string& path);
+    bool is_valid_ptt_config(const ptt_control_config& ptt_config);
+    void register_ptt_control(const ptt_entry& entry, const ptt_control_config& ptt_config);
+    bool can_add_modem(const modulator_config& modulator_config);
+    bool is_duplicate_modem_name(const std::string& name);
+    void register_modem(const modem_entry& entry);
+
+    bool is_audio_stream_referenced(const std::string& name);
+    bool is_ptt_control_referenced(const std::string& name);
+
+    const struct config config;
     std::vector<modem_entry> modems_;
     std::vector<ptt_entry> ptt_controls_;
     std::vector<audio_entry> audio_entries_;
 
-    void build(const config& c);
-    void start();
-    void stop();
-
-private:
-    void populate_audio_entries(const config& c);
-    void populate_ptt_controls(const config& c);
+    std::set<std::string> used_audio_names_;
+    std::set<std::pair<std::string, audio_device_type>> used_audio_devices_;
+    std::set<std::string> used_audio_files_;
+    std::set<std::string> used_serial_ports_;
+    std::set<std::string> used_library_files_;
+    std::set<std::string> used_ptt_names_;
+    std::set<std::string> used_modem_names_;
 };
+
+LIBMODEM_NAMESPACE_END
