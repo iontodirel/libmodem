@@ -797,7 +797,7 @@ std::size_t tcp_client::write(const std::vector<uint8_t>& data)
     }
     catch (const boost::system::system_error& e)
     {
-        throw io_exception(e.what(), io_error::io_error);
+        throw io_exception(e.what(), io_error::connection_lost);
     }
 }
 
@@ -814,7 +814,7 @@ std::size_t tcp_client::write(const std::string& data)
     }
     catch (const boost::system::system_error& e)
     {
-        throw io_exception(e.what(), io_error::io_error);
+        throw io_exception(e.what(), io_error::connection_lost);
     }
 }
 
@@ -835,7 +835,7 @@ std::vector<uint8_t> tcp_client::read(std::size_t size)
     }
     catch (const boost::system::system_error& e)
     {
-        throw io_exception(e.what(), io_error::io_error);
+        throw io_exception(e.what(), io_error::connection_lost);
     }
 }
 
@@ -856,7 +856,7 @@ std::vector<uint8_t> tcp_client::read_some(std::size_t max_size)
     }
     catch (const boost::system::system_error& e)
     {
-        throw io_exception(e.what(), io_error::io_error);
+        throw io_exception(e.what(), io_error::connection_lost);
     }
 }
 
@@ -946,7 +946,7 @@ nlohmann::json json_request(tcp_client& client, const nlohmann::json& request)
         if (response.contains("error"))
         {
             std::string error_message = response["error"].get<std::string>();
-            throw io_exception(error_message, io_error::io_error);
+            throw io_exception(error_message, io_error::protocol_error);
         }
 
         return response;
@@ -954,6 +954,10 @@ nlohmann::json json_request(tcp_client& client, const nlohmann::json& request)
     catch (const io_exception&)
     {
         throw;
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        throw io_exception(e.what(), io_error::protocol_error);
     }
     catch (const std::exception& e)
     {

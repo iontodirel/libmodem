@@ -73,15 +73,16 @@ LIBMODEM_NAMESPACE_BEGIN
 enum class audio_stream_error
 {
     none,
-    not_initialized,
-    invalid_state,
-    invalid_argument,
-    open_failed,
-    format_not_supported,
-    io_error,
-    timeout,
-    connection_error,
-    internal_error
+    not_initialized,      // recoverable: initialize first
+    invalid_state,        // recoverable: wrong sequence of operations
+    invalid_argument,     // recoverable: fix arguments
+    open_failed,          // maybe recoverable: retry, different resource
+    format_not_supported, // not recoverable: wrong device/format
+    io_error,             // maybe recoverable: read/write failed
+    timeout,              // recoverable: retry
+    connection_error,     // recoverable: reconnect
+    protocol_error,       // recoverable: invalid response data
+    internal_error        // not recoverable: unexpected failure
 };
 
 class audio_stream_exception : public std::exception

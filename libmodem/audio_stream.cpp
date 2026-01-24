@@ -4733,7 +4733,7 @@ nlohmann::json handle_request(tcp_audio_stream_control_client& client, tcp_audio
         if (response.contains("error"))
         {
             std::string error_message = response["error"].get<std::string>();
-            throw audio_stream_exception(error_message, audio_stream_error::internal_error);
+            throw audio_stream_exception(error_message, audio_stream_error::protocol_error);
         }
 
         return response;
@@ -4744,7 +4744,11 @@ nlohmann::json handle_request(tcp_audio_stream_control_client& client, tcp_audio
     }
     catch (const boost::system::system_error& e)
     {
-        throw audio_stream_exception(e.what(), audio_stream_error::io_error);
+        throw audio_stream_exception(e.what(), audio_stream_error::connection_error);
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        throw audio_stream_exception(e.what(), audio_stream_error::protocol_error);
     }
     catch (const std::exception& e)
     {

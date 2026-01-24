@@ -233,7 +233,7 @@ ptt_control_config_type parse_ptt_control_type(const std::string& type_str)
     if (type_str == "serial_ptt_stream") return ptt_control_config_type::serial_port_ptt_control;
     if (type_str == "library_ptt_control") return ptt_control_config_type::library_ptt_control;
     if (type_str == "tcp_ptt_stream") return ptt_control_config_type::tcp_ptt_control;
-    if (type_str == "null_ptt_stream") return ptt_control_config_type::null_ptt_control;
+    if (type_str == "null_ptt_control") return ptt_control_config_type::null_ptt_control;
 
     return ptt_control_config_type::unknown;
 }

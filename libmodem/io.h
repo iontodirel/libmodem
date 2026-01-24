@@ -74,11 +74,14 @@ LIBMODEM_NAMESPACE_BEGIN
 enum class io_error
 {
     none,
-    not_initialized,  // port not open, client not connected
-    invalid_state,    // already open, already loaded
-    load_failed,      // library load/init/function resolution failures
-    io_error,         // general I/O errors (response errors, uninit failures)
-    internal_error    // unexpected failures (unused currently)
+    not_initialized,    // recoverable: open/connect first
+    invalid_state,      // recoverable: wrong sequence of operations
+    open_failed,        // maybe recoverable: retry, different resource
+    load_failed,        // not recoverable: missing library/symbol
+    io_error,           // maybe recoverable: read/write failed
+    connection_lost,    // recoverable: reconnect
+    protocol_error,     // recoverable: invalid response data
+    internal_error      // not recoverable: unexpected failure
 };
 
 class io_exception : public std::exception
