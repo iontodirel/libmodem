@@ -76,20 +76,14 @@ enum class audio_stream_error
     not_initialized,      // stream or device not initialized
     invalid_state,        // operation invalid for current state
     invalid_argument,     // invalid argument provided
-
-    // device errors
     device_not_found,     // device does not exist or was removed
     device_busy,          // device is in use by another process
     device_lost,          // device was disconnected during operation
-
-    // initialization errors
     system_init_failed,   // COM/system initialization failed
     device_enum_failed,   // failed to enumerate audio devices
     device_open_failed,   // failed to open/activate device
     client_init_failed,   // failed to initialize audio client
     format_not_supported, // audio format not supported by device
-
-    // runtime errors
     buffer_error,         // failed to get/release audio buffer
     underrun,             // output buffer underrun
     overrun,              // input buffer overrun
@@ -97,8 +91,6 @@ enum class audio_stream_error
     start_failed,         // failed to start stream
     stop_failed,          // failed to stop stream
     file_error,           // failed to read/write audio file
-
-    // other errors
     timeout,              // operation timed out
     connection_error,     // connection to remote endpoint failed or lost
     protocol_error,       // invalid or malformed response data
