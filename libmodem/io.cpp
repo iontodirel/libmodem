@@ -129,6 +129,62 @@ std::string base64_decode_string(const std::string& encoded)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// io_exception                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+io_exception::io_exception() : message_(), error_(io_error::none)
+{
+}
+
+io_exception::io_exception(const std::string& message) : message_(message), error_(io_error::none)
+{
+}
+
+io_exception::io_exception(const std::string& message, io_error error) : message_(message), error_(error)
+{
+}
+
+io_exception::io_exception(io_error error) : message_(), error_(error)
+{
+}
+
+io_exception::io_exception(const io_exception& other) : std::exception(other), message_(other.message_), error_(other.error_)
+{
+}
+
+io_exception& io_exception::operator=(const io_exception& other)
+{
+    if (this != &other)
+    {
+        std::exception::operator=(other);
+        message_ = other.message_;
+        error_ = other.error_;
+    }
+    return *this;
+}
+
+io_exception::~io_exception() = default;
+
+const char* io_exception::what() const noexcept
+{
+    return message_.c_str();
+}
+
+io_error io_exception::error() const noexcept
+{
+    return error_;
+}
+
+const std::string& io_exception::message() const noexcept
+{
+    return message_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // serial_port_impl                                                 //
 //                                                                  //
 //                                                                  //
@@ -164,7 +220,7 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
 {
     if (is_open_)
     {
-        throw std::runtime_error("Serial port is already open");
+        throw io_exception("Serial port is already open", io_error::invalid_state);
     }
 
     try
@@ -263,7 +319,7 @@ void serial_port::rts(bool enable)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -302,7 +358,7 @@ bool serial_port::rts()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -327,7 +383,7 @@ void serial_port::dtr(bool enable)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -366,7 +422,7 @@ bool serial_port::dtr()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -391,7 +447,7 @@ bool serial_port::cts()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -417,7 +473,7 @@ bool serial_port::dsr()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -443,7 +499,7 @@ bool serial_port::dcd()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -469,16 +525,16 @@ std::size_t serial_port::write(const std::vector<uint8_t>& data)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
     {
         return boost::asio::write(impl_->serial_port, boost::asio::buffer(data));
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        return 0;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -486,16 +542,16 @@ std::size_t serial_port::write(const std::string& data)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
     {
         return boost::asio::write(impl_->serial_port, boost::asio::buffer(data));
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        return 0;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -503,22 +559,20 @@ std::vector<uint8_t> serial_port::read(std::size_t size)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     std::vector<uint8_t> buffer(size);
 
     try
     {
-        std::size_t bytes_read = boost::asio::read(impl_->serial_port,
-            boost::asio::buffer(buffer));
+        std::size_t bytes_read = boost::asio::read(impl_->serial_port, boost::asio::buffer(buffer));
         buffer.resize(bytes_read);
         return buffer;
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        buffer.clear();
-        return buffer;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -526,7 +580,7 @@ std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     std::vector<uint8_t> buffer(max_size);
@@ -537,10 +591,9 @@ std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
         buffer.resize(bytes_read);
         return buffer;
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        buffer.clear();
-        return buffer;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -548,7 +601,7 @@ std::string serial_port::read_until(const std::string& delimiter)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -561,9 +614,9 @@ std::string serial_port::read_until(const std::string& delimiter)
         std::getline(is, result);
         return result;
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        return "";
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -576,7 +629,7 @@ std::size_t serial_port::bytes_available()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
     try
@@ -606,7 +659,7 @@ void serial_port::flush()
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
 #ifdef WIN32
@@ -621,7 +674,7 @@ void serial_port::timeout(unsigned int milliseconds)
 {
     if (!is_open_)
     {
-        throw std::runtime_error("Serial port not open");
+        throw io_exception("Serial port not open", io_error::not_initialized);
     }
 
 #ifdef WIN32
@@ -735,16 +788,16 @@ std::size_t tcp_client::write(const std::vector<uint8_t>& data)
 {
     if (!connected_)
     {
-        throw std::runtime_error("Client not connected");
+        throw io_exception("Client not connected", io_error::not_initialized);
     }
 
     try
     {
         return boost::asio::write(impl_->socket, boost::asio::buffer(data));
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        return 0;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -752,16 +805,16 @@ std::size_t tcp_client::write(const std::string& data)
 {
     if (!connected_)
     {
-        throw std::runtime_error("Client not connected");
+        throw io_exception("Client not connected", io_error::not_initialized);
     }
 
     try
     {
         return boost::asio::write(impl_->socket, boost::asio::buffer(data));
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        return 0;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -769,7 +822,7 @@ std::vector<uint8_t> tcp_client::read(std::size_t size)
 {
     if (!connected_)
     {
-        throw std::runtime_error("Client not connected");
+        throw io_exception("Client not connected", io_error::not_initialized);
     }
 
     std::vector<uint8_t> buffer(size);
@@ -780,10 +833,9 @@ std::vector<uint8_t> tcp_client::read(std::size_t size)
         buffer.resize(bytes_read);
         return buffer;
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        buffer.clear();
-        return buffer;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -791,7 +843,7 @@ std::vector<uint8_t> tcp_client::read_some(std::size_t max_size)
 {
     if (!connected_)
     {
-        throw std::runtime_error("Client not connected");
+        throw io_exception("Client not connected", io_error::not_initialized);
     }
 
     std::vector<uint8_t> buffer(max_size);
@@ -802,10 +854,9 @@ std::vector<uint8_t> tcp_client::read_some(std::size_t max_size)
         buffer.resize(bytes_read);
         return buffer;
     }
-    catch (const boost::system::system_error&)
+    catch (const boost::system::system_error& e)
     {
-        buffer.clear();
-        return buffer;
+        throw io_exception(e.what(), io_error::io_error);
     }
 }
 
@@ -865,38 +916,49 @@ bool tcp_client::wait_data_received(int timeout_ms)
 //                                                                  //
 // **************************************************************** //
 
-nlohmann::json send_json_request(tcp_client& client, const nlohmann::json& request)
+nlohmann::json json_request(tcp_client& client, const nlohmann::json& request)
 {
     if (!client.connected())
     {
-        throw std::runtime_error("Client not connected");
+        throw io_exception("Client not connected", io_error::not_initialized);
     }
 
-    // Send the request with length prefix
-    std::string request_string = request.dump();
-    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(request_string.size()));
-
-    std::vector<uint8_t> length_bytes(sizeof(length));
-    std::memcpy(length_bytes.data(), &length, sizeof(length));
-    client.write(length_bytes);
-    client.write(request_string);
-
-    // Receive the response with length prefix
-    std::vector<uint8_t> response_length_bytes = client.read(sizeof(uint32_t));
-    std::memcpy(&length, response_length_bytes.data(), sizeof(length));
-    length = boost::endian::big_to_native(length);
-
-    std::vector<uint8_t> response_data = client.read(length);
-    std::string response_str(response_data.begin(), response_data.end());
-    nlohmann::json response = nlohmann::json::parse(response_str);
-
-    if (response.contains("error"))
+    try
     {
-        std::string error_message = response["error"].get<std::string>();
-        throw std::runtime_error(error_message);
-    }
+        // Send the request with length prefix
+        std::string request_string = request.dump();
+        uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(request_string.size()));
 
-    return response;
+        std::vector<uint8_t> length_bytes(sizeof(length));
+        std::memcpy(length_bytes.data(), &length, sizeof(length));
+        client.write(length_bytes);
+        client.write(request_string);
+
+        // Receive the response with length prefix
+        std::vector<uint8_t> response_length_bytes = client.read(sizeof(uint32_t));
+        std::memcpy(&length, response_length_bytes.data(), sizeof(length));
+        length = boost::endian::big_to_native(length);
+
+        std::vector<uint8_t> response_data = client.read(length);
+        std::string response_str(response_data.begin(), response_data.end());
+        nlohmann::json response = nlohmann::json::parse(response_str);
+
+        if (response.contains("error"))
+        {
+            std::string error_message = response["error"].get<std::string>();
+            throw io_exception(error_message, io_error::io_error);
+        }
+
+        return response;
+    }
+    catch (const io_exception&)
+    {
+        throw;
+    }
+    catch (const std::exception& e)
+    {
+        throw io_exception(e.what(), io_error::internal_error);
+    }
 }
 
 // **************************************************************** //
@@ -909,62 +971,62 @@ nlohmann::json send_json_request(tcp_client& client, const nlohmann::json& reque
 
 void tcp_serial_port_client::rts(bool enable)
 {
-    send_json_request(*this, { {"command", "set_rts"}, {"value", enable} });
+    json_request(*this, { {"command", "set_rts"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::rts()
 {
-    return send_json_request(*this, { {"command", "get_rts"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_rts"} })["value"].get<bool>();
 }
 
 void tcp_serial_port_client::dtr(bool enable)
 {
-    send_json_request(*this, { {"command", "set_dtr"}, {"value", enable} });
+    json_request(*this, { {"command", "set_dtr"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::dtr()
 {
-    return send_json_request(*this, { {"command", "get_dtr"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_dtr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::cts()
 {
-    return send_json_request(*this, { {"command", "get_cts"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_cts"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dsr()
 {
-    return send_json_request(*this, { {"command", "get_dsr"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_dsr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dcd()
 {
-    return send_json_request(*this, { {"command", "get_dcd"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_dcd"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::vector<uint8_t>& data)
 {
-    return send_json_request(*this, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+    return json_request(*this, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::string& data)
 {
-    return send_json_request(*this, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+    return json_request(*this, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read(std::size_t size)
 {
-    return base64_decode(send_json_request(*this, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
+    return base64_decode(json_request(*this, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read_some(std::size_t max_size)
 {
-    return base64_decode(send_json_request(*this, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
+    return base64_decode(json_request(*this, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
 }
 
 std::string tcp_serial_port_client::read_until(const std::string& delimiter)
 {
-    return base64_decode_string(send_json_request(*this, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
+    return base64_decode_string(json_request(*this, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
 }
 
 bool tcp_serial_port_client::is_open()
@@ -974,17 +1036,17 @@ bool tcp_serial_port_client::is_open()
         return false;
     }
 
-    return send_json_request(*this, { {"command", "is_open"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "is_open"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::bytes_available()
 {
-    return send_json_request(*this, { {"command", "bytes_available"} })["value"].get<std::size_t>();
+    return json_request(*this, { {"command", "bytes_available"} })["value"].get<std::size_t>();
 }
 
 void tcp_serial_port_client::flush()
 {
-    send_json_request(*this, { {"command", "flush"} });
+    json_request(*this, { {"command", "flush"} });
 }
 
 // **************************************************************** //
@@ -1316,9 +1378,19 @@ void tcp_server_base::run()
         if (e.code() != boost::asio::error::operation_aborted)
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            exception_ = std::make_exception_ptr(e);
+            exception_ = std::make_exception_ptr(io_exception(e.what(), io_error::io_error));
             cv_.notify_all();
         }
+    }
+    catch (const std::exception& e)
+    {
+        running_ = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::make_exception_ptr(io_exception(e.what(), io_error::internal_error));
+        }
+        cv_.notify_all();
     }
     catch (...)
     {
@@ -1326,7 +1398,7 @@ void tcp_server_base::run()
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            exception_ = std::current_exception();
+            exception_ = std::make_exception_ptr(io_exception("Unknown error", io_error::internal_error));
         }
         cv_.notify_all();
     }
@@ -1549,7 +1621,16 @@ void tcp_serial_port_server::on_data_received(const tcp_client_connection& conne
         std::vector<uint8_t> request(buffer->begin() + sizeof(uint32_t), buffer->begin() + sizeof(uint32_t) + length);
         buffer->erase(buffer->begin(), buffer->begin() + sizeof(uint32_t) + length);
 
-        std::vector<uint8_t> response = handle_request(request);
+        std::vector<uint8_t> response;
+        try
+        {
+            response = handle_request(request);
+        }
+        catch (const std::exception& e)
+        {
+            std::string error_response = nlohmann::json{ {"error", e.what()} }.dump();
+            response = std::vector<uint8_t>(error_response.begin(), error_response.end());
+        }
 
         uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response.size()));
         std::vector<uint8_t> framed_response(sizeof(uint32_t) + response.size());
@@ -1787,7 +1868,7 @@ void ptt_control_library::load(const std::string& library_path, void* context)
 {
     if (loaded_)
     {
-        throw std::runtime_error("Library already loaded");
+        throw io_exception("Library already loaded", io_error::invalid_state);
     }
 
 #if WIN32
@@ -1796,7 +1877,7 @@ void ptt_control_library::load(const std::string& library_path, void* context)
 
     if (pimpl_->handle == nullptr)
     {
-        throw std::runtime_error("Failed to load library: " + library_path);
+        throw io_exception("Failed to load library: " + library_path, io_error::load_failed);
     }
 
     init_fptr_ = reinterpret_cast<init_fptr>(GetProcAddress(pimpl_->handle, "init"));
@@ -1812,7 +1893,7 @@ void ptt_control_library::load(const std::string& library_path, void* context)
 
     if (pimpl_->handle == nullptr)
     {
-        throw std::runtime_error("Failed to load library: " + library_path);
+        throw io_exception("Failed to load library: " + library_path, io_error::load_failed);
     }
 
     init_fptr_ = reinterpret_cast<init_fptr>(dlsym(pimpl_->handle, "init"));
@@ -1826,14 +1907,14 @@ void ptt_control_library::load(const std::string& library_path, void* context)
 
     if (set_ptt_fptr_ == nullptr || get_ptt_fptr_ == nullptr)
     {
-        throw std::runtime_error("Failed to resolve PTT functions");
+        throw io_exception("Failed to resolve PTT functions", io_error::load_failed);
     }
 
     if (init_fptr_ != nullptr)
     {
         if (init_fptr_(context) != 0)
         {
-            throw std::runtime_error("Library init failed");
+            throw io_exception("Library init failed", io_error::load_failed);
         }
     }
 }
@@ -1875,7 +1956,7 @@ void ptt_control_library::uninit()
     {
         if (uninit_fptr_() != 0)
         {
-            throw std::runtime_error("Library uninit failed");
+            throw io_exception("Library uninit failed", io_error::io_error);
         }
     }
 }
@@ -1921,7 +2002,7 @@ void tcp_ptt_control_client::ptt(bool ptt_state)
     // Request: { "command": "set_ptt", "value": <bool> }
     // Response: { "value": "ok" }
 
-    send_json_request(*this, { {"command", "set_ptt"}, {"value", ptt_state} });
+    json_request(*this, { {"command", "set_ptt"}, {"value", ptt_state} });
 }
 
 bool tcp_ptt_control_client::ptt()
@@ -1931,7 +2012,7 @@ bool tcp_ptt_control_client::ptt()
     // Request: { "command": "get_ptt" }
     // Response: { "value": "<bool>" }
 
-    return send_json_request(*this, { {"command", "get_ptt"} })["value"].get<bool>();
+    return json_request(*this, { {"command", "get_ptt"} })["value"].get<bool>();
 }
 
 // **************************************************************** //
@@ -2004,7 +2085,16 @@ void tcp_ptt_control_server::on_data_received(const tcp_client_connection& conne
         std::vector<uint8_t> request(buffer.begin() + sizeof(uint32_t), buffer.begin() + sizeof(uint32_t) + length);
         buffer.erase(buffer.begin(), buffer.begin() + sizeof(uint32_t) + length);
 
-        std::vector<uint8_t> response = handle_request(request);
+        std::vector<uint8_t> response;
+        try
+        {
+            response = handle_request(request);
+        }
+        catch (const std::exception& e)
+        {
+            std::string error_response = nlohmann::json{ {"error", e.what()} }.dump();
+            response = std::vector<uint8_t>(error_response.begin(), error_response.end());
+        }
 
         uint32_t response_length = boost::endian::native_to_big(static_cast<uint32_t>(response.size()));
         std::vector<uint8_t> framed_response(sizeof(uint32_t) + response.size());

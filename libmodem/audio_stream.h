@@ -45,6 +45,7 @@
 #include <exception>
 #include <array>
 #include <unordered_set>
+#include <exception>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -60,6 +61,50 @@
 #endif
 
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_exception                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class audio_stream_error
+{
+    none,
+    not_initialized,
+    invalid_state,
+    invalid_argument,
+    open_failed,
+    format_not_supported,
+    io_error,
+    timeout,
+    connection_error,
+    internal_error
+};
+
+class audio_stream_exception : public std::exception
+{
+public:
+    audio_stream_exception();
+    audio_stream_exception(const std::string& message);
+    audio_stream_exception(const std::string& message, audio_stream_error error);
+    audio_stream_exception(audio_stream_error error);
+    audio_stream_exception(const audio_stream_exception& other);
+    audio_stream_exception& operator=(const audio_stream_exception& other);
+    ~audio_stream_exception();
+
+    const char* what() const noexcept override;
+
+    audio_stream_error error() const noexcept;
+
+    const std::string& message() const noexcept;
+
+private:
+    std::string message_;
+    audio_stream_error error_;
+};
 
 // **************************************************************** //
 //                                                                  //

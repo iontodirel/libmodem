@@ -36,7 +36,7 @@
 #include <kiss.h>
 #include <config.h>
 #include <pipeline.h>
-#include <data_source.h>
+#include <data_stream.h>
 
 #include <random>
 #include <fstream>
@@ -6046,11 +6046,20 @@ TEST(config, read_config)
     EXPECT_EQ(c.ptt_controls[3].type, ptt_control_config_type::library_ptt_control);
     EXPECT_EQ(c.ptt_controls[3].library_path, "ptt_library.dll");
     EXPECT_EQ(c.ptt_controls[3].platform, "windows");
+
+    ASSERT_EQ(c.data_streams.size(), 1);
+
+    // tcp_default
+    EXPECT_EQ(c.data_streams[0].name, "tcp_default");
+    EXPECT_EQ(c.data_streams[0].transport, data_stream_transport_type::tcp);
+    EXPECT_EQ(c.data_streams[0].format, data_stream_format_type::ax25_kiss_formatter);
+    EXPECT_EQ(c.data_streams[0].bind_address, "127.0.0.1");
+    EXPECT_EQ(c.data_streams[0].port, 1234);
 }
 
 #ifdef ENABLE_SLOW_TNC_TESTS
 
-TEST(data_source, send)
+TEST(data_stream, send)
 {
     std::ifstream file("packets_1d.txt");
     if (!file.is_open())
@@ -6082,10 +6091,10 @@ TEST(data_source, send)
     tcp_transport transport("127.0.0.1", 1234);
     ax25_kiss_formatter formatter;
 
-    class data_source data_source;
+    class data_stream data_stream;
 
-    data_source.transport(transport);
-    data_source.formatter(formatter);
+    data_stream.transport(transport);
+    data_stream.formatter(formatter);
 
     transport.start();
 
@@ -6095,7 +6104,7 @@ TEST(data_source, send)
 
     while (i < packets.size())
     {
-        data_source.send(packets[i++]);
+        data_stream.send(packets[i++]);
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
@@ -6104,7 +6113,7 @@ TEST(data_source, send)
 
 #endif // ENABLE_SLOW_TNC_TESTS
 
-TEST(data_source, send_receive)
+TEST(data_stream, send_receive)
 {
     std::ifstream file("packets_1d.txt");
     if (!file.is_open())
@@ -6139,10 +6148,10 @@ TEST(data_source, send_receive)
     tcp_transport transport("127.0.0.1", 1234);
     ax25_kiss_formatter formatter;
 
-    class data_source data_source;
+    class data_stream data_stream;
 
-    data_source.transport(transport);
-    data_source.formatter(formatter);
+    data_stream.transport(transport);
+    data_stream.formatter(formatter);
 
     transport.start();
 
@@ -6192,7 +6201,7 @@ TEST(data_source, send_receive)
     size_t i = 0;
     while (i < expected_packets.size())
     {
-        data_source.send(expected_packets[i++]);
+        data_stream.send(expected_packets[i++]);
     }
 
     while (true)
@@ -6268,7 +6277,7 @@ TEST(tcp_client, wait_data_received)
 
 #ifdef ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
 
-TEST(data_source, modem_data_source_with_hardware_audio)
+TEST(data_stream, modem_data_stream_with_hardware_audio)
 {
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
@@ -6292,26 +6301,25 @@ TEST(data_source, modem_data_source_with_hardware_audio)
     tcp_transport transport("127.0.0.1", 1234);
     ax25_kiss_formatter formatter;
 
-    modem_data_source data_source;
+    modem_data_stream data_stream;
 
-    data_source.transport(transport);
-    data_source.formatter(formatter);
-    data_source.modem(m);
-
+    data_stream.transport(transport);
+    data_stream.formatter(formatter);
+    data_stream.modem(m);
     transport.start();
 
-    data_source.start();
+    data_stream.start();
 
-    while (data_source.wait_stopped(100))
+    while (!data_stream.wait_stopped(100))
     {
     }
 }
 
 #endif // ENABLE_HARDWARE_TESTS_REQUIRE_SOUNDCARD
 
-TEST(data_source, modem_data_source_with_wav_output)
+TEST(data_stream, modem_data_stream_with_wav_output)
 {
-    wav_audio_output_stream wav_stream("modem_data_source_test.wav", 48000);
+    wav_audio_output_stream wav_stream("modem_data_stream_test.wav", 48000);
     dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, wav_stream.sample_rate());
     ax25_bitstream_converter_adapter bitstream_converter;
 
@@ -6327,17 +6335,16 @@ TEST(data_source, modem_data_source_with_wav_output)
     tcp_transport transport("127.0.0.1", 1234);
     ax25_kiss_formatter formatter;
 
-    modem_data_source data_source;
+    modem_data_stream data_stream;
 
-    data_source.transport(transport);
-    data_source.formatter(formatter);
-    data_source.modem(m);
-
+    data_stream.transport(transport);
+    data_stream.formatter(formatter);
+    data_stream.modem(m);
     transport.start();
 
-    data_source.start();
+    data_stream.start();
 
-    while (data_source.wait_stopped(100))
+    while (!data_stream.wait_stopped(100))
     {
     }
 }

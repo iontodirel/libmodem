@@ -5,7 +5,7 @@
 // Copyright (c) 2025 Ion Todirel                                   //
 // **************************************************************** //
 //
-// data_source.h
+// data_stream.h
 //
 // MIT License
 //
@@ -287,16 +287,16 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// data_source                                                      //
+// data_stream                                                      //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-class data_source
+class data_stream
 {
 public:
-    data_source();
-    virtual ~data_source();
+    data_stream();
+    virtual ~data_stream();
 
     void transport(struct transport& t);
     void formatter(struct formatter& f);
@@ -323,15 +323,15 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// modem_data_source                                                //
+// modem_data_stream                                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-class modem_data_source : public data_source
+class modem_data_stream : public data_stream
 {
 public:
-    virtual ~modem_data_source();
+    virtual ~modem_data_stream();
 
     void modem(struct modem& m);
 

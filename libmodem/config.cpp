@@ -45,8 +45,11 @@ audio_stream_config parse_audio_stream(const nlohmann::json& j);
 ptt_control_config_type parse_ptt_control_type(const std::string& type_str);
 ptt_control_config parse_ptt_control(const nlohmann::json& j);
 modulator_config parse_modulator(const nlohmann::json& j);
+data_stream_config parse_data_stream(const nlohmann::json& j);
 modulator_config_type parse_modulator_type(const std::string& type_str);
 bitstream_convertor_config_type parse_convertor_type(const std::string& type_str);
+data_stream_format_type parse_format_type(const std::string& type_str);
+data_stream_transport_type parse_transport_type(const std::string& type_str);
 
 config read_config(const std::string& filename)
 {
@@ -81,6 +84,14 @@ config read_config(const std::string& filename)
         for (const auto& ptt : j["ptt_controls"])
         {
             c.ptt_controls.push_back(parse_ptt_control(ptt));
+        }
+    }
+
+    if (j.contains("data_streams") && j["data_streams"].is_array())
+    {
+        for (const auto& ds : j["data_streams"])
+        {
+            c.data_streams.push_back(parse_data_stream(ds));
         }
     }
 
@@ -168,6 +179,39 @@ modulator_config parse_modulator(const nlohmann::json& j)
     return c;
 }
 
+data_stream_config parse_data_stream(const nlohmann::json& j)
+{
+    data_stream_config c;
+
+    c.name = j.value("name", "");
+    c.format = parse_format_type(j.value("format", "ax25_kiss"));
+    c.transport = parse_transport_type(j.value("transport", "tcp"));
+    c.bind_address = j.value("bind_address", "127.0.0.1");
+
+    if (j.contains("port"))
+    {
+        const auto& port_value = j["port"];
+        if (port_value.is_string())
+        {
+            c.serial_port = port_value.get<std::string>();
+        }
+        else if (port_value.is_number_integer())
+        {
+            c.port = port_value.get<int>();
+        }
+        else
+        {
+            c.port = 8888; // default for unexpected type
+        }
+    }
+    else
+    {
+        c.port = 8888; // default
+    }
+
+    return c;
+}
+
 namespace
 {
     audio_stream_config_type parse_audio_stream_type(const std::string& type_str)
@@ -206,6 +250,21 @@ bitstream_convertor_config_type parse_convertor_type(const std::string& type_str
     if (type_str == "ax25_bitstream_convertor") return bitstream_convertor_config_type::ax25_bitstream_convertor;
 
     return bitstream_convertor_config_type::unknown;
+}
+
+data_stream_format_type parse_format_type(const std::string& type_str)
+{
+    if (type_str == "ax25_kiss") return data_stream_format_type::ax25_kiss_formatter;
+
+    return data_stream_format_type::unknown;
+}
+
+data_stream_transport_type parse_transport_type(const std::string& type_str)
+{
+    if (type_str == "tcp") return data_stream_transport_type::tcp;
+    if (type_str == "serial") return data_stream_transport_type::serial;
+
+    return data_stream_transport_type::unknown;
 }
 
 LIBMODEM_NAMESPACE_END

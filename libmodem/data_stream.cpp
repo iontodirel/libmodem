@@ -5,7 +5,7 @@
 // Copyright (c) 2025 Ion Todirel                                   //
 // **************************************************************** //
 //
-// data_source.cpp
+// data_stream.cpp
 //
 // MIT License
 //
@@ -29,7 +29,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "data_source.h"
+#include "data_stream.h"
 
 LIBMODEM_NAMESPACE_BEGIN
 
@@ -268,46 +268,47 @@ std::unique_ptr<formatter> ax25_kiss_formatter::clone() const
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// data_source                                                      //
+// data_stream                                                      //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-data_source::data_source()
+data_stream::data_stream()
 {
     read_buffer_.resize(4096);
 }
 
-data_source::~data_source()
+data_stream::~data_stream()
 {
     stop();
 }
 
-void data_source::transport(struct transport& t)
+void data_stream::transport(struct transport& t)
 {
     transport_ = t;
 }
 
-void data_source::formatter(struct formatter& f)
+void data_stream::formatter(struct formatter& f)
 {
     formatter_ = f;
 }
 
-void data_source::start()
+void data_stream::start()
+{
+    transport_->get().start();
+}
+
+void data_stream::stop()
 {
 }
 
-void data_source::stop()
-{
-}
-
-void data_source::send(packet p)
+void data_stream::send(packet p)
 {
     std::vector<uint8_t> data = formatter_.value().get().encode(p);
     transport_.value().get().write(data);
 }
 
-bool data_source::try_receive(packet& p)
+bool data_stream::try_receive(packet& p)
 {
     const auto& client_ids = transport_->get().clients();
 
@@ -352,12 +353,12 @@ bool data_source::try_receive(packet& p)
     return false;
 }
 
-bool data_source::wait_data_received(int timeout_ms)
+bool data_stream::wait_data_received(int timeout_ms)
 {
     return transport_->get().wait_data_received(timeout_ms);
 }
 
-bool data_source::wait_stopped(int timeout_ms)
+bool data_stream::wait_stopped(int timeout_ms)
 {
     (void)timeout_ms;
     return false;
@@ -366,26 +367,26 @@ bool data_source::wait_stopped(int timeout_ms)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// modem_data_source                                                //
+// modem_data_stream                                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-modem_data_source::~modem_data_source()
+modem_data_stream::~modem_data_stream()
 {
     stop();
 }
 
-void modem_data_source::modem(struct modem& m)
+void modem_data_stream::modem(struct modem& m)
 {
     m_ = m;
 }
 
-void modem_data_source::start()
+void modem_data_stream::start()
 {
     if (!m_)
     {
-        throw std::runtime_error("modem_data_source: modem not set");
+        throw std::runtime_error("modem_data_stream: modem not set");
     }
 
     if (running_.exchange(true))
@@ -393,12 +394,14 @@ void modem_data_source::start()
         return;
     }
 
+    data_stream::start();
+
     receive_thread_ = std::jthread([this](std::stop_token stop_token) {
         receive_callback(stop_token);
     });
 }
 
-void modem_data_source::stop()
+void modem_data_stream::stop()
 {
     if (!running_.exchange(false))
     {
@@ -414,13 +417,13 @@ void modem_data_source::stop()
     stop_cv_.notify_all();
 }
 
-void modem_data_source::receive_callback(std::stop_token stop_token)
+void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
         packet p;
         if (try_receive(p))
-        {
+        {   
             m_->get().transmit(p);
         }
 
@@ -428,7 +431,7 @@ void modem_data_source::receive_callback(std::stop_token stop_token)
     }
 }
 
-bool modem_data_source::wait_stopped(int timeout_ms)
+bool modem_data_stream::wait_stopped(int timeout_ms)
 {
     std::unique_lock<std::mutex> lock(stop_mutex_);
 

@@ -94,92 +94,10 @@
   "data_streams": [
     {
       "name": "tcp_default",
-      "type": "tcp_data_stream",
-      "bind_address": "0.0.0.0",
-      "port": 8002,
-      "format": "ax25_kiss",
-      "write_concurrency": "mutex",
-      "max_clients": 100
-    },
-    {
-      "name": "tcp_stream_2",
-      "type": "tcp_data_stream",
-      "bind_address": "0.0.0.0",
-      "port": 8002,
-      "format": "aprs_json_with_telemetry",
-      "write_concurrency": "mutex",
-      "max_clients": 100
-    },
-    {
-      "name": "serial_default",
-      "type": "serial_data_stream",
-      "port": "COM3",
-      "baud_rate": 9600,
-      "data_bits": 8,
-      "stop_bits": 1,
-      "parity": "none",
-      "flow_control": "none",
+      "transport": "tcp",
+      "bind_address": "127.0.0.1",
+      "port": 1234,
       "format": "ax25_kiss"
-    },
-    {
-      "name": "random_packet_stream",
-      "type": "test_data_stream",
-      "total_count": 1000,
-      "source": "random",
-      "format": "aprs_text"
-    },
-    {
-      "name": "random_packet_stream_2",
-      "type": "test_data_stream",
-      "total_count": 1000,
-      "source": "repeat",
-      "format": "aprs_text",
-      "packet": "N0CALL>APRS,CALL:messsage"
-    },
-    {
-      "name": "json_stream",
-      "type": "json_data_stream",
-      "path": "default.json",
-      "format": "aprs_json_with_telemetry",
-      "max_size": "100K",
-      "max_files": 10,
-      "auto_flush_s": 10,
-      "auto_flush_size": "100K"
-    },
-    {
-      "name": "stdout_stream",
-      "type": "stdout_data_stream",
-      "format": "ax25_hex"
-    },
-    {
-      "name": "stdout_stream_2",
-      "type": "stdout_data_stream",
-      "format": "bitstream"
-    },
-    // formats can be combined
-    {
-      "name": "stdout_stream_2",
-      "type": "stdout_data_stream",
-      "format": "telemetry"
-    },
-    {
-      "name": "log_stream",
-      "type": "log_data_stream",
-      "file": "log.txt",
-      "format": "aprs_text_with_telemetry",
-      "max_size": "100K",
-      "max_files": 10,
-      "level": "info",
-      "verbosity": "normal",
-      "auto_flush_s": 10,
-      "auto_flush_size": "100K"
-    },
-    {
-      "name": "library_stream",
-      "type": "library_data_stream",
-      "platform": "windows",
-      "path": "library.dll",
-      "format": "aprs_json"
     }
   ],
   "ptt_controls": [

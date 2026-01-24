@@ -146,7 +146,7 @@ if(NOT libcorrect_POPULATED)
   endif()
 endif()
 
-add_library(libmodem STATIC  "audio_stream.cpp" "modulator.cpp" "modem.cpp" "bitstream.cpp" "io.cpp" "kiss.cpp" "pipeline.cpp" "config.cpp" "data_source.cpp")
+add_library(libmodem STATIC  "audio_stream.cpp" "modulator.cpp" "modem.cpp" "bitstream.cpp" "io.cpp" "kiss.cpp" "pipeline.cpp" "config.cpp" "data_stream.cpp")
 target_link_libraries(libmodem PRIVATE nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct)
 target_include_directories(libmodem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)

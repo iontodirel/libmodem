@@ -132,11 +132,35 @@ struct modulator_config
     std::vector<std::string> data_streams;
 };
 
+enum class data_stream_format_type
+{
+    unknown,
+    ax25_kiss_formatter
+};
+
+enum class data_stream_transport_type
+{
+    unknown,
+    tcp,
+    serial,
+};
+
+struct data_stream_config
+{
+    std::string name;
+    data_stream_format_type format;
+    data_stream_transport_type transport;
+    std::string bind_address;
+    int port;
+    std::string serial_port;
+};
+
 struct config
 {
     std::vector<audio_stream_config> audio_streams;
     std::vector<ptt_control_config> ptt_controls;
     std::vector<modulator_config> modulators;
+    std::vector<data_stream_config> data_streams;
 };
 
 config read_config(const std::string& filename);

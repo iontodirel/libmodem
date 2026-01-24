@@ -42,6 +42,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <unordered_set>
+#include <exception>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -61,6 +62,46 @@
 #endif
 
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// io_exception                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class io_error
+{
+    none,
+    not_initialized,  // port not open, client not connected
+    invalid_state,    // already open, already loaded
+    load_failed,      // library load/init/function resolution failures
+    io_error,         // general I/O errors (response errors, uninit failures)
+    internal_error    // unexpected failures (unused currently)
+};
+
+class io_exception : public std::exception
+{
+public:
+    io_exception();
+    io_exception(const std::string& message);
+    io_exception(const std::string& message, io_error error);
+    io_exception(io_error error);
+    io_exception(const io_exception& other);
+    io_exception& operator=(const io_exception& other);
+    ~io_exception();
+
+    const char* what() const noexcept override;
+
+    io_error error() const noexcept;
+
+    const std::string& message() const noexcept;
+
+private:
+    std::string message_;
+    io_error error_;
+};
 
 // **************************************************************** //
 //                                                                  //

@@ -37,11 +37,10 @@ bool try_create_audio_entry(const audio_stream_config& config, audio_entry& entr
 bool try_find_audio_device(const audio_stream_config& audio_config, audio_device& device);
 std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(const audio_stream_config& config);
 bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config);
-std::unique_ptr<bitstream_converter_base> create_converter(bitstream_convertor_config_type type);
-std::unique_ptr<modulator_base> create_modulator(const modulator_config& config, int sample_rate);
 std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(std::vector<audio_entry>& entries, const std::string& name);
 std::optional<std::reference_wrapper<audio_entry>> get_output_stream(const modulator_config& config, std::vector<audio_entry>& audio_entries);
 modem_entry create_modem_entry(const modulator_config& config, struct audio_entry& audio_entry);
+data_stream_entry create_data_stream(const data_stream_config& config);
 bool is_audio_stream_referenced(const config& c, const std::string& name);
 bool is_ptt_control_referenced(const config& c, const std::string& name);
 bool is_output_stream(audio_stream_config_type type);
@@ -70,6 +69,7 @@ void pipeline::init()
     modems_.clear();
     ptt_controls_.clear();
     audio_entries_.clear();
+    data_streams_.clear();
 
     used_audio_names_.clear();
     used_audio_devices_.clear();
@@ -78,9 +78,12 @@ void pipeline::init()
     used_library_files_.clear();
     used_ptt_names_.clear();
     used_modem_names_.clear();
+    used_data_stream_names_.clear();
+    used_tcp_ports_.clear();
 
     populate_audio_entries();
     populate_ptt_controls();
+    populate_data_streams();
     populate_transmit_modems();
     populate_receive_modems();
 }
@@ -186,6 +189,35 @@ void pipeline::populate_receive_modems()
     // - Match bitstream converters of the modulator and demodulator
     // - Match data sources
     // TODO: Implement receive modem population
+}
+
+void pipeline::populate_data_streams()
+{
+    for (const auto& data_stream_config : config.data_streams)
+    {
+        if (!can_add_data_stream(data_stream_config))
+        {
+            continue;
+        }
+
+        data_stream_entry entry = create_data_stream(data_stream_config);
+
+        register_data_stream(entry, data_stream_config);
+
+        data_streams_.push_back(std::move(entry));
+    }
+}
+
+void pipeline::assign_audio_streams()
+{
+}
+
+void pipeline::assign_data_streams()
+{
+}
+
+void pipeline::assign_ptt_controls()
+{
 }
 
 bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
@@ -391,6 +423,112 @@ bool pipeline::is_ptt_control_referenced(const std::string& name)
     return false;
 }
 
+bool pipeline::can_add_data_stream(const data_stream_config& data_config)
+{
+    if (!is_valid_data_stream_config(data_config))
+    {
+        return false;
+    }
+
+    if (is_duplicate_data_stream_name(data_config.name))
+    {
+        return false;
+    }
+
+    // TCP ports can't be shared
+    if (data_config.transport == data_stream_transport_type::tcp &&
+        is_duplicate_tcp_port(data_config.port))
+    {
+        return false;
+    }
+
+    // Serial ports can't be shared (reuse existing check)
+    if (data_config.transport == data_stream_transport_type::serial &&
+        is_duplicate_serial_port(data_config.serial_port))
+    {
+        return false;
+    }
+
+    if (!is_data_stream_referenced(data_config.name))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool pipeline::is_duplicate_data_stream_name(const std::string& name)
+{
+    return used_data_stream_names_.count(name) > 0;
+}
+
+bool pipeline::is_duplicate_tcp_port(int port)
+{
+    return used_tcp_ports_.count(port) > 0;
+}
+
+bool pipeline::is_valid_data_stream_config(const data_stream_config& data_config)
+{
+    // Validate transport-specific requirements
+    if (data_config.transport == data_stream_transport_type::tcp)
+    {
+        if (data_config.port <= 0 || data_config.port > 65535)
+        {
+            return false;
+        }
+    }
+    else if (data_config.transport == data_stream_transport_type::serial)
+    {
+        if (data_config.serial_port.empty())
+        {
+            return false;
+        }
+    }
+    else if (data_config.transport == data_stream_transport_type::unknown)
+    {
+        return false;
+    }
+
+    if (data_config.format == data_stream_format_type::unknown)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void pipeline::register_data_stream(const data_stream_entry& entry, const data_stream_config& data_config)
+{
+    used_data_stream_names_.insert(data_config.name);
+
+    if (data_config.transport == data_stream_transport_type::tcp)
+    {
+        used_tcp_ports_.insert(data_config.port);
+    }
+    else if (data_config.transport == data_stream_transport_type::serial)
+    {
+        used_serial_ports_.insert(data_config.serial_port);
+    }
+
+    (void)entry; // Unused for now, but kept for consistency
+}
+
+bool pipeline::is_data_stream_referenced(const std::string& name)
+{
+    for (const auto& modulator_config : config.modulators)
+    {
+        for (const auto& stream_name : modulator_config.data_streams)
+        {
+            if (stream_name == name)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -499,35 +637,6 @@ bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config)
     }
 }
 
-std::unique_ptr<bitstream_converter_base> create_converter(bitstream_convertor_config_type type)
-{
-    switch (type)
-    {
-        case bitstream_convertor_config_type::fx25_bitstream_converter:
-            return std::make_unique<fx25_bitstream_converter_adapter>();
-        case bitstream_convertor_config_type::ax25_bitstream_convertor:
-            return std::make_unique<ax25_bitstream_converter_adapter>();
-        default:
-            return nullptr;
-    }
-}
-
-std::unique_ptr<modulator_base> create_modulator(const modulator_config& config, int sample_rate)
-{
-    switch (config.type)
-    {
-        case modulator_config_type::dds_afsk_modulator_double:
-            return std::make_unique<dds_afsk_modulator_double_adapter>(
-                config.f_mark,
-                config.f_space,
-                config.baud_rate,
-                sample_rate,
-                config.tau);
-        default:
-            return nullptr;
-    }
-}
-
 std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(std::vector<audio_entry>& entries, const std::string& name)
 {
     for (auto& entry : entries)
@@ -578,11 +687,34 @@ modem_entry create_modem_entry(const modulator_config& config, struct audio_entr
     modem_entry entry;
 
     entry.name = config.name;
+    entry.modulator_config = config;
 
     entry.modem.output_stream(audio_entry.stream.get());
 
-    entry.converter = create_converter(config.converter);
-    entry.modulator = create_modulator(config, entry.modem.output_stream().sample_rate());
+    switch (config.converter)
+    {
+        case bitstream_convertor_config_type::fx25_bitstream_converter:
+            entry.converter = std::make_unique<fx25_bitstream_converter_adapter>();
+            break;
+        case bitstream_convertor_config_type::ax25_bitstream_convertor:
+            entry.converter = std::make_unique<ax25_bitstream_converter_adapter>();
+            break;
+        default:
+           break;
+    }
+
+    switch (config.type)
+    {
+        case modulator_config_type::dds_afsk_modulator_double:
+            entry.modulator = std::make_unique<dds_afsk_modulator_double_adapter>(
+                config.f_mark,
+                config.f_space,
+                config.baud_rate,
+                entry.modem.output_stream().sample_rate(),
+                config.tau);
+        default:
+            break;
+    }
 
     entry.modem.converter(*entry.converter);
     entry.modem.modulator(*entry.modulator);
@@ -595,6 +727,42 @@ modem_entry create_modem_entry(const modulator_config& config, struct audio_entr
     entry.modem.end_silence(config.end_silence_ms);
 
     entry.modem.initialize();
+
+    return entry;
+}
+
+data_stream_entry create_data_stream(const data_stream_config& config)
+{
+    data_stream_entry entry;
+
+    switch (config.format)
+    {
+        case data_stream_format_type::ax25_kiss_formatter:
+            entry.formatter = std::make_unique<ax25_kiss_formatter>();
+            break;
+        default:
+            break;
+    }
+
+    switch (config.transport)
+    {
+        case data_stream_transport_type::tcp:
+            entry.transport = std::make_unique<tcp_transport>(config.bind_address, config.port);
+            break;
+
+        case data_stream_transport_type::serial:
+            entry.transport = std::make_unique<serial_transport>();
+            break;
+
+        default:
+            break;
+    }
+
+    entry.data_stream = std::make_unique<modem_data_stream>();
+    entry.data_stream->formatter(*entry.formatter);
+    entry.data_stream->transport(*entry.transport);
+    entry.name = config.name;
+    entry.config = config;
 
     return entry;
 }

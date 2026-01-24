@@ -181,6 +181,62 @@ bool is_float32_format(WAVEFORMATEX* device_format)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// audio_stream_exception                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+audio_stream_exception::audio_stream_exception() : message_(), error_(audio_stream_error{})
+{
+}
+
+audio_stream_exception::audio_stream_exception(const std::string& message) : message_(message), error_(audio_stream_error{})
+{
+}
+
+audio_stream_exception::audio_stream_exception(const std::string& message, audio_stream_error error) : message_(message), error_(error)
+{
+}
+
+audio_stream_exception::audio_stream_exception(audio_stream_error error) : message_(), error_(error)
+{
+}
+
+audio_stream_exception::audio_stream_exception(const audio_stream_exception& other) : std::exception(other), message_(other.message_), error_(other.error_)
+{
+}
+
+audio_stream_exception& audio_stream_exception::operator=(const audio_stream_exception& other)
+{
+    if (this != &other)
+    {
+        std::exception::operator=(other);
+        message_ = other.message_;
+        error_ = other.error_;
+    }
+    return *this;
+}
+
+audio_stream_exception::~audio_stream_exception() = default;
+
+const char* audio_stream_exception::what() const noexcept
+{
+    return message_.c_str();
+}
+
+audio_stream_error audio_stream_exception::error() const noexcept
+{
+    return error_;
+}
+
+const std::string& audio_stream_exception::message() const noexcept
+{
+    return message_;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // audio_stream_type                                                //
 //                                                                  //
 //                                                                  //
@@ -230,12 +286,12 @@ audio_stream_base& audio_stream_base::operator=(wav_audio_input_stream& rhs)
 {
     if (this->sample_rate() != rhs.sample_rate())
     {
-        throw std::runtime_error("Cannot assign wav_audio_input_stream to audio_stream_base with different sample rate or channels");
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to audio_stream_base with different sample rate or channels", audio_stream_error::invalid_argument);
     }
 
     if (this->type() != audio_stream_type::output)
     {
-        throw std::runtime_error("Cannot assign wav_audio_input_stream to non-output audio_stream_base");
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to non-output audio_stream_base", audio_stream_error::invalid_state);
     }
 
     std::vector<double> buffer(1024);
@@ -287,7 +343,7 @@ std::string audio_stream::name()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->name();
 }
@@ -296,7 +352,7 @@ audio_stream_type audio_stream::type()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->type();
 }
@@ -305,7 +361,7 @@ void audio_stream::volume(int percent)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     stream_->volume(percent);
 }
@@ -314,7 +370,7 @@ int audio_stream::volume()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->volume();
 }
@@ -323,7 +379,7 @@ int audio_stream::sample_rate()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->sample_rate();
 }
@@ -332,7 +388,7 @@ int audio_stream::channels()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->channels();
 }
@@ -341,7 +397,7 @@ size_t audio_stream::write(const double* samples, size_t count)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->write(samples, count);
 }
@@ -350,7 +406,7 @@ size_t audio_stream::write_interleaved(const double* samples, size_t count)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->write_interleaved(samples, count);
 }
@@ -359,7 +415,7 @@ size_t audio_stream::read(double* samples, size_t count)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->read(samples, count);
 }
@@ -368,7 +424,7 @@ size_t audio_stream::read_interleaved(double* samples, size_t count)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->read_interleaved(samples, count);
 }
@@ -377,7 +433,7 @@ bool audio_stream::wait_write_completed(int timeout_ms)
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->wait_write_completed(timeout_ms);
 }
@@ -386,7 +442,7 @@ bool audio_stream::eof()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return stream_->eof();
 }
@@ -395,7 +451,7 @@ void audio_stream::start()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     stream_->start();
 }
@@ -404,7 +460,7 @@ void audio_stream::stop()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     stream_->stop();
 }
@@ -413,7 +469,7 @@ audio_stream_base& audio_stream::get()
 {
     if (!stream_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
     return *stream_;
 }
@@ -573,7 +629,7 @@ static void ensure_com_initialized()
     static thread_local com_init tls_com_init;
     if (!tls_com_init)
     {
-        throw std::runtime_error("COM init failed");
+        throw audio_stream_exception("COM init failed", audio_stream_error::open_failed);
     }
 }
 
@@ -680,7 +736,7 @@ audio_device::audio_device(audio_device_impl* impl)
     EDataFlow flow;
     if (FAILED(impl_->device_->QueryInterface(__uuidof(IMMEndpoint), reinterpret_cast<void**>(&endpoint))) || FAILED(endpoint->GetDataFlow(&flow)))
     {
-        throw std::runtime_error("Failed to get request_data flow");
+        throw audio_stream_exception("Failed to get request_data flow", audio_stream_error::internal_error);
     }
 
     type = (flow == eRender) ? audio_device_type::render : audio_device_type::capture;
@@ -690,7 +746,7 @@ audio_device::audio_device(audio_device_impl* impl)
     DWORD state_val = 0;
     if (FAILED(impl_->device_->GetState(&state_val)))
     {
-        throw std::runtime_error("Failed to get device_ state");
+        throw audio_stream_exception("Failed to get device_ state", audio_stream_error::internal_error);
     }
 
     switch (state_val)
@@ -739,7 +795,7 @@ audio_device::audio_device(int card_id, int device_id, audio_device_type type) :
     snd_ctl_t* ctl;
     if ((err = snd_ctl_open(&ctl, hw_name, 0)) != 0)
     {
-        throw std::runtime_error("Failed to open ALSA control interface");
+        throw audio_stream_exception("Failed to open ALSA control interface", audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_ctl_t, void(*)(snd_ctl_t*)> ctl_guard(ctl, [](snd_ctl_t* h) { if (h) snd_ctl_close(h); });
@@ -755,7 +811,7 @@ audio_device::audio_device(int card_id, int device_id, audio_device_type type) :
 
     if ((err = snd_ctl_pcm_info(ctl, pcm_info)) != 0)
     {
-        throw std::runtime_error("Failed to get ALSA PCM info");
+        throw audio_stream_exception("Failed to get ALSA PCM info", audio_stream_error::open_failed);
     }
 
     // Set device id using the format "hw:<card_id>,<device_id>"
@@ -827,7 +883,7 @@ audio_stream audio_device::stream()
 #if WIN32
     if (!impl_)
     {
-        throw std::runtime_error("Device not initialized");
+        throw audio_stream_exception("Device not initialized", audio_stream_error::internal_error);
     }
 
     if (type == audio_device_type::render)
@@ -879,20 +935,20 @@ std::vector<audio_device> get_audio_devices()
     CComPtr<IMMDeviceEnumerator> enumerator;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator)))
     {
-        throw std::runtime_error("Failed to create enumerator");
+        throw audio_stream_exception("Failed to create enumerator", audio_stream_error::open_failed);
     }
 
     CComPtr<IMMDeviceCollection> collection;
     if (FAILED(enumerator->EnumAudioEndpoints(eAll, DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_UNPLUGGED, &collection)))
     {
-        throw std::runtime_error("Failed to get audio endpoints");
+        throw audio_stream_exception("Failed to get audio endpoints", audio_stream_error::open_failed);
     }
 
     UINT count = 0;
     hr = collection->GetCount(&count);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to get devices count");
+        throw audio_stream_exception("Failed to get devices count", audio_stream_error::open_failed);
     }
 
     for (UINT i = 0; i < count; ++i)
@@ -1237,7 +1293,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
     HANDLE audio_samples_ready_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (audio_samples_ready_event == nullptr)
     {
-        throw std::runtime_error("Failed to create audio samples ready event");
+        throw audio_stream_exception("Failed to create audio samples ready event", audio_stream_error::open_failed);
     }
 
     std::unique_ptr<void, void(*)(void*)> audio_samples_ready_event_guard(audio_samples_ready_event, [](void* h) { if (h) CloseHandle(h); });
@@ -1245,7 +1301,7 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
     HANDLE stop_render_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (stop_render_event == nullptr)
     {
-        throw std::runtime_error("Failed to create stop render event");
+        throw audio_stream_exception("Failed to create stop render event", audio_stream_error::open_failed);
     }
 
     std::unique_ptr<void, void(*)(void*)> stop_render_event_guard(stop_render_event, [](void* h) { if (h) CloseHandle(h); });
@@ -1259,24 +1315,24 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
 
     if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
     {
-        throw std::runtime_error("Failed to activate client");
+        throw audio_stream_exception("Failed to activate client", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&endpoint_volume)))
     {
-        throw std::runtime_error("Failed to get volume control");
+        throw audio_stream_exception("Failed to get volume control", audio_stream_error::open_failed);
     }
 
     WAVEFORMATEX* device_format = nullptr;
     if (FAILED(hr = audio_client->GetMixFormat(&device_format)))
     {
-        throw std::runtime_error("Failed to get mix format");
+        throw audio_stream_exception("Failed to get mix format", audio_stream_error::open_failed);
     }
 
     if (!is_float32_format(device_format))
     {
         CoTaskMemFree(device_format);
-        throw std::runtime_error("Unsupported audio format: only 32-bit float is supported");
+        throw audio_stream_exception("Unsupported audio format: only 32-bit float is supported", audio_stream_error::format_not_supported);
     }
 
     sample_rate_ = static_cast<int>(device_format->nSamplesPerSec);
@@ -1294,27 +1350,27 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
 
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to initialize audio client");
+        throw audio_stream_exception("Failed to initialize audio client", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->SetEventHandle(audio_samples_ready_event)))
     {
-        throw std::runtime_error("Failed to set event handle");
+        throw audio_stream_exception("Failed to set event handle", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client)))
     {
-        throw std::runtime_error("Failed to get render client");
+        throw audio_stream_exception("Failed to get render client", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->GetService(__uuidof(IAudioClock), (void**)&audio_clock)))
     {
-        throw std::runtime_error("Failed to get audio clock");
+        throw audio_stream_exception("Failed to get audio clock", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
     {
-        throw std::runtime_error("Failed to get buffer size");
+        throw audio_stream_exception("Failed to get buffer size", audio_stream_error::open_failed);
     }
 
     // Initialize ring buffer to hold ~5 second of audio
@@ -1435,7 +1491,7 @@ std::string wasapi_audio_output_stream::name()
 {
     if (!impl_ || impl_->device_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1473,7 +1529,7 @@ void wasapi_audio_output_stream::mute(bool mute)
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1482,7 +1538,7 @@ void wasapi_audio_output_stream::mute(bool mute)
     HRESULT hr = impl_->endpoint_volume_->SetMute(mute_state, nullptr);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to set mute state");
+        throw audio_stream_exception("Failed to set mute state", audio_stream_error::io_error);
     }
 }
 
@@ -1490,7 +1546,7 @@ bool wasapi_audio_output_stream::mute()
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1499,7 +1555,7 @@ bool wasapi_audio_output_stream::mute()
     HRESULT hr = impl_->endpoint_volume_->GetMute(&muted);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to get mute state");
+        throw audio_stream_exception("Failed to get mute state", audio_stream_error::io_error);
     }
 
     return muted == TRUE;
@@ -1509,7 +1565,7 @@ void wasapi_audio_output_stream::volume(int percent)
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1521,7 +1577,7 @@ void wasapi_audio_output_stream::volume(int percent)
     HRESULT hr = impl_->endpoint_volume_->SetMasterVolumeLevelScalar(volume_scalar, nullptr);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to set volume");
+        throw audio_stream_exception("Failed to set volume", audio_stream_error::io_error);
     }
 }
 
@@ -1529,7 +1585,7 @@ int wasapi_audio_output_stream::volume()
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1539,7 +1595,7 @@ int wasapi_audio_output_stream::volume()
     HRESULT hr = impl_->endpoint_volume_->GetMasterVolumeLevelScalar(&volume_scalar);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to get volume");
+        throw audio_stream_exception("Failed to get volume", audio_stream_error::io_error);
     }
 
     return static_cast<int>(volume_scalar * 100.0f + 0.5f);
@@ -1595,7 +1651,7 @@ size_t wasapi_audio_output_stream::write_interleaved(const double* samples, size
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     if (samples == nullptr || count == 0)
@@ -1654,7 +1710,7 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
 {
     if (!impl_ || impl_->audio_client_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1762,7 +1818,7 @@ void wasapi_audio_output_stream::start()
 
     if (!impl_ || impl_->audio_client_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -1782,7 +1838,7 @@ void wasapi_audio_output_stream::start()
         render_thread_.request_stop();
         SetEvent(impl_->stop_render_event_);
         render_thread_.join();
-        throw std::runtime_error("Failed to start audio client");
+        throw audio_stream_exception("Failed to start audio client", audio_stream_error::io_error);
     }
 
     started_ = true;
@@ -1832,7 +1888,7 @@ bool wasapi_audio_output_stream::faulted()
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -1843,7 +1899,7 @@ void wasapi_audio_output_stream::throw_if_faulted()
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -1871,11 +1927,25 @@ void wasapi_audio_output_stream::run(std::stop_token stop_token)
     {
         run_internal(stop_token);
     }
-    catch (...)
+    catch (const audio_stream_exception&)
     {
         // Swallow exceptions to prevent std::terminate from being called
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         render_exception_ = std::current_exception();
+        buffer_cv_.notify_all();
+    }
+    catch (const std::exception& e)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        render_exception_ = std::make_exception_ptr(audio_stream_exception(e.what(), audio_stream_error::internal_error));
+        buffer_cv_.notify_all();
+    }
+    catch (...)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        render_exception_ = std::make_exception_ptr(audio_stream_exception("Unknown error", audio_stream_error::internal_error));
         buffer_cv_.notify_all();
     }
 }
@@ -1922,13 +1992,13 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
 
             case WAIT_FAILED:
             default:
-                throw std::runtime_error("WaitForMultipleObjects failed");
+                throw audio_stream_exception("WaitForMultipleObjects failed", audio_stream_error::timeout);
         }
 
         UINT32 padding;
         if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
         {
-            throw std::runtime_error("Failed to get current padding");
+            throw audio_stream_exception("Failed to get current padding", audio_stream_error::io_error);
         }
 
         UINT32 frames_available_to_write = static_cast<UINT32>(buffer_size_) - padding;
@@ -1942,7 +2012,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
 
         if (FAILED(hr = impl_->render_client_->GetBuffer(frames_available_to_write, &buffer)))
         {
-            throw std::runtime_error("Failed to get buffer");
+            throw audio_stream_exception("Failed to get buffer", audio_stream_error::io_error);
         }
 
         float* float_buffer = reinterpret_cast<float*>(buffer);
@@ -1987,7 +2057,7 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
         // but only mark the frames we actually wrote
         if (FAILED(hr = impl_->render_client_->ReleaseBuffer(frames_available_to_write, flags)))
         {
-            throw std::runtime_error("Failed to release buffer");
+            throw audio_stream_exception("Failed to release buffer", audio_stream_error::io_error);
         }
 
         if (flags != AUDCLNT_BUFFERFLAGS_SILENT)
@@ -2031,7 +2101,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
     HANDLE audio_samples_ready_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (audio_samples_ready_event == nullptr)
     {
-        throw std::runtime_error("Failed to create audio samples ready event");
+        throw audio_stream_exception("Failed to create audio samples ready event", audio_stream_error::open_failed);
     }
 
     std::unique_ptr<void, void(*)(void*)> audio_samples_ready_event_guard(audio_samples_ready_event, [](void* h) { if (h) CloseHandle(h); });
@@ -2039,7 +2109,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
     HANDLE stop_capture_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (stop_capture_event == nullptr)
     {
-        throw std::runtime_error("Failed to create stop capture event");
+        throw audio_stream_exception("Failed to create stop capture event", audio_stream_error::open_failed);
     }
 
     std::unique_ptr<void, void(*)(void*)> stop_capture_event_guard(stop_capture_event, [](void* h) { if (h) CloseHandle(h); });
@@ -2056,7 +2126,7 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
 
     if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
     {
-        throw std::runtime_error("Failed to activate client");
+        throw audio_stream_exception("Failed to activate client", audio_stream_error::open_failed);
     }
 
     CComPtr<IAudioSessionControl> session_control;
@@ -2071,19 +2141,19 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
 
     if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&endpoint_volume)))
     {
-        throw std::runtime_error("Failed to get volume control");
+        throw audio_stream_exception("Failed to get volume control", audio_stream_error::open_failed);
     }
 
     WAVEFORMATEX* device_format = nullptr;
     if (FAILED(hr = audio_client->GetMixFormat(&device_format)))
     {
-        throw std::runtime_error("Failed to get mix format");
+        throw audio_stream_exception("Failed to get mix format", audio_stream_error::open_failed);
     }
 
     if (!is_float32_format(device_format))
     {
         CoTaskMemFree(device_format);
-        throw std::runtime_error("Unsupported audio format: only 32-bit float is supported");
+        throw audio_stream_exception("Unsupported audio format: only 32-bit float is supported", audio_stream_error::format_not_supported);
     }
 
     sample_rate_ = static_cast<int>(device_format->nSamplesPerSec);
@@ -2101,22 +2171,22 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl)
 
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to initialize");
+        throw audio_stream_exception("Failed to initialize", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->SetEventHandle(audio_samples_ready_event)))
     {
-        throw std::runtime_error("Failed to set event handle");
+        throw audio_stream_exception("Failed to set event handle", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->GetService(__uuidof(IAudioCaptureClient), (void**)&capture_client)))
     {
-        throw std::runtime_error("Failed to get capture client");
+        throw audio_stream_exception("Failed to get capture client", audio_stream_error::open_failed);
     }
 
     if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
     {
-        throw std::runtime_error("Failed to get buffer size");
+        throw audio_stream_exception("Failed to get buffer size", audio_stream_error::open_failed);
     }
 
     // Initialize ring buffer to hold ~5 second of audio
@@ -2227,7 +2297,7 @@ std::string wasapi_audio_input_stream::name()
 {
     if (!impl_ || impl_->device_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2265,7 +2335,7 @@ void wasapi_audio_input_stream::mute(bool mute)
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2274,7 +2344,7 @@ void wasapi_audio_input_stream::mute(bool mute)
     HRESULT hr = impl_->endpoint_volume_->SetMute(mute_state, nullptr);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to set mute state");
+        throw audio_stream_exception("Failed to set mute state", audio_stream_error::io_error);
     }
 }
 
@@ -2282,7 +2352,7 @@ bool wasapi_audio_input_stream::mute()
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2291,7 +2361,7 @@ bool wasapi_audio_input_stream::mute()
     HRESULT hr = impl_->endpoint_volume_->GetMute(&muted);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to get mute state");
+        throw audio_stream_exception("Failed to get mute state", audio_stream_error::io_error);
     }
 
     return muted == TRUE;
@@ -2301,7 +2371,7 @@ void wasapi_audio_input_stream::volume(int percent)
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2313,7 +2383,7 @@ void wasapi_audio_input_stream::volume(int percent)
     HRESULT hr = impl_->endpoint_volume_->SetMasterVolumeLevelScalar(volume_scalar, nullptr);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to set volume");
+        throw audio_stream_exception("Failed to set volume", audio_stream_error::io_error);
     }
 }
 
@@ -2321,7 +2391,7 @@ int wasapi_audio_input_stream::volume()
 {
     if (!impl_ || impl_->endpoint_volume_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2331,7 +2401,7 @@ int wasapi_audio_input_stream::volume()
     HRESULT hr = impl_->endpoint_volume_->GetMasterVolumeLevelScalar(&volume_scalar);
     if (FAILED(hr))
     {
-        throw std::runtime_error("Failed to get volume");
+        throw audio_stream_exception("Failed to get volume", audio_stream_error::io_error);
     }
 
     return static_cast<int>(volume_scalar * 100.0f + 0.5f);
@@ -2391,7 +2461,7 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     if (samples == nullptr || count == 0)
@@ -2406,7 +2476,7 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
     // Wait until we have enough data or stopped
     buffer_cv_.wait(lock, [&]() {
         return !impl_->ring_buffer_.empty() || !started_ || capture_exception_ != nullptr;
-    });
+        });
 
     if (capture_exception_)
     {
@@ -2452,7 +2522,7 @@ void wasapi_audio_input_stream::start()
 
     if (!impl_ || impl_->audio_client_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     ensure_com_initialized();
@@ -2474,7 +2544,7 @@ void wasapi_audio_input_stream::start()
         capture_thread_.request_stop();
         SetEvent(impl_->stop_capture_event_);
         capture_thread_.join();
-        throw std::runtime_error("Failed to start");
+        throw audio_stream_exception("Failed to start", audio_stream_error::io_error);
     }
 
     started_ = true;
@@ -2523,7 +2593,7 @@ bool wasapi_audio_input_stream::faulted()
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -2534,7 +2604,7 @@ void wasapi_audio_input_stream::throw_if_faulted()
 {
     if (!impl_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -2561,11 +2631,25 @@ void wasapi_audio_input_stream::run(std::stop_token stop_token)
     {
         run_internal(stop_token);
     }
-    catch (...)
+    catch (const audio_stream_exception&)
     {
         // Swallow exceptions to prevent std::terminate from being called
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         capture_exception_ = std::current_exception();
+        buffer_cv_.notify_all();
+    }
+    catch (const std::exception& e)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        capture_exception_ = std::make_exception_ptr(audio_stream_exception(e.what(), audio_stream_error::internal_error));
+        buffer_cv_.notify_all();
+    }
+    catch (...)
+    {
+        // Swallow exceptions to prevent std::terminate from being called
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        capture_exception_ = std::make_exception_ptr(audio_stream_exception("Unknown error", audio_stream_error::internal_error));
         buffer_cv_.notify_all();
     }
 }
@@ -2619,7 +2703,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             case WAIT_FAILED:
             default:
-                throw std::runtime_error("WaitForMultipleObjects failed");
+                throw audio_stream_exception("WaitForMultipleObjects failed", audio_stream_error::timeout);
         }
 
         // Drain all available frames
@@ -2628,7 +2712,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
         if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
         {
-            throw std::runtime_error("Failed to get next frame size");
+            throw audio_stream_exception("Failed to get next frame size", audio_stream_error::io_error);
         }
 
         while (frames_maybe_available > 0)
@@ -2641,7 +2725,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             if (hr == AUDCLNT_S_BUFFER_EMPTY)
             {
-                throw std::runtime_error("Capture buffer is empty");
+                throw audio_stream_exception("Capture buffer is empty", audio_stream_error::io_error);
             }
 
             if (hr == AUDCLNT_E_OUT_OF_ORDER)
@@ -2650,7 +2734,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
                 if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
                 {
-                    throw std::runtime_error("Failed to get next packet size");
+                    throw audio_stream_exception("Failed to get next packet size", audio_stream_error::io_error);
                 }
 
                 continue;
@@ -2658,7 +2742,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             if (FAILED(hr))
             {
-                throw std::runtime_error("Failed to get capture buffer");
+                throw audio_stream_exception("Failed to get capture buffer", audio_stream_error::io_error);
             }
 
             if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
@@ -2695,7 +2779,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             if (FAILED(impl_->capture_client_->ReleaseBuffer(frames_available)))
             {
-                throw std::runtime_error("Failed to release capture buffer");
+                throw audio_stream_exception("Failed to release capture buffer", audio_stream_error::io_error);
             }
 
             if (stop_token.stop_requested())
@@ -2705,7 +2789,7 @@ void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)
 
             if (FAILED(hr = impl_->capture_client_->GetNextPacketSize(&frames_maybe_available)))
             {
-                throw std::runtime_error("Failed to get next packet size");
+                throw audio_stream_exception("Failed to get next packet size", audio_stream_error::io_error);
             }
         }
     }
@@ -2754,7 +2838,7 @@ void alsa_audio_stream_control::volume(int percent)
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, void(*)(snd_mixer_t*)> ctl_guard(mixer, [](snd_mixer_t* h) { if (h) snd_mixer_close(h); });
@@ -2764,17 +2848,17 @@ void alsa_audio_stream_control::volume(int percent)
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     snd_mixer_selem_id_t* sid;
@@ -2811,7 +2895,7 @@ void alsa_audio_stream_control::volume(int percent)
 
             if ((err = snd_mixer_selem_set_capture_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), target_dB, 0)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_dB: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_set_capture_dB: ") + snd_strerror(err), audio_stream_error::io_error);
             }
         }
         else
@@ -2820,14 +2904,14 @@ void alsa_audio_stream_control::volume(int percent)
             {
                 if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 long volume = min + (max - min) * percent / 100;
 
                 if ((err = snd_mixer_selem_set_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_set_capture_volume: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_set_capture_volume: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
             }
         }
@@ -2853,7 +2937,7 @@ void alsa_audio_stream_control::volume(int percent)
 
             if ((err = snd_mixer_selem_set_playback_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), target_dB, 0)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_dB: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_set_playback_dB: ") + snd_strerror(err), audio_stream_error::io_error);
             }
         }
         else
@@ -2862,14 +2946,14 @@ void alsa_audio_stream_control::volume(int percent)
             {
                 if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 long volume = min + (max - min) * percent / 100;
 
                 if ((err = snd_mixer_selem_set_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), volume)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_set_playback_volume: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
             }
         }
@@ -2888,7 +2972,7 @@ int alsa_audio_stream_control::volume()
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, void(*)(snd_mixer_t*)> mixer_guard(mixer, [](snd_mixer_t* h) { if (h) snd_mixer_close(h); });
@@ -2898,17 +2982,17 @@ int alsa_audio_stream_control::volume()
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_attach: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     int percent = 0;
@@ -2933,7 +3017,7 @@ int alsa_audio_stream_control::volume()
         {
             if ((err = snd_mixer_selem_get_capture_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &current_dB)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_dB: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_get_capture_dB: ") + snd_strerror(err), audio_stream_error::io_error);
             }
 
             percent = static_cast<int>(100 * (current_dB - min_dB) / (max_dB - min_dB));
@@ -2945,12 +3029,12 @@ int alsa_audio_stream_control::volume()
             {
                 if ((err = snd_mixer_selem_get_capture_volume_range(elem, &min, &max)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_capture_volume_range: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 if ((err = snd_mixer_selem_get_capture_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_capture_volume: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_capture_volume: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 if (max > min)
@@ -2967,7 +3051,7 @@ int alsa_audio_stream_control::volume()
         {
             if ((err = snd_mixer_selem_get_playback_dB(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &current_dB)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_dB: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_get_playback_dB: ") + snd_strerror(err), audio_stream_error::io_error);
             }
 
             percent = static_cast<int>(100 * (current_dB - min_dB) / (max_dB - min_dB));
@@ -2979,12 +3063,12 @@ int alsa_audio_stream_control::volume()
             {
                 if ((err = snd_mixer_selem_get_playback_volume_range(elem, &min, &max)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_playback_volume_range: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 if ((err = snd_mixer_selem_get_playback_volume(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &volume)) != 0)
                 {
-                    throw std::runtime_error(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err));
+                    throw audio_stream_exception(std::string("snd_mixer_selem_get_playback_volume: ") + snd_strerror(err), audio_stream_error::io_error);
                 }
 
                 if (max > min)
@@ -3010,7 +3094,7 @@ void alsa_audio_stream_control::mute(bool mute)
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, void(*)(snd_mixer_t*)> mixer_guard(mixer, [](snd_mixer_t* h) { if (h) snd_mixer_close(h); });
@@ -3020,17 +3104,17 @@ void alsa_audio_stream_control::mute(bool mute)
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_attach: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     snd_mixer_selem_id_t* sid;
@@ -3050,7 +3134,7 @@ void alsa_audio_stream_control::mute(bool mute)
         {
             if ((err = snd_mixer_selem_set_capture_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), mute ? 0 : 1)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_capture_switch: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_set_capture_switch: ") + snd_strerror(err), audio_stream_error::io_error);
             }
         }
     }
@@ -3060,7 +3144,7 @@ void alsa_audio_stream_control::mute(bool mute)
         {
             if ((err = snd_mixer_selem_set_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), mute ? 0 : 1)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_set_playback_switch: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_set_playback_switch: ") + snd_strerror(err), audio_stream_error::io_error);
             }
         }
     }
@@ -3078,7 +3162,7 @@ bool alsa_audio_stream_control::mute()
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, void(*)(snd_mixer_t*)> mixer_guard(mixer, [](snd_mixer_t* h) { if (h) snd_mixer_close(h); });
@@ -3088,17 +3172,17 @@ bool alsa_audio_stream_control::mute()
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_attach: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     bool is_muted = false;
@@ -3122,7 +3206,7 @@ bool alsa_audio_stream_control::mute()
         {
             if ((err = snd_mixer_selem_get_capture_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &switch_value)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_capture_switch: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_get_capture_switch: ") + snd_strerror(err), audio_stream_error::io_error);
             }
 
             is_muted = (switch_value == 0);
@@ -3134,7 +3218,7 @@ bool alsa_audio_stream_control::mute()
         {
             if ((err = snd_mixer_selem_get_playback_switch(elem, static_cast<snd_mixer_selem_channel_id_t>(channel_), &switch_value)) != 0)
             {
-                throw std::runtime_error(std::string("snd_mixer_selem_get_playback_switch: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_mixer_selem_get_playback_switch: ") + snd_strerror(err), audio_stream_error::io_error);
             }
 
             is_muted = (switch_value == 0);
@@ -3305,7 +3389,7 @@ alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) :
 
     if ((err = snd_pcm_open(&impl_->pcm_handle_, device_name.c_str(), SND_PCM_STREAM_PLAYBACK, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     // Configure ALSA hardware parameters
@@ -3318,29 +3402,29 @@ alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) :
 
     if ((err = snd_pcm_hw_params_any(impl_->pcm_handle_, hw_params)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_any: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_any: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_set_access(impl_->pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_access: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_access: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     unsigned int sample_rate = static_cast<unsigned int>(sample_rate_);
 
     if ((err = snd_pcm_hw_params_set_rate_near(impl_->pcm_handle_, hw_params, &sample_rate, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_rate_near: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_rate_near: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_set_format(impl_->pcm_handle_, hw_params, SND_PCM_FORMAT_FLOAT_LE)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_format: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_format: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params(impl_->pcm_handle_, hw_params)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     // Read back what ALSA actually set
@@ -3349,17 +3433,17 @@ alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) :
 
     if ((err = snd_pcm_hw_params_get_channels(hw_params, &channels)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_channels: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_channels: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_get_rate(hw_params, &sample_rate, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_rate: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_rate: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_get_format(hw_params, &impl_->format_)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_format: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_format: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     channels_ = static_cast<int>(channels);
@@ -3367,7 +3451,7 @@ alsa_audio_output_stream::alsa_audio_output_stream(int card_id, int device_id) :
 
     if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 }
 
@@ -3492,7 +3576,7 @@ size_t alsa_audio_output_stream::write(const double* samples, size_t count)
 {
     if (!impl_ || !impl_->pcm_handle_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     if (samples == nullptr || count == 0)
@@ -3548,7 +3632,7 @@ size_t alsa_audio_output_stream::write_interleaved(const float* samples, size_t 
             // Underrun - recover and retry
             if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
             {
-                throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
             }
             continue;
         }
@@ -3557,7 +3641,7 @@ size_t alsa_audio_output_stream::write_interleaved(const float* samples, size_t 
         {
             if ((err = snd_pcm_recover(impl_->pcm_handle_, static_cast<int>(n), 1)) != 0)
             {
-                throw std::runtime_error(std::string("snd_pcm_recover: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_pcm_recover: ") + snd_strerror(err), audio_stream_error::io_error);
             }
             continue;
         }
@@ -3576,12 +3660,12 @@ bool alsa_audio_output_stream::wait_write_completed(int timeout_ms)
 
         if ((err = snd_pcm_drain(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_drain: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_drain: ") + snd_strerror(err), audio_stream_error::io_error);
         }
 
         if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
         }
     }
     return true;
@@ -3616,7 +3700,7 @@ void alsa_audio_output_stream::start()
         int err = 0;
         if ((err = snd_pcm_start(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
         }
     }
 
@@ -3636,12 +3720,12 @@ void alsa_audio_output_stream::stop()
 
         if ((err = snd_pcm_drop(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_drop: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_drop: ") + snd_strerror(err), audio_stream_error::io_error);
         }
 
         if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
         }
     }
 
@@ -3672,7 +3756,7 @@ std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, void(*)(snd_mixer_t*)> mixer_guard(mixer, [](snd_mixer_t* h) { if (h) snd_mixer_close(h); });
@@ -3682,17 +3766,17 @@ std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_attach: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     for (snd_mixer_elem_t* elem = snd_mixer_first_elem(mixer); elem != nullptr; elem = snd_mixer_elem_next(elem))
@@ -3756,7 +3840,7 @@ alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : c
 
     if ((err = snd_pcm_open(&impl_->pcm_handle_, device_name.c_str(), SND_PCM_STREAM_CAPTURE, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     snd_pcm_hw_params_t* hw_params;
@@ -3764,46 +3848,46 @@ alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : c
 
     if ((err = snd_pcm_hw_params_any(impl_->pcm_handle_, hw_params)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_any: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_any: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_set_access(impl_->pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_access: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_access: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     unsigned int sample_rate = static_cast<unsigned int>(sample_rate_);
 
     if ((err = snd_pcm_hw_params_set_rate_near(impl_->pcm_handle_, hw_params, &sample_rate, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_rate_near: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_rate_near: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_set_format(impl_->pcm_handle_, hw_params, SND_PCM_FORMAT_FLOAT_LE)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_set_format: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_set_format: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params(impl_->pcm_handle_, hw_params)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     unsigned int channels = 0;
 
     if ((err = snd_pcm_hw_params_get_channels(hw_params, &channels)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_channels: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_channels: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_get_rate(hw_params, &sample_rate, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_rate: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_rate: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_pcm_hw_params_get_format(hw_params, &impl_->format_)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_hw_params_get_format: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_hw_params_get_format: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     channels_ = static_cast<int>(channels);
@@ -3811,7 +3895,7 @@ alsa_audio_input_stream::alsa_audio_input_stream(int card_id, int device_id) : c
 
     if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
     {
-        throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 }
 
@@ -3951,7 +4035,7 @@ size_t alsa_audio_input_stream::read(double* samples, size_t count)
 {
     if (!impl_ || !impl_->pcm_handle_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     if (samples == nullptr || count == 0)
@@ -3992,7 +4076,7 @@ size_t alsa_audio_input_stream::read_interleaved(float* samples, size_t count)
 {
     if (!impl_ || !impl_->pcm_handle_)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     int err = 0;
@@ -4016,7 +4100,7 @@ size_t alsa_audio_input_stream::read_interleaved(float* samples, size_t count)
             // Overrun - recover and retry
             if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
             {
-                throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
             }
             continue;
         }
@@ -4025,7 +4109,7 @@ size_t alsa_audio_input_stream::read_interleaved(float* samples, size_t count)
         {
             if ((err = snd_pcm_recover(impl_->pcm_handle_, static_cast<int>(n), 1)) != 0)
             {
-                throw std::runtime_error(std::string("snd_pcm_recover: ") + snd_strerror(err));
+                throw audio_stream_exception(std::string("snd_pcm_recover: ") + snd_strerror(err), audio_stream_error::io_error);
             }
             continue;
         }
@@ -4060,7 +4144,7 @@ void alsa_audio_input_stream::start()
         int err = 0;
         if ((err = snd_pcm_start(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_start: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_start: ") + snd_strerror(err), audio_stream_error::io_error);
         }
     }
 
@@ -4080,12 +4164,12 @@ void alsa_audio_input_stream::stop()
 
         if ((err = snd_pcm_drop(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_drop: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_drop: ") + snd_strerror(err), audio_stream_error::io_error);
         }
 
         if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
         {
-            throw std::runtime_error(std::string("snd_pcm_prepare: ") + snd_strerror(err));
+            throw audio_stream_exception(std::string("snd_pcm_prepare: ") + snd_strerror(err), audio_stream_error::open_failed);
         }
     }
 
@@ -4116,7 +4200,7 @@ std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
     snd_mixer_t* mixer;
     if ((err = snd_mixer_open(&mixer, 0)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_open: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_open: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     std::unique_ptr<snd_mixer_t, int(*)(snd_mixer_t*)> mixer_guard(mixer, snd_mixer_close);
@@ -4126,17 +4210,17 @@ std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_attach: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_attach: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_selem_register: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_selem_register: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     if ((err = snd_mixer_load(mixer)) != 0)
     {
-        throw std::runtime_error(std::string("snd_mixer_load: ") + snd_strerror(err));
+        throw audio_stream_exception(std::string("snd_mixer_load: ") + snd_strerror(err), audio_stream_error::open_failed);
     }
 
     for (snd_mixer_elem_t* elem = snd_mixer_first_elem(mixer); elem != nullptr; elem = snd_mixer_elem_next(elem))
@@ -4206,7 +4290,7 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
     impl_->sf_file_ = sf_open(filename.c_str(), SFM_READ, &sfinfo);
     if (!impl_->sf_file_)
     {
-        throw std::runtime_error(std::string("Failed to open WAV file: ") + sf_strerror(nullptr));
+        throw audio_stream_exception(std::string("Failed to open WAV file: ") + sf_strerror(nullptr), audio_stream_error::open_failed);
     }
 
     sample_rate_ = sfinfo.samplerate;
@@ -4219,13 +4303,13 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
 
     if (channels_ != 1)
     {
-        throw std::runtime_error("Only mono WAV files are supported for reading");
+        throw audio_stream_exception("Only mono WAV files are supported for reading", audio_stream_error::format_not_supported);
     }
 
     int type = sfinfo.format & SF_FORMAT_TYPEMASK;
     if (type != SF_FORMAT_WAV /* && type != SF_FORMAT_WAVEX && type != SF_FORMAT_RF64 */)
     {
-        throw std::runtime_error("Not a WAV file (unsupported container): " + filename);
+        throw audio_stream_exception("Not a WAV file (unsupported container): " + filename, audio_stream_error::io_error);
     }
 
     int sub = sfinfo.format & SF_FORMAT_SUBMASK;
@@ -4238,7 +4322,7 @@ wav_audio_input_stream::wav_audio_input_stream(const std::string& filename) : fi
         case SF_FORMAT_DOUBLE:
             break; // ok
         default:
-            throw std::runtime_error("Unsupported WAV encoding (not PCM/float): " + filename);
+            throw audio_stream_exception("Unsupported WAV encoding (not PCM/float): " + filename, audio_stream_error::format_not_supported);
     }
 
     sf_command(impl_->sf_file_, SFC_SET_NORM_DOUBLE, nullptr, SF_TRUE);  // normalize to [-1, 1]
@@ -4347,7 +4431,7 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
 {
     if (!impl_ || impl_->sf_file_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     sf_count_t total = 0;
@@ -4361,13 +4445,13 @@ size_t wav_audio_input_stream::read(double* samples, size_t count)
         {
             if (sf_error(impl_->sf_file_) != SF_ERR_NO_ERROR)
             {
-                throw std::runtime_error(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_));
+                throw audio_stream_exception(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_), audio_stream_error::io_error);
             }
             break; // EOF
         }
         if (n < 0)
         {
-            throw std::runtime_error(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_));
+            throw audio_stream_exception(std::string("WAV read error: ") + sf_strerror(impl_->sf_file_), audio_stream_error::io_error);
         }
         total += n;
     }
@@ -4430,7 +4514,7 @@ wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, in
     impl_->sf_file_ = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
     if (!impl_->sf_file_)
     {
-        throw std::runtime_error(std::string("Failed to open WAV file: ") + sf_strerror(nullptr));
+        throw audio_stream_exception(std::string("Failed to open WAV file: ") + sf_strerror(nullptr), audio_stream_error::open_failed);
     }
 }
 
@@ -4461,7 +4545,7 @@ wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_input_stre
 {
     if (this->sample_rate() != rhs.sample_rate())
     {
-        throw std::runtime_error("Cannot assign wav_audio_input_stream to wav_audio_output_stream with different sample rate or channels");
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to wav_audio_output_stream with different sample rate or channels", audio_stream_error::invalid_argument);
     }
 
     std::vector<double> buffer(1024);
@@ -4525,13 +4609,13 @@ size_t wav_audio_output_stream::write(const double* samples, size_t count)
 {
     if (!impl_ || impl_->sf_file_ == nullptr)
     {
-        throw std::runtime_error("Stream not initialized");
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
     }
 
     sf_count_t written = sf_write_double(impl_->sf_file_, samples, static_cast<sf_count_t>(count));
     if (written < 0)
     {
-        throw std::runtime_error(std::string("Failed to write WAV: ") + sf_strerror(impl_->sf_file_));
+        throw audio_stream_exception(std::string("Failed to write WAV: ") + sf_strerror(impl_->sf_file_), audio_stream_error::io_error);
     }
 
     return static_cast<size_t>(written);
@@ -4625,32 +4709,47 @@ nlohmann::json handle_request(tcp_audio_stream_control_client& client, tcp_audio
 {
     if (!client.connected())
     {
-        throw std::runtime_error("Client not connected");
+        throw audio_stream_exception("Client not connected", audio_stream_error::connection_error);
     }
 
-    // Send the request
-
-    std::string data = request.dump();
-    uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
-
-    boost::asio::write(impl.socket, boost::asio::buffer(&length, sizeof(length)));
-    boost::asio::write(impl.socket, boost::asio::buffer(data));
-
-    // Receive the response
-
-    boost::asio::read(impl.socket, boost::asio::buffer(&length, sizeof(length)));
-    data.resize(boost::endian::big_to_native(length));
-    boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
-
-    nlohmann::json response = nlohmann::json::parse(data);
-
-    if (response.contains("error"))
+    try
     {
-        std::string error_message = response["error"].get<std::string>();
-        throw std::runtime_error(error_message);
-    }
+        // Send the request
 
-    return response;
+        std::string data = request.dump();
+        uint32_t length = boost::endian::native_to_big(static_cast<uint32_t>(data.size()));
+
+        boost::asio::write(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+        boost::asio::write(impl.socket, boost::asio::buffer(data));
+
+        // Receive the response
+
+        boost::asio::read(impl.socket, boost::asio::buffer(&length, sizeof(length)));
+        data.resize(boost::endian::big_to_native(length));
+        boost::asio::read(impl.socket, boost::asio::buffer(data.data(), data.size()));
+
+        nlohmann::json response = nlohmann::json::parse(data);
+
+        if (response.contains("error"))
+        {
+            std::string error_message = response["error"].get<std::string>();
+            throw audio_stream_exception(error_message, audio_stream_error::internal_error);
+        }
+
+        return response;
+    }
+    catch (const audio_stream_exception&)
+    {
+        throw;
+    }
+    catch (const boost::system::system_error& e)
+    {
+        throw audio_stream_exception(e.what(), audio_stream_error::io_error);
+    }
+    catch (const std::exception& e)
+    {
+        throw audio_stream_exception(e.what(), audio_stream_error::internal_error);
+    }
 }
 
 // **************************************************************** //
@@ -5103,9 +5202,19 @@ void tcp_audio_stream_control_server::run()
         if (e.code() != boost::asio::error::operation_aborted)
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            exception_ = std::make_exception_ptr(e);
+            exception_ = std::make_exception_ptr(audio_stream_exception(e.what(), audio_stream_error::io_error));
             cv_.notify_all();
         }
+    }
+    catch (const std::exception& e)
+    {
+        running_ = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            exception_ = std::make_exception_ptr(audio_stream_exception(e.what(), audio_stream_error::internal_error));
+        }
+        cv_.notify_all();
     }
     catch (...)
     {
@@ -5113,7 +5222,7 @@ void tcp_audio_stream_control_server::run()
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            exception_ = std::current_exception();
+            exception_ = std::make_exception_ptr(audio_stream_exception("Unknown error", audio_stream_error::internal_error));
         }
         cv_.notify_all();
     }
