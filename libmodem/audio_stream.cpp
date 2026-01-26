@@ -424,6 +424,12 @@ audio_stream::audio_stream(std::unique_ptr<audio_stream_base> s) : stream_(std::
 {
 }
 
+audio_stream& audio_stream::operator=(wav_audio_input_stream& rhs)
+{
+    audio_stream_base::operator=(rhs);
+    return *this;
+}
+
 audio_stream::~audio_stream()
 {
     stream_.reset();
@@ -568,6 +574,8 @@ audio_stream_base& audio_stream::get()
     }
     return *stream_;
 }
+
+std::unique_ptr<audio_stream_base> audio_stream::release() { return std::move(stream_); }
 
 audio_stream::operator bool() const
 {
@@ -1549,6 +1557,12 @@ wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_o
         sample_rate_ = other.sample_rate_;
         channels_ = other.channels_;
     }
+    return *this;
+}
+
+wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wav_audio_input_stream& rhs)
+{
+    audio_stream_base::operator=(rhs);
     return *this;
 }
 

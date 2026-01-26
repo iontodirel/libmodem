@@ -151,6 +151,7 @@ struct wav_audio_input_stream;
 struct audio_stream_base
 {
     virtual audio_stream_base& operator=(wav_audio_input_stream& rhs);
+
     virtual ~audio_stream_base() = default;
 
     virtual void close() = 0;
@@ -197,7 +198,6 @@ class audio_stream : public audio_stream_base
 {
 public:
     using audio_stream_base::wait_write_completed;
-    using audio_stream_base::operator=;
 
     audio_stream(std::nullptr_t);
     explicit audio_stream(std::unique_ptr<audio_stream_base> s);
@@ -205,6 +205,7 @@ public:
     audio_stream& operator=(const audio_stream&) = delete;
     audio_stream(audio_stream&&) = default;
     audio_stream& operator=(audio_stream&&) = default;
+    audio_stream& operator=(wav_audio_input_stream& rhs);
     virtual ~audio_stream();
 
     void close() override;
@@ -229,6 +230,8 @@ public:
     void stop() override;
 
     audio_stream_base& get();
+
+    std::unique_ptr<audio_stream_base> release();
 
     explicit operator bool() const;
 
@@ -430,7 +433,6 @@ class wasapi_audio_output_stream : public audio_stream_base
 {
 public:
     using audio_stream_base::wait_write_completed;
-    using audio_stream_base::operator=;
 
     wasapi_audio_output_stream();
     wasapi_audio_output_stream(audio_device_impl* impl);
@@ -438,6 +440,7 @@ public:
     wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream(wasapi_audio_output_stream&&) noexcept;
     wasapi_audio_output_stream& operator=(wasapi_audio_output_stream&&) noexcept;
+    wasapi_audio_output_stream& operator=(wav_audio_input_stream& rhs);
     virtual ~wasapi_audio_output_stream();
 
     void close();
