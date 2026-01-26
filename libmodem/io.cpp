@@ -911,12 +911,12 @@ bool tcp_client::wait_data_received(int timeout_ms)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// json_request (helper for tcp clients)                            //
+// json_response (helper for tcp clients)                            //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-nlohmann::json json_request(tcp_client& client, const nlohmann::json& request)
+nlohmann::json json_response(tcp_client& client, const nlohmann::json& request)
 {
     if (!client.connected())
     {
@@ -975,62 +975,62 @@ nlohmann::json json_request(tcp_client& client, const nlohmann::json& request)
 
 void tcp_serial_port_client::rts(bool enable)
 {
-    json_request(*this, { {"command", "set_rts"}, {"value", enable} });
+    json_response(*this, { {"command", "set_rts"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::rts()
 {
-    return json_request(*this, { {"command", "get_rts"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_rts"} })["value"].get<bool>();
 }
 
 void tcp_serial_port_client::dtr(bool enable)
 {
-    json_request(*this, { {"command", "set_dtr"}, {"value", enable} });
+    json_response(*this, { {"command", "set_dtr"}, {"value", enable} });
 }
 
 bool tcp_serial_port_client::dtr()
 {
-    return json_request(*this, { {"command", "get_dtr"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_dtr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::cts()
 {
-    return json_request(*this, { {"command", "get_cts"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_cts"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dsr()
 {
-    return json_request(*this, { {"command", "get_dsr"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_dsr"} })["value"].get<bool>();
 }
 
 bool tcp_serial_port_client::dcd()
 {
-    return json_request(*this, { {"command", "get_dcd"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_dcd"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::vector<uint8_t>& data)
 {
-    return json_request(*this, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+    return json_response(*this, { {"command", "write"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::size_t tcp_serial_port_client::write(const std::string& data)
 {
-    return json_request(*this, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
+    return json_response(*this, { {"command", "write_string"}, {"data", base64_encode(data)} })["value"].get<std::size_t>();
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read(std::size_t size)
 {
-    return base64_decode(json_request(*this, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
+    return base64_decode(json_response(*this, { {"command", "read"}, {"size", size} })["value"].get<std::string>());
 }
 
 std::vector<uint8_t> tcp_serial_port_client::read_some(std::size_t max_size)
 {
-    return base64_decode(json_request(*this, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
+    return base64_decode(json_response(*this, { {"command", "read_some"}, {"max_size", max_size} })["value"].get<std::string>());
 }
 
 std::string tcp_serial_port_client::read_until(const std::string& delimiter)
 {
-    return base64_decode_string(json_request(*this, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
+    return base64_decode_string(json_response(*this, { {"command", "read_until"}, {"delimiter", base64_encode(delimiter)} })["value"].get<std::string>());
 }
 
 bool tcp_serial_port_client::is_open()
@@ -1040,17 +1040,17 @@ bool tcp_serial_port_client::is_open()
         return false;
     }
 
-    return json_request(*this, { {"command", "is_open"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "is_open"} })["value"].get<bool>();
 }
 
 std::size_t tcp_serial_port_client::bytes_available()
 {
-    return json_request(*this, { {"command", "bytes_available"} })["value"].get<std::size_t>();
+    return json_response(*this, { {"command", "bytes_available"} })["value"].get<std::size_t>();
 }
 
 void tcp_serial_port_client::flush()
 {
-    json_request(*this, { {"command", "flush"} });
+    json_response(*this, { {"command", "flush"} });
 }
 
 // **************************************************************** //
@@ -2006,7 +2006,7 @@ void tcp_ptt_control_client::ptt(bool ptt_state)
     // Request: { "command": "set_ptt", "value": <bool> }
     // Response: { "value": "ok" }
 
-    json_request(*this, { {"command", "set_ptt"}, {"value", ptt_state} });
+    json_response(*this, { {"command", "set_ptt"}, {"value", ptt_state} });
 }
 
 bool tcp_ptt_control_client::ptt()
@@ -2016,7 +2016,7 @@ bool tcp_ptt_control_client::ptt()
     // Request: { "command": "get_ptt" }
     // Response: { "value": "<bool>" }
 
-    return json_request(*this, { {"command", "get_ptt"} })["value"].get<bool>();
+    return json_response(*this, { {"command", "get_ptt"} })["value"].get<bool>();
 }
 
 // **************************************************************** //
