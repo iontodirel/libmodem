@@ -304,12 +304,21 @@ void data_stream::stop()
 
 void data_stream::send(packet p)
 {
+    if (!enabled_)
+    {
+        return;
+    }
     std::vector<uint8_t> data = formatter_.value().get().encode(p);
     transport_.value().get().write(data);
 }
 
 bool data_stream::try_receive(packet& p)
 {
+    if (!enabled())
+    {
+        return false;
+    }
+
     const auto& client_ids = transport_->get().clients();
 
     for (std::size_t client_id : client_ids)
@@ -355,6 +364,10 @@ bool data_stream::try_receive(packet& p)
 
 bool data_stream::wait_data_received(int timeout_ms)
 {
+    if (!enabled())
+    {
+        return false;
+    }
     return transport_->get().wait_data_received(timeout_ms);
 }
 
@@ -362,6 +375,16 @@ bool data_stream::wait_stopped(int timeout_ms)
 {
     (void)timeout_ms;
     return false;
+}
+
+void data_stream::enabled(bool enable)
+{
+    enabled_.store(enable);
+}
+
+bool data_stream::enabled()
+{
+    return enabled_.load();
 }
 
 // **************************************************************** //
@@ -417,14 +440,34 @@ void modem_data_stream::stop()
     stop_cv_.notify_all();
 }
 
+size_t modem_data_stream::audio_stream_error_count(size_t count)
+{
+    return audio_stream_error_count_.exchange(count);
+}
+
+size_t modem_data_stream::audio_stream_error_count()
+{
+    return audio_stream_error_count_.load();
+}
+
 void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
         packet p;
         if (try_receive(p))
-        {   
-            m_->get().transmit(p);
+        {
+            if (enabled())
+            {
+                try
+                {
+                    m_->get().transmit(p);
+                }
+                catch (...)
+                {
+                    enabled(false);
+                }
+            }
         }
 
         wait_data_received(10);

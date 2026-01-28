@@ -41,6 +41,7 @@
 #include <vector>
 #include <memory>
 #include <set>
+#include <atomic>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -57,15 +58,76 @@
 
 LIBMODEM_NAMESPACE_BEGIN
 
+struct audio_entry;
+struct ptt_entry;
+struct modem_entry;
+struct data_stream_entry;
+
+class audio_stream_no_throw;
+class ptt_control_no_throw;
+class transport_no_throw;
+class serial_port_no_throw;
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// error_info                                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct error_info
+{
+    std::string message;
+    std::exception_ptr exception;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// error_events                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct error_events
+{
+    virtual ~error_events() = default;
+
+    virtual void on_error(audio_stream_no_throw& component, audio_entry& entry, const error_info& error) = 0;
+    virtual void on_error(ptt_control_no_throw& component, ptt_entry& entry, const error_info& error) = 0;
+    virtual void on_error(serial_port_no_throw& component, ptt_entry& entry, const error_info& error) = 0;
+    virtual void on_error(transport_no_throw& component, data_stream_entry& entry, const error_info& error) = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_entry                                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
 struct audio_entry
 {
     std::string name;
+    bool enabled = true;
+    std::atomic<bool> faulted{ false };
     std::string display_name;
     audio_device device;
     audio_stream stream = nullptr;
     audio_stream_config config;
     std::vector<std::string> referenced_by;
+    std::optional<std::reference_wrapper<modem_entry>> associated_modem_entry;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// ptt_entry                                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 enum class ptt_control_type
 {
@@ -79,6 +141,9 @@ enum class ptt_control_type
 struct ptt_entry
 {
     std::string name;
+    bool enabled = true;
+    std::atomic<bool> faulted{ false };
+    std::atomic<bool> serial_port_faulted{ false };
     std::string display_name;
     ptt_control_type type = ptt_control_type::unknown;
     std::unique_ptr<ptt_control_base> ptt_control;
@@ -94,33 +159,63 @@ struct ptt_entry
     enum serial_port_ptt_line serial_line = serial_port_ptt_line::rts;
     enum serial_port_ptt_trigger serial_trigger = serial_port_ptt_trigger::on;
     std::string library_path;
+    std::vector<std::string> referenced_by;
     ptt_control_config config;
+    std::optional<std::reference_wrapper<modem_entry>> associated_modem_entry;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// modem_entry                                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 struct modem_entry
 {
     std::string name;
+    bool enabled = true;
     struct modem modem;
     std::unique_ptr<bitstream_converter_base> converter;
     std::unique_ptr<modulator_base> modulator;
     struct modulator_config modulator_config;
+    std::optional<std::reference_wrapper<data_stream_entry>> associated_data_stream_entry;
+    std::optional<std::reference_wrapper<audio_entry>> associated_audio_entry;
+    std::optional<std::reference_wrapper<ptt_entry>> associated_ptt_entry;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// data_stream_entry                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
 struct data_stream_entry
 {
     std::string name;
-    std::unique_ptr<transport> transport;
-    std::unique_ptr<formatter> formatter;
+    bool enabled = true;
+    std::atomic<bool> faulted{ false };
+    std::unique_ptr<struct transport> transport;
+    std::unique_ptr<struct formatter> formatter;
     std::unique_ptr<modem_data_stream> data_stream;
     std::vector<std::string> referenced_by;
     data_stream_config config;
 };
 
-struct pipeline_events
-{
-};
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// pipeline                                                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
-class pipeline
+struct pipeline_impl;
+
+class pipeline : public error_events
 {
 public:
     pipeline(const config& c);
@@ -139,7 +234,7 @@ private:
     void populate_data_streams();
 
     void assign_audio_streams();
-    void assign_data_streams();
+    void assign_modems();
     void assign_ptt_controls();
 
     bool can_add_audio_entry(const audio_stream_config& audio_config);
@@ -165,13 +260,36 @@ private:
     bool is_valid_data_stream_config(const data_stream_config& config);
     void register_data_stream(const data_stream_entry& entry, const data_stream_config& config);
     bool is_data_stream_referenced(const std::string& name);
+    void validate_entries();
+
+    bool try_recover_audio_stream(audio_entry& entry, modem_entry& modem);
+    void schedule_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+    void attempt_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+
+    bool try_recover_ptt_control(ptt_entry& entry, modem_entry& modem);
+    void schedule_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+    void attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+
+    bool try_recover_serial_port(ptt_entry& entry, modem_entry& modem);
+    void schedule_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+    void attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
+
+    bool try_recover_transport(data_stream_entry& entry);
+    void schedule_transport_recovery(data_stream_entry& ds_entry);
+    void attempt_transport_recovery(data_stream_entry& ds_entry);
+
+    void try_reenable_data_stream(modem_entry& modem_entry, data_stream_entry& ds_entry);
+
+    void on_error(audio_stream_no_throw& component, audio_entry& entry, const error_info& error) override;
+    void on_error(ptt_control_no_throw& component, ptt_entry& entry, const error_info& error) override;
+    void on_error(serial_port_no_throw& component, ptt_entry& entry, const error_info& error) override;
+    void on_error(transport_no_throw& component, data_stream_entry& entry, const error_info& error) override;
 
     const struct config config;
-    std::vector<modem_entry> modems_;
-    std::vector<ptt_entry> ptt_controls_;
-    std::vector<audio_entry> audio_entries_;
-    std::vector<data_stream_entry> data_streams_;
-
+    std::vector<std::unique_ptr<modem_entry>> modems_;
+    std::vector<std::unique_ptr<ptt_entry>> ptt_controls_;
+    std::vector<std::unique_ptr<audio_entry>> audio_entries_;
+    std::vector<std::unique_ptr<data_stream_entry>> data_streams_;
     std::set<std::string> used_audio_names_;
     std::set<std::pair<std::string, audio_device_type>> used_audio_devices_;
     std::set<std::string> used_audio_files_;
@@ -181,6 +299,10 @@ private:
     std::set<std::string> used_modem_names_;
     std::set<std::string> used_data_stream_names_;
     std::set<int> used_tcp_ports_;
+    std::unique_ptr<pipeline_impl> impl_;
+    size_t max_audio_stream_error_count_ = 3;
+    int max_recovery_attempts_ = 10;
+    int recovery_delay_seconds_ = 5;
 };
 
 LIBMODEM_NAMESPACE_END

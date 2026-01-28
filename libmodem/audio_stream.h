@@ -154,7 +154,7 @@ struct audio_stream_base
 
     virtual ~audio_stream_base() = default;
 
-    virtual void close() = 0;
+    virtual void close() noexcept = 0;
 
     virtual std::string name() = 0;
     virtual audio_stream_type type() = 0;
@@ -183,7 +183,9 @@ struct audio_stream_base
     virtual bool eof() = 0;
 
     virtual void start() = 0;
-    virtual void stop() = 0;
+    virtual void stop() noexcept = 0;
+
+    virtual explicit operator bool() = 0;
 };
 
 // **************************************************************** //
@@ -208,7 +210,7 @@ public:
     audio_stream& operator=(wav_audio_input_stream& rhs);
     virtual ~audio_stream();
 
-    void close() override;
+    void close() noexcept override;
 
     std::string name() override;
     audio_stream_type type() override;
@@ -227,13 +229,13 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
 
-    audio_stream_base& get();
+    virtual audio_stream_base& get();
 
     std::unique_ptr<audio_stream_base> release();
 
-    explicit operator bool() const;
+    explicit operator bool() override;
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
@@ -252,7 +254,7 @@ class null_audio_stream : public audio_stream_base
 public:
     using audio_stream_base::wait_write_completed;
 
-    void close() override;
+    void close() noexcept override;
 
     std::string name() override;
     audio_stream_type type() override;
@@ -271,7 +273,9 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
+
+    explicit operator bool() override;
 };
 
 // **************************************************************** //
@@ -443,7 +447,7 @@ public:
     wasapi_audio_output_stream& operator=(wav_audio_input_stream& rhs);
     virtual ~wasapi_audio_output_stream();
 
-    void close();
+    void close() noexcept override;
 
     std::string name();
     audio_stream_type type() override;
@@ -465,12 +469,14 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
 
     bool faulted();
     void throw_if_faulted();
 
     void flush();
+
+    explicit operator bool() override;
 
 private:
     void run(std::stop_token stop_token);
@@ -479,7 +485,7 @@ private:
     int buffer_size_ = 0;
     int sample_rate_ = 0;
     int channels_ = 0;
-    bool started_ = false;
+    std::atomic<bool> started_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
     std::jthread render_thread_;
     std::mutex buffer_mutex_;
@@ -487,6 +493,7 @@ private:
     std::exception_ptr render_exception_;
     size_t ring_buffer_size_seconds_ = 5;
     std::atomic<uint64_t> total_frames_written_ = 0;
+    std::mutex start_stop_mutex_;
 };
 
 #endif // WIN32
@@ -517,7 +524,7 @@ public:
     wasapi_audio_input_stream& operator=(wasapi_audio_input_stream&&) noexcept;
     virtual ~wasapi_audio_input_stream();
 
-    void close();
+    void close() noexcept override;
 
     std::string name();
     audio_stream_type type() override;
@@ -539,12 +546,14 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
 
     bool faulted();
     void throw_if_faulted();
 
     void flush();
+
+    explicit operator bool() override;
 
 private:
     void run(std::stop_token stop_token);
@@ -561,6 +570,7 @@ private:
     std::exception_ptr capture_exception_;
     size_t discontinuity_count_ = 0;
     size_t ring_buffer_size_seconds_ = 5;
+    std::mutex start_stop_mutex_;
 };
 
 #endif // WIN32
@@ -630,7 +640,7 @@ public:
     alsa_audio_output_stream& operator=(alsa_audio_output_stream&&) noexcept;
     virtual ~alsa_audio_output_stream();
 
-    void close() override;
+    void close() noexcept override;
     audio_stream_type type() override;
 
     std::string name() override;
@@ -652,9 +662,11 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
     void enable_start_stop(bool);
     bool enable_start_stop();
+
+    explicit operator bool() override;
 
     std::vector<alsa_audio_stream_control> controls();
 
@@ -666,9 +678,10 @@ private:
 
     int sample_rate_ = 48000;
     int channels_ = 0;
-    bool started_ = false;
+    std::atomic<bool> started_ = false;
     bool start_stop_enabled_ = false;
     std::unique_ptr<alsa_audio_stream_impl> impl_;
+    std::mutex start_stop_mutex_;
 };
 
 #endif // __linux__
@@ -696,7 +709,7 @@ public:
     alsa_audio_input_stream& operator=(alsa_audio_input_stream&& other) noexcept;
     ~alsa_audio_input_stream();
 
-    void close() override;
+    void close() noexcept override;
     audio_stream_type type() override;
 
     std::string name() override;
@@ -718,9 +731,11 @@ public:
     bool eof() override;
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
     void enable_start_stop(bool enable);
     bool enable_start_stop();
+
+    explicit operator bool() override;
 
     std::vector<alsa_audio_stream_control> controls();
 
@@ -732,9 +747,10 @@ private:
 
     int sample_rate_ = 48000;
     int channels_ = 2;
-    bool started_ = false;
+    std::atomic<bool> started_ = false;
     bool start_stop_enabled_ = false;
     std::unique_ptr<alsa_audio_stream_impl> impl_;
+    std::mutex start_stop_mutex_;
 };
 
 #endif // __linux__
@@ -759,7 +775,7 @@ public:
     wav_audio_input_stream& operator=(wav_audio_input_stream&&) noexcept;
     virtual ~wav_audio_input_stream();
 
-    void close() override;
+    void close() noexcept override;
 
     std::string name() override;
     audio_stream_type type() override;
@@ -780,7 +796,9 @@ public:
     void flush();
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
+
+    explicit operator bool() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;
@@ -811,7 +829,7 @@ public:
     wav_audio_output_stream& operator=(wav_audio_input_stream& rhs) override;
     virtual ~wav_audio_output_stream();
 
-    void close() override;
+    void close() noexcept override;
 
     std::string name() override;
     audio_stream_type type() override;
@@ -832,7 +850,9 @@ public:
     void flush();
 
     void start() override;
-    void stop() override;
+    void stop() noexcept override;
+
+    explicit operator bool() override;
 
 private:
     std::unique_ptr<wav_audio_impl> impl_;

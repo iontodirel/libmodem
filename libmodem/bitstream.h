@@ -921,6 +921,9 @@ template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc);
 
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid);
 
 std::vector<uint8_t> encode_header(const packet& p);
@@ -1269,9 +1272,16 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no
     return try_decode_frame_no_fcs(frame_it_first, frame_it_last, from, to, path, data, control, pid);
 }
 
-
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& crc)
+{
+    std::array<uint8_t, 2> expected_crc;
+    (void)expected_crc;
+    return try_decode_frame(frame_it_first, frame_it_last, from, to, path, data, control, pid, crc, expected_crc);
+}
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
 {
     size_t frame_size = std::distance(frame_it_first, frame_it_last);
 
@@ -1280,13 +1290,11 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
         return { path, data, false };
     }
 
-    std::array<uint8_t, 2> computed_crc = compute_crc_using_lut(frame_it_first, frame_it_last - 2);
-    std::array<uint8_t, 2> received_crc = { *(frame_it_last - 2), *(frame_it_last - 1) };
-
-    crc = received_crc;
+    actual_crc = compute_crc_using_lut(frame_it_first, frame_it_last - 2);
+    expected_crc = { *(frame_it_last - 2), *(frame_it_last - 1) };
 
     // Check CRC validity
-    if (computed_crc != received_crc)
+    if (actual_crc != expected_crc)
     {
         return { path, data, false };
     }

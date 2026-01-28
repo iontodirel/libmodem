@@ -115,6 +115,10 @@ audio_stream_error alsa_error_to_error(int err)
 
 void throw_alsa_error(int err, const std::string& function_name)
 {
+    if (err == 0)
+    {
+        return;
+    }
     audio_stream_error error = alsa_error_to_error(err);
     throw audio_stream_exception(function_name + ": " + snd_strerror(err), error);
 }
@@ -246,7 +250,7 @@ static audio_stream_error hresult_to_error(HRESULT hr)
         case AUDCLNT_E_OUT_OF_ORDER:
             return audio_stream_error::buffer_error;
 
-            // Client not initialized
+        // Client not initialized
         case AUDCLNT_E_NOT_INITIALIZED:
             return audio_stream_error::not_initialized;
 
@@ -281,7 +285,7 @@ static void throw_hresult_error(HRESULT hr, const char* message)
 //                                                                  //
 // **************************************************************** //
 
-audio_stream_exception::audio_stream_exception() : message_(), error_(audio_stream_error{})
+audio_stream_exception::audio_stream_exception() : error_(audio_stream_error{})
 {
 }
 
@@ -293,7 +297,7 @@ audio_stream_exception::audio_stream_exception(const std::string& message, audio
 {
 }
 
-audio_stream_exception::audio_stream_exception(audio_stream_error error) : message_(), error_(error)
+audio_stream_exception::audio_stream_exception(audio_stream_error error) : error_(error)
 {
 }
 
@@ -386,7 +390,7 @@ audio_stream_base& audio_stream_base::operator=(wav_audio_input_stream& rhs)
 
     if (this->type() != audio_stream_type::output)
     {
-        throw audio_stream_exception("Cannot assign wav_audio_input_stream to non-output audio_stream_base", audio_stream_error::invalid_state);
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to a non-output audio_stream_base", audio_stream_error::invalid_state);
     }
 
     std::vector<double> buffer(1024);
@@ -435,8 +439,12 @@ audio_stream::~audio_stream()
     stream_.reset();
 }
 
-void audio_stream::close()
+void audio_stream::close() noexcept
 {
+    if (stream_)
+    {
+        stream_->close();
+    }
     stream_.reset();
 }
 
@@ -557,11 +565,11 @@ void audio_stream::start()
     stream_->start();
 }
 
-void audio_stream::stop()
+void audio_stream::stop() noexcept
 {
     if (!stream_)
     {
-        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
+        return;
     }
     stream_->stop();
 }
@@ -575,11 +583,14 @@ audio_stream_base& audio_stream::get()
     return *stream_;
 }
 
-std::unique_ptr<audio_stream_base> audio_stream::release() { return std::move(stream_); }
-
-audio_stream::operator bool() const
+std::unique_ptr<audio_stream_base> audio_stream::release()
 {
-    return stream_ != nullptr;
+    return std::move(stream_);
+}
+
+audio_stream::operator bool()
+{
+    return stream_ != nullptr && stream_.operator bool();
 }
 
 // **************************************************************** //
@@ -590,7 +601,7 @@ audio_stream::operator bool() const
 //                                                                  //
 // **************************************************************** //
 
-void null_audio_stream::close()
+void null_audio_stream::close() noexcept
 {
 }
 
@@ -657,8 +668,13 @@ void null_audio_stream::start()
 {
 }
 
-void null_audio_stream::stop()
+void null_audio_stream::stop() noexcept
 {
+}
+
+null_audio_stream::operator bool()
+{
+    return true;
 }
 
 // **************************************************************** //
@@ -1571,9 +1587,11 @@ wasapi_audio_output_stream::~wasapi_audio_output_stream()
     close();
 }
 
-void wasapi_audio_output_stream::close()
+void wasapi_audio_output_stream::close() noexcept
 {
     stop();
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
 
     if (impl_)
     {
@@ -1585,11 +1603,13 @@ void wasapi_audio_output_stream::close()
         if (impl_->audio_samples_ready_event_ != nullptr)
         {
             CloseHandle(impl_->audio_samples_ready_event_);
+            impl_->audio_samples_ready_event_ = nullptr;
         }
 
         if (impl_->stop_render_event_ != nullptr)
         {
             CloseHandle(impl_->stop_render_event_);
+            impl_->stop_render_event_ = nullptr;
         }
 
         impl_.reset();
@@ -1920,6 +1940,8 @@ bool wasapi_audio_output_stream::eof()
 
 void wasapi_audio_output_stream::start()
 {
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
     if (started_)
     {
         return;
@@ -1946,23 +1968,37 @@ void wasapi_audio_output_stream::start()
     {
         render_thread_.request_stop();
         SetEvent(impl_->stop_render_event_);
-        render_thread_.join();
+        if (render_thread_.joinable())
+        {
+            render_thread_.join();
+        }
         throw_hresult_error(hr, "Failed to start audio client");
     }
 
     started_ = true;
 }
 
-void wasapi_audio_output_stream::stop()
+void wasapi_audio_output_stream::stop() noexcept
 {
+    std::lock_guard<std::mutex> start_stop_lock(start_stop_mutex_);
+
     if (!started_)
     {
         return;
     }
 
+    started_ = false;
+
     if (impl_)
     {
-        ensure_com_initialized();
+        try
+        {
+            ensure_com_initialized();
+        }
+        catch (...)
+        {
+            return;
+        }
 
         render_thread_.request_stop();
 
@@ -1974,7 +2010,10 @@ void wasapi_audio_output_stream::stop()
 
         buffer_cv_.notify_all();
 
-        render_thread_.join();
+        if (render_thread_.joinable())
+        {
+            render_thread_.join();
+        }
 
         if (impl_->audio_client_)
         {
@@ -1984,12 +2023,10 @@ void wasapi_audio_output_stream::stop()
 
         // Clear the ring buffer and reset the frame counter
         {
-            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            std::lock_guard<std::mutex> buffer_lock(buffer_mutex_);
             impl_->ring_buffer_.clear();
             total_frames_written_ = 0;
         }
-
-        started_ = false;
     }
 }
 
@@ -2028,6 +2065,20 @@ void wasapi_audio_output_stream::flush()
         impl_->ring_buffer_.clear();
         total_frames_written_ = 0;
     }
+}
+
+wasapi_audio_output_stream::operator bool()
+{
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!impl_ || !impl_->audio_client_)
+    {
+        return false;
+    }
+
+    UINT32 padding = 0;
+    HRESULT hr = impl_->audio_client_->GetCurrentPadding(&padding);
+    return SUCCEEDED(hr);
 }
 
 void wasapi_audio_output_stream::run(std::stop_token stop_token)
@@ -2376,9 +2427,11 @@ wasapi_audio_input_stream::~wasapi_audio_input_stream()
     close();
 }
 
-void wasapi_audio_input_stream::close()
+void wasapi_audio_input_stream::close() noexcept
 {
     stop();
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
 
     if (impl_)
     {
@@ -2624,6 +2677,8 @@ bool wasapi_audio_input_stream::eof()
 
 void wasapi_audio_input_stream::start()
 {
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
     if (started_)
     {
         return;
@@ -2652,23 +2707,37 @@ void wasapi_audio_input_stream::start()
     {
         capture_thread_.request_stop();
         SetEvent(impl_->stop_capture_event_);
-        capture_thread_.join();
+        if (capture_thread_.joinable())
+        {
+            capture_thread_.join();
+        }
         throw_hresult_error(hr, "Failed to start");
     }
 
     started_ = true;
 }
 
-void wasapi_audio_input_stream::stop()
+void wasapi_audio_input_stream::stop() noexcept
 {
+    std::lock_guard<std::mutex> start_stop_lock(start_stop_mutex_);
+
     if (!started_)
     {
         return;
     }
 
+    started_ = false;
+
     if (impl_)
     {
-        ensure_com_initialized();
+        try
+        {
+            ensure_com_initialized();
+        }
+        catch (...)
+        {
+            return;
+        }
 
         capture_thread_.request_stop();
 
@@ -2680,7 +2749,10 @@ void wasapi_audio_input_stream::stop()
 
         buffer_cv_.notify_all();
 
-        capture_thread_.join();
+        if (capture_thread_.joinable())
+        {
+            capture_thread_.join();
+        }
 
         if (impl_->audio_client_)
         {
@@ -2690,11 +2762,9 @@ void wasapi_audio_input_stream::stop()
 
         // Clear the ring buffer to ensure clean state for next start
         {
-            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            std::lock_guard<std::mutex> buffer_lock(buffer_mutex_);
             impl_->ring_buffer_.clear();
         }
-
-        started_ = false;
     }
 }
 
@@ -2732,6 +2802,20 @@ void wasapi_audio_input_stream::flush()
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         impl_->ring_buffer_.clear();
     }
+}
+
+wasapi_audio_input_stream::operator bool()
+{
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!impl_ || !impl_->audio_client_)
+    {
+        return false;
+    }
+
+    UINT32 padding = 0;
+    HRESULT hr = impl_->audio_client_->GetCurrentPadding(&padding);
+    return SUCCEEDED(hr);
 }
 
 void wasapi_audio_input_stream::run(std::stop_token stop_token)
@@ -3604,11 +3688,15 @@ alsa_audio_output_stream::~alsa_audio_output_stream()
     close();
 }
 
-void alsa_audio_output_stream::close()
+void alsa_audio_output_stream::close() noexcept
 {
+    stop();
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
     if (impl_ && impl_->pcm_handle_ != nullptr)
     {
-        snd_pcm_drain(impl_->pcm_handle_);
+        snd_pcm_drop(impl_->pcm_handle_);
         snd_pcm_close(impl_->pcm_handle_);
         impl_->pcm_handle_ = nullptr;
     }
@@ -3720,6 +3808,11 @@ size_t alsa_audio_output_stream::write_interleaved(const double* samples, size_t
 
 size_t alsa_audio_output_stream::write_interleaved(const float* samples, size_t count)
 {
+    if (!impl_ || !impl_->pcm_handle_)
+    {
+        throw audio_stream_exception("Stream not initialized", audio_stream_error::not_initialized);
+    }
+
     int err = 0;
 
     size_t frames_count = count / channels_;
@@ -3799,7 +3892,14 @@ size_t alsa_audio_output_stream::read_interleaved(double* samples, size_t count)
 
 void alsa_audio_output_stream::start()
 {
-    if (started_ || !start_stop_enabled_)
+    if (!start_stop_enabled_)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (started_)
     {
         return;
     }
@@ -3809,36 +3909,43 @@ void alsa_audio_output_stream::start()
         int err = 0;
         if ((err = snd_pcm_start(impl_->pcm_handle_)) != 0)
         {
-            throw_alsa_error(err, "snd_pcm_prepare");
+            throw_alsa_error(err, "snd_pcm_start");
         }
     }
 
     started_ = true;
 }
 
-void alsa_audio_output_stream::stop()
+void alsa_audio_output_stream::stop() noexcept
 {
-    if (!started_ || !start_stop_enabled_)
+    if (!start_stop_enabled_)
     {
         return;
     }
 
-    if (impl_ && impl_->pcm_handle_)
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!started_)
     {
-        int err = 0;
-
-        if ((err = snd_pcm_drop(impl_->pcm_handle_)) != 0)
-        {
-            throw_alsa_error(err, "snd_pcm_drop");
-        }
-
-        if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
-        {
-            throw_alsa_error(err, "snd_pcm_prepare");
-        }
+        return;
     }
 
     started_ = false;
+
+    if (impl_ && impl_->pcm_handle_)
+    {
+        snd_pcm_state_t state = snd_pcm_state(impl_->pcm_handle_);
+        if (state == SND_PCM_STATE_DISCONNECTED)
+        {
+            snd_pcm_drop(impl_->pcm_handle_);
+        }
+        else
+        {
+            snd_pcm_drain(impl_->pcm_handle_);
+        }
+        // Success or device lost - try to prepare for reuse if possible
+        snd_pcm_prepare(impl_->pcm_handle_); // Ignore errors
+    }
 }
 
 void alsa_audio_output_stream::enable_start_stop(bool enable)
@@ -3849,6 +3956,19 @@ void alsa_audio_output_stream::enable_start_stop(bool enable)
 bool alsa_audio_output_stream::enable_start_stop()
 {
     return start_stop_enabled_;
+}
+
+alsa_audio_output_stream::operator bool()
+{
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!impl_ || !impl_->pcm_handle_)
+    {
+        return false;
+    }
+
+    snd_pcm_state_t state = snd_pcm_state(impl_->pcm_handle_);
+    return state != SND_PCM_STATE_DISCONNECTED;
 }
 
 std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
@@ -4048,8 +4168,12 @@ alsa_audio_input_stream::~alsa_audio_input_stream()
     close();
 }
 
-void alsa_audio_input_stream::close()
+void alsa_audio_input_stream::close() noexcept
 {
+    stop();
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
     if (impl_ && impl_->pcm_handle_)
     {
         snd_pcm_drop(impl_->pcm_handle_);
@@ -4243,7 +4367,14 @@ bool alsa_audio_input_stream::eof()
 
 void alsa_audio_input_stream::start()
 {
-    if (started_ || !start_stop_enabled_)
+    if (!start_stop_enabled_)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (started_)
     {
         return;
     }
@@ -4260,29 +4391,33 @@ void alsa_audio_input_stream::start()
     started_ = true;
 }
 
-void alsa_audio_input_stream::stop()
+void alsa_audio_input_stream::stop() noexcept
 {
-    if (!started_ || !start_stop_enabled_)
+    if (!start_stop_enabled_)
     {
         return;
     }
 
-    if (impl_ && impl_->pcm_handle_)
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!started_)
     {
-        int err = 0;
-
-        if ((err = snd_pcm_drop(impl_->pcm_handle_)) != 0)
-        {
-            throw_alsa_error(err, "snd_pcm_drop");
-        }
-
-        if ((err = snd_pcm_prepare(impl_->pcm_handle_)) != 0)
-        {
-            throw_alsa_error(err, "snd_pcm_prepare");
-        }
+        return;
     }
 
     started_ = false;
+
+    if (impl_ && impl_->pcm_handle_)
+    {
+        // Don't throw during stop - the device may already be disconnected.
+        // Use snd_pcm_drop to immediately stop without blocking.
+        int err = snd_pcm_drop(impl_->pcm_handle_);
+        if (err == 0 || err == -ENODEV || err == -ESTRPIPE)
+        {
+            // Success or device lost - try to prepare for reuse if possible
+            snd_pcm_prepare(impl_->pcm_handle_); // Ignore errors
+        }
+    }
 }
 
 void alsa_audio_input_stream::enable_start_stop(bool enable)
@@ -4293,6 +4428,19 @@ void alsa_audio_input_stream::enable_start_stop(bool enable)
 bool alsa_audio_input_stream::enable_start_stop()
 {
     return start_stop_enabled_;
+}
+
+alsa_audio_input_stream::operator bool()
+{
+    std::lock_guard<std::mutex> lock(start_stop_mutex_);
+
+    if (!impl_ || !impl_->pcm_handle_)
+    {
+        return false;
+    }
+
+    snd_pcm_state_t state = snd_pcm_state(impl_->pcm_handle_);
+    return state != SND_PCM_STATE_DISCONNECTED;
 }
 
 std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
@@ -4581,7 +4729,7 @@ void wav_audio_input_stream::flush()
     // Not supported
 }
 
-void wav_audio_input_stream::close()
+void wav_audio_input_stream::close() noexcept
 {
     if (impl_ && impl_->sf_file_ != nullptr)
     {
@@ -4595,9 +4743,14 @@ void wav_audio_input_stream::start()
     // Not supported
 }
 
-void wav_audio_input_stream::stop()
+void wav_audio_input_stream::stop() noexcept
 {
     // Not supported
+}
+
+wav_audio_input_stream::operator bool()
+{
+    return impl_ && impl_->sf_file_ != nullptr;
 }
 
 // **************************************************************** //
@@ -4773,7 +4926,7 @@ void wav_audio_output_stream::flush()
     }
 }
 
-void wav_audio_output_stream::close()
+void wav_audio_output_stream::close() noexcept
 {
     if (impl_ && impl_->sf_file_ != nullptr)
     {
@@ -4787,9 +4940,14 @@ void wav_audio_output_stream::start()
     // Not supported
 }
 
-void wav_audio_output_stream::stop()
+void wav_audio_output_stream::stop() noexcept
 {
     // Not supported
+}
+
+wav_audio_output_stream::operator bool()
+{
+    return impl_ && impl_->sf_file_ != nullptr;
 }
 
 // **************************************************************** //
@@ -5252,7 +5410,7 @@ int tcp_audio_stream_control_server::keep_alive_count() const
     return keep_alive_count_;
 }
 
-#endif
+#endif // __linux__
 
 void tcp_audio_stream_control_server::linger(bool enable)
 {

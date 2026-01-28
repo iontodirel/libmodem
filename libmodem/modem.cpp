@@ -302,6 +302,11 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
         size_t written = 0;
         while (written < audio_buffer.size())
         {
+            if (!audio_stream)
+            {
+                throw std::runtime_error("Audio stream became invalid");
+            }
+
             written += audio_stream.write(audio_buffer.data() + written, audio_buffer.size() - written);
         }
 

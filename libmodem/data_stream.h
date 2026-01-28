@@ -194,7 +194,6 @@ struct formatter
 
     template<typename Func, typename... Args>
         requires std::invocable<std::decay_t<Func>, const kiss::frame&, std::decay_t<Args>...>
-
     void add_on_command(Func&& f, Args&&... args);
 
 protected:
@@ -311,6 +310,9 @@ public:
 
     virtual bool wait_stopped(int timeout_ms = -1);
 
+    virtual void enabled(bool enable);
+    virtual bool enabled();
+
     std::string name;
 
 private:
@@ -318,6 +320,7 @@ private:
     std::optional<std::reference_wrapper<struct formatter>> formatter_;
     std::unordered_map<std::size_t, std::unique_ptr<struct formatter>> client_formatters_;
     std::vector<uint8_t> read_buffer_;
+    std::atomic<bool> enabled_ = true;
 };
 
 // **************************************************************** //
@@ -338,6 +341,9 @@ public:
     virtual void start() override;
     virtual void stop() override;
 
+    size_t audio_stream_error_count(size_t count);
+    size_t audio_stream_error_count();
+
     virtual bool wait_stopped(int timeout_ms = -1) override;
 
 private:
@@ -349,6 +355,7 @@ private:
     std::condition_variable_any cv_;
     std::mutex stop_mutex_;
     std::condition_variable stop_cv_;
+    std::atomic<size_t> audio_stream_error_count_{ 0 };
 };
 
 LIBMODEM_NAMESPACE_END
