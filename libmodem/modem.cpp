@@ -341,6 +341,11 @@ bool modem::remove_on_received(uint32_t cookie)
     return received_callbacks_.erase(cookie) > 0;
 }
 
+void modem::clear_on_received()
+{
+    received_callbacks_.clear();
+}
+
 size_t modem::receive(std::vector<packet>& packets)
 {
     (void)packets;

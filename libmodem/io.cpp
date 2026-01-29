@@ -1461,12 +1461,13 @@ void tcp_server_base::accept_async()
         {
             std::lock_guard<std::mutex> lock(connections_mutex_);
             connections_[id] = connection;
+            on_client_connected(connection);
         }
 
         read_async(connection);
 
         accept_async();
-        });
+    });
 }
 
 void tcp_server_base::read_async(std::shared_ptr<tcp_client_connection_impl> connection)
@@ -1536,6 +1537,18 @@ void tcp_server_base::on_data_received(std::shared_ptr<tcp_client_connection_imp
     client_connection.remote_port = endpoint.port();
 
     on_data_received(client_connection, data);
+}
+
+void tcp_server_base::on_client_connected(std::shared_ptr<tcp_client_connection_impl> connection)
+{
+    auto endpoint = connection->socket.remote_endpoint();
+
+    tcp_client_connection client_connection;
+    client_connection.id = connection->id;
+    client_connection.remote_address = endpoint.address().to_string();
+    client_connection.remote_port = endpoint.port();
+
+    on_client_connected(client_connection);
 }
 
 void tcp_server_base::on_client_disconnected(std::shared_ptr<tcp_client_connection_impl> connection)
@@ -1643,6 +1656,11 @@ void tcp_serial_port_server::on_data_received(const tcp_client_connection& conne
 
         send(connection, std::move(framed_response));
     }
+}
+
+void tcp_serial_port_server::on_client_connected(const tcp_client_connection& connection)
+{
+    (void)connection;
 }
 
 void tcp_serial_port_server::on_client_disconnected(const tcp_client_connection& connection)
@@ -2107,6 +2125,11 @@ void tcp_ptt_control_server::on_data_received(const tcp_client_connection& conne
 
         send(connection, std::move(framed_response));
     }
+}
+
+void tcp_ptt_control_server::on_client_connected(const tcp_client_connection& connection)
+{
+    (void)connection;
 }
 
 void tcp_ptt_control_server::on_client_disconnected(const tcp_client_connection& connection)

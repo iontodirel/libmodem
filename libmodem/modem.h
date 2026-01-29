@@ -134,6 +134,8 @@ struct modem
 
     bool remove_on_received(uint32_t cookie);
 
+    void clear_on_received();
+
     size_t receive(std::vector<packet>& packets);
 
     void reset();

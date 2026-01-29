@@ -362,6 +362,7 @@ protected:
     virtual void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) = 0;
     void broadcast(const std::vector<uint8_t>& data);
     void send(const tcp_client_connection& connection, std::vector<uint8_t> data);
+    virtual void on_client_connected(const tcp_client_connection& connection) = 0;
     virtual void on_client_disconnected(const tcp_client_connection& connection) = 0;
 
 private:
@@ -370,6 +371,7 @@ private:
     void read_async(std::shared_ptr<tcp_client_connection_impl> connection);
     void write_async(std::shared_ptr<tcp_client_connection_impl> connection, std::vector<uint8_t> response);
     void on_data_received(std::shared_ptr<tcp_client_connection_impl> connection, const std::vector<uint8_t>& data);
+    void on_client_connected(std::shared_ptr<tcp_client_connection_impl> connection);
     void on_client_disconnected(std::shared_ptr<tcp_client_connection_impl> connection);
 
     std::unique_ptr<tcp_server_base_impl> impl_;
@@ -417,6 +419,7 @@ public:
 
 protected:
     void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
+    void on_client_connected(const tcp_client_connection& connection) override;
     void on_client_disconnected(const tcp_client_connection& connection) override;
 
 private:
@@ -522,6 +525,7 @@ public:
 
 protected:
     void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
+    void on_client_connected(const tcp_client_connection& connection) override;
     void on_client_disconnected(const tcp_client_connection& connection) override;
 
 private:

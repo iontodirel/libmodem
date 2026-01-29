@@ -52,11 +52,25 @@ void tcp_transport::on_data_received(const tcp_client_connection& connection, co
     cv_.notify_one();
 }
 
+void tcp_transport::on_client_connected(const tcp_client_connection& connection)
+{
+    if (on_client_connected_callable_)
+    {
+        on_client_connected_callable_->invoke(connection.id);
+    }
+}
+
 void tcp_transport::on_client_disconnected(const tcp_client_connection& connection)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    client_buffers_.erase(connection.id);
-    client_ids_.erase(std::remove(client_ids_.begin(), client_ids_.end(), connection.id), client_ids_.end());
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        client_buffers_.erase(connection.id);
+        client_ids_.erase(std::remove(client_ids_.begin(), client_ids_.end(), connection.id), client_ids_.end());
+    }
+    if (on_client_disconnected_callable_)
+    {
+        on_client_disconnected_callable_->invoke(connection.id);
+    }
 }
 
 void tcp_transport::start()
@@ -434,10 +448,20 @@ void modem_data_stream::stop()
     if (receive_thread_.joinable())
     {
         receive_thread_.request_stop();
+        enabled_cv_.notify_all();
         receive_thread_.join();
     }
 
     stop_cv_.notify_all();
+}
+
+void modem_data_stream::enabled(bool enable)
+{
+    data_stream::enabled(enable);
+    if (enable)
+    {
+        enabled_cv_.notify_all();
+    }
 }
 
 size_t modem_data_stream::audio_stream_error_count(size_t count)
@@ -454,14 +478,38 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
+        {
+            std::unique_lock<std::mutex> lock(enabled_mutex_);
+            enabled_cv_.wait(lock, stop_token, [this]() { return enabled(); });
+            if (stop_token.stop_requested())
+            {
+                break;
+            }
+        }
+
         packet p;
         if (try_receive(p))
         {
+            if (on_packet_received_callable_)
+            {
+                on_packet_received_callable_->invoke(p);
+            }
+
             if (enabled())
             {
                 try
                 {
+                    if (on_transmit_started_callable_)
+                    {
+                        on_transmit_started_callable_->invoke(p);
+                    }
+
                     m_->get().transmit(p);
+
+                    if (on_transmit_completed_callable_)
+                    {
+                        on_transmit_completed_callable_->invoke(p);
+                    }
                 }
                 catch (...)
                 {
