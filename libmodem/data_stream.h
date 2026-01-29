@@ -216,7 +216,6 @@ LIBMODEM_INLINE void tcp_transport::add_on_client_disconnected(Func&& f, Args&&.
     }
 }
 
-
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -451,7 +450,6 @@ private:
         packet_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
         {
         }
-
         void invoke(const packet& p) override
         {
             if constexpr (std::is_pointer_v<Func>)

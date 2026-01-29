@@ -208,6 +208,109 @@ struct data_stream_entry
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// pipeline_events                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct pipeline_events
+{
+    virtual ~pipeline_events() = default;
+    virtual void started() = 0;
+    virtual void stopped() = 0;
+    virtual void on_audio_stream_created(audio_entry& entry) = 0;
+    virtual void on_audio_stream_faulted(audio_entry& entry, const error_info& error) = 0;
+    virtual void on_audio_stream_recovery_started(audio_entry& entry) = 0;
+    virtual void on_audio_stream_recovery_attempt(audio_entry& entry, int attempt, int max_attempts) = 0;
+    virtual void on_audio_stream_recovered(audio_entry& entry) = 0;
+    virtual void on_audio_stream_recovery_failed(audio_entry& entry) = 0;
+    virtual void on_ptt_control_created(ptt_entry& entry) = 0;
+    virtual void on_ptt_control_faulted(ptt_entry& entry, const error_info& error) = 0;
+    virtual void on_ptt_control_recovery_started(ptt_entry& entry) = 0;
+    virtual void on_ptt_control_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) = 0;
+    virtual void on_ptt_control_recovered(ptt_entry& entry) = 0;
+    virtual void on_ptt_control_recovery_failed(ptt_entry& entry) = 0;
+    virtual void on_ptt_activated(ptt_entry& entry) = 0;
+    virtual void on_ptt_deactivated(ptt_entry& entry) = 0;
+    virtual void on_serial_port_faulted(ptt_entry& entry, const error_info& error) = 0;
+    virtual void on_serial_port_recovery_started(ptt_entry& entry) = 0;
+    virtual void on_serial_port_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) = 0;
+    virtual void on_serial_port_recovered(ptt_entry& entry) = 0;
+    virtual void on_serial_port_recovery_failed(ptt_entry& entry) = 0;
+    virtual void on_transport_created(data_stream_entry& entry) = 0;
+    virtual void on_transport_faulted(data_stream_entry& entry, const error_info& error) = 0;
+    virtual void on_transport_recovery_started(data_stream_entry& entry) = 0;
+    virtual void on_transport_recovery_attempt(data_stream_entry& entry, int attempt, int max_attempts) = 0;
+    virtual void on_transport_recovered(data_stream_entry& entry) = 0;
+    virtual void on_transport_recovery_failed(data_stream_entry& entry) = 0;
+    virtual void on_client_connected(data_stream_entry& entry, std::size_t client_id) = 0;
+    virtual void on_client_disconnected(data_stream_entry& entry, std::size_t client_id) = 0;
+    virtual void on_data_stream_created(data_stream_entry& entry) = 0;
+    virtual void on_data_stream_started(data_stream_entry& entry) = 0;
+    virtual void on_data_stream_stopped(data_stream_entry& entry) = 0;
+    virtual void on_data_stream_enabled(data_stream_entry& entry) = 0;
+    virtual void on_data_stream_disabled(data_stream_entry& entry) = 0;
+    virtual void on_modem_created(modem_entry& entry) = 0;
+    virtual void on_modem_initialized(modem_entry& entry) = 0;
+    virtual void on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_packet_transmit_started(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_packet_transmit_completed(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// pipeline_events_default                                          //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct pipeline_events_default : public pipeline_events
+{
+    void started() override;
+    void stopped() override;
+    void on_audio_stream_created(audio_entry& entry) override;
+    void on_audio_stream_faulted(audio_entry& entry, const error_info& error) override;
+    void on_audio_stream_recovery_started(audio_entry& entry) override;
+    void on_audio_stream_recovery_attempt(audio_entry& entry, int attempt, int max_attempts) override;
+    void on_audio_stream_recovered(audio_entry& entry) override;
+    void on_audio_stream_recovery_failed(audio_entry& entry) override;
+    void on_ptt_control_created(ptt_entry& entry) override;
+    void on_ptt_control_faulted(ptt_entry& entry, const error_info& error) override;
+    void on_ptt_control_recovery_started(ptt_entry& entry) override;
+    void on_ptt_control_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) override;
+    void on_ptt_control_recovered(ptt_entry& entry) override;
+    void on_ptt_control_recovery_failed(ptt_entry& entry) override;
+    void on_ptt_activated(ptt_entry& entry) override;
+    void on_ptt_deactivated(ptt_entry& entry) override;
+    void on_serial_port_faulted(ptt_entry& entry, const error_info& error) override;
+    void on_serial_port_recovery_started(ptt_entry& entry) override;
+    void on_serial_port_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) override;
+    void on_serial_port_recovered(ptt_entry& entry) override;
+    void on_serial_port_recovery_failed(ptt_entry& entry) override;
+    void on_transport_created(data_stream_entry& entry) override;
+    void on_transport_faulted(data_stream_entry& entry, const error_info& error) override;
+    void on_transport_recovery_started(data_stream_entry& entry) override;
+    void on_transport_recovery_attempt(data_stream_entry& entry, int attempt, int max_attempts) override;
+    void on_transport_recovered(data_stream_entry& entry) override;
+    void on_transport_recovery_failed(data_stream_entry& entry) override;
+    void on_client_connected(data_stream_entry& entry, std::size_t client_id) override;
+    void on_client_disconnected(data_stream_entry& entry, std::size_t client_id) override;
+    void on_data_stream_created(data_stream_entry& entry) override;
+    void on_data_stream_started(data_stream_entry& entry) override;
+    void on_data_stream_stopped(data_stream_entry& entry) override;
+    void on_data_stream_enabled(data_stream_entry& entry) override;
+    void on_data_stream_disabled(data_stream_entry& entry) override;
+    void on_modem_created(modem_entry& entry) override;
+    void on_modem_initialized(modem_entry& entry) override;
+    void on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
+    void on_packet_transmit_started(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
+    void on_packet_transmit_completed(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // pipeline                                                         //
 //                                                                  //
 //                                                                  //
@@ -225,6 +328,8 @@ public:
     void start();
     void stop();
     void wait_stopped();
+
+    void on_events(pipeline_events& e);
 
 private:
     void populate_audio_entries();
@@ -266,6 +371,7 @@ private:
     void schedule_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
 
+    bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config);
     bool try_recover_ptt_control(ptt_entry& entry, modem_entry& modem);
     void schedule_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
@@ -274,11 +380,16 @@ private:
     void schedule_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
 
-    bool try_recover_transport(data_stream_entry& entry);
+    bool try_create_transport(data_stream_entry& entry);
     void schedule_transport_recovery(data_stream_entry& ds_entry);
     void attempt_transport_recovery(data_stream_entry& ds_entry);
 
     void try_reenable_data_stream(modem_entry& modem_entry, data_stream_entry& ds_entry);
+
+    void invoke_ptt_event_async(bool enabled, ptt_entry& entry);
+
+    template<typename Func>
+    void invoke_async(Func&& fn);
 
     void on_error(audio_stream_no_throw& component, audio_entry& entry, const error_info& error) override;
     void on_error(ptt_control_no_throw& component, ptt_entry& entry, const error_info& error) override;
@@ -300,6 +411,7 @@ private:
     std::set<std::string> used_data_stream_names_;
     std::set<int> used_tcp_ports_;
     std::unique_ptr<pipeline_impl> impl_;
+    std::optional<std::reference_wrapper<pipeline_events>> events_;
     size_t max_audio_stream_error_count_ = 3;
     int max_recovery_attempts_ = 10;
     int recovery_delay_seconds_ = 5;
