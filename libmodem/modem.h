@@ -77,8 +77,8 @@ struct modem_events
     virtual void receive(const std::vector<uint8_t>& bitstream, uint64_t id) = 0;
     virtual void ptt(bool state, uint64_t id) = 0;
     virtual void data_carrier_detected(uint64_t id) = 0;
-    virtual void render_audio(const std::vector<uint8_t>& samples, uint64_t id) = 0;
-    virtual void capture_audio(const std::vector<uint8_t>& samples, uint64_t id) = 0;
+    virtual void render_audio(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
+    virtual void capture_audio(const std::vector<double>& samples, uint64_t id) = 0;
 };
 
 // **************************************************************** //
@@ -119,6 +119,8 @@ struct modem
     bitstream_converter_base& converter();
     void ptt_control(ptt_control_base& ptt_control);
     ptt_control_base& ptt_control();
+    void events(modem_events& events);
+    modem_events& events();
 
     void transmit();
     void transmit(packet p);
@@ -194,13 +196,16 @@ private:
 
     void postprocess_audio(std::vector<double>& audio_buffer);
     void render_audio(const std::vector<double>& audio_buffer);
+    void render_audio(const std::vector<double>& audio_buffer, uint64_t id);
     void modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator);
-    void ptt(bool enable);
+    void ptt(bool enable, uint64_t id);
+    void transmit(const std::vector<uint8_t>& bits, bool reset_modulator, uint64_t id);
 
     std::optional<std::reference_wrapper<audio_stream_base>> audio;
     std::optional<std::reference_wrapper<modulator_base>> mod;
     std::optional<std::reference_wrapper<bitstream_converter_base>> conv;
     std::optional<std::reference_wrapper<ptt_control_base>> ptt_control_;
+    std::optional<std::reference_wrapper<modem_events>> events_;
     int start_silence_duration_ms = 0;
     int end_silence_duration_ms = 0;
     bool preemphasis_enabled = false;

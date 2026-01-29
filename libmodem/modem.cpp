@@ -144,6 +144,20 @@ ptt_control_base& modem::ptt_control()
     return ptt_control_.value().get();
 }
 
+void modem::events(modem_events& events)
+{
+    events_ = std::ref(events);
+}
+
+modem_events& modem::events()
+{
+    if (!events_.has_value())
+    {
+        throw std::runtime_error("No modem events handler");
+    }
+    return events_.value().get();
+}
+
 void modem::transmit()
 {
     std::vector<uint8_t> bitstream({ 0 });
@@ -171,10 +185,36 @@ void modem::transmit(packet p)
 
     std::vector<uint8_t> bitstream = converter.encode(p, preamble_flags, postamble_flags);
 
-    transmit(bitstream);
+    uint64_t id = next_data_id++;
+
+    // Fire packet transmit event
+    if (events_.has_value())
+    {
+        events_.value().get().transmit(p, id);
+    }
+
+    // Fire bitstream transmit event
+    if (events_.has_value())
+    {
+        events_.value().get().transmit(bitstream, id);
+    }
+
+    transmit(bitstream, true, id);
 }
 
 void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator)
+{
+    uint64_t id = next_data_id++;
+
+    if (events_.has_value())
+    {
+        events_.value().get().transmit(bits, id);
+    }
+
+    transmit(bits, reset_modulator, id);
+}
+
+void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator, uint64_t id)
 {
     if (!mod.has_value())
     {
@@ -198,7 +238,7 @@ void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator)
 
     // Render audio to output audio device
 
-    render_audio(audio_buffer);
+    render_audio(audio_buffer, id);
 }
 
 void modem::postprocess_audio(std::vector<double>& audio_buffer)
@@ -269,16 +309,21 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
     }
 }
 
-void modem::ptt(bool enable)
+void modem::ptt(bool enable, uint64_t id)
 {
     if (ptt_control_.has_value())
     {
         ptt_control_base& ptt_control = ptt_control_.value().get();
         ptt_control.ptt(enable);
+
+        if (events_.has_value())
+        {
+            events_.value().get().ptt(enable, id);
+        }
     }
 }
 
-void modem::render_audio(const std::vector<double>& audio_buffer)
+void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
 {
     if (!audio.has_value())
     {
@@ -292,7 +337,7 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
         // Start the playback
         audio_stream.start();
 
-        ptt(true);
+        ptt(true, id);
 
         // Write audio samples to output device
         // The stream will automatically handle buffering, the stream typically has a 200ms buffer
@@ -310,12 +355,17 @@ void modem::render_audio(const std::vector<double>& audio_buffer)
             written += audio_stream.write(audio_buffer.data() + written, audio_buffer.size() - written);
         }
 
+        if (events_.has_value())
+        {
+            events_.value().get().render_audio(audio_buffer, written, id);
+        }
+
         // Actually wait for all samples to be played
         audio_stream.wait_write_completed();
     }
     catch (...)
     {
-        ptt(false);
+        ptt(false, id);
         audio_stream.stop();
         throw;
     }
@@ -551,14 +601,14 @@ void serial_port_ptt_control::ptt(bool enable)
 
     switch (line_)
     {
-    case serial_port_ptt_line::rts:
-        serial_port.rts(line_state);
-        break;
-    case serial_port_ptt_line::dtr:
-        serial_port.dtr(line_state);
-        break;
-    default:
-        throw std::runtime_error("Invalid PTT line");
+        case serial_port_ptt_line::rts:
+            serial_port.rts(line_state);
+            break;
+        case serial_port_ptt_line::dtr:
+            serial_port.dtr(line_state);
+            break;
+        default:
+            throw std::runtime_error("Invalid PTT line");
     }
 }
 
@@ -575,14 +625,14 @@ bool serial_port_ptt_control::ptt()
 
     switch (line_)
     {
-    case serial_port_ptt_line::rts:
-        line_state = serial_port.rts();
-        break;
-    case serial_port_ptt_line::dtr:
-        line_state = serial_port.dtr();
-        break;
-    default:
-        throw std::runtime_error("Invalid PTT line");
+        case serial_port_ptt_line::rts:
+            line_state = serial_port.rts();
+            break;
+        case serial_port_ptt_line::dtr:
+            line_state = serial_port.dtr();
+            break;
+        default:
+            throw std::runtime_error("Invalid PTT line");
     }
 
     return (trigger_ == serial_port_ptt_trigger::on) ? line_state : !line_state;
