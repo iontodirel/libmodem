@@ -31,6 +31,8 @@
 
 #include "data_stream.h"
 
+#include <boost/circular_buffer.hpp>
+
 LIBMODEM_NAMESPACE_BEGIN
 
 // **************************************************************** //
@@ -56,7 +58,7 @@ void tcp_transport::on_client_connected(const tcp_client_connection& connection)
 {
     if (on_client_connected_callable_)
     {
-        on_client_connected_callable_->invoke(connection.id);
+        on_client_connected_callable_->invoke(connection);
     }
 }
 
@@ -69,7 +71,7 @@ void tcp_transport::on_client_disconnected(const tcp_client_connection& connecti
     }
     if (on_client_disconnected_callable_)
     {
-        on_client_disconnected_callable_->invoke(connection.id);
+        on_client_disconnected_callable_->invoke(connection);
     }
 }
 
@@ -136,6 +138,16 @@ bool tcp_transport::wait_data_received(int timeout_ms)
     }
 }
 
+void tcp_transport::enabled(bool enable)
+{
+    enabled_ = enable;
+}
+
+bool tcp_transport::enabled()
+{
+    return enabled_;
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -187,6 +199,16 @@ bool serial_transport::wait_data_received(int timeout_ms)
     }
 
     return false;
+}
+
+void serial_transport::enabled(bool enable)
+{
+    enabled_ = enable;
+}
+
+bool serial_transport::enabled()
+{
+    return enabled_;
 }
 
 // **************************************************************** //
@@ -318,7 +340,7 @@ void data_stream::stop()
 
 void data_stream::send(packet p)
 {
-    if (!enabled_)
+    if (!transport_->get().enabled())
     {
         return;
     }
@@ -328,7 +350,7 @@ void data_stream::send(packet p)
 
 bool data_stream::try_receive(packet& p)
 {
-    if (!enabled())
+    if (!transport_->get().enabled()) // transport.enabled()
     {
         return false;
     }
@@ -378,7 +400,7 @@ bool data_stream::try_receive(packet& p)
 
 bool data_stream::wait_data_received(int timeout_ms)
 {
-    if (!enabled())
+    if (!transport_->get().enabled())
     {
         return false;
     }
@@ -404,10 +426,28 @@ bool data_stream::enabled()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// modem_data_stream_impl                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct modem_data_stream_impl
+{
+    boost::circular_buffer<libmodem::packet> packets;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // modem_data_stream                                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+modem_data_stream::modem_data_stream() : impl_(std::make_unique<modem_data_stream_impl>())
+{
+    impl_->packets.set_capacity(100);
+}
 
 modem_data_stream::~modem_data_stream()
 {
@@ -474,37 +514,73 @@ size_t modem_data_stream::audio_stream_error_count()
     return audio_stream_error_count_.load();
 }
 
+bool modem_data_stream::wait_transmit_idle(int timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(transmit_mutex_);
+
+    if (!transmitting_.load())
+    {
+        return true;
+    }
+
+    if (timeout_ms < 0)
+    {
+        transmit_cv_.wait(lock, [this]() { return !transmitting_.load(); });
+        return true;
+    }
+    else
+    {
+        return transmit_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]() { return !transmitting_.load(); });
+    }
+}
+
 void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
-        {
+        /*{
             std::unique_lock<std::mutex> lock(enabled_mutex_);
             enabled_cv_.wait(lock, stop_token, [this]() { return enabled(); });
             if (stop_token.stop_requested())
             {
                 break;
             }
-        }
+        }*/
 
-        packet p;
-        if (try_receive(p))
+        packet received_packet;
+        if (try_receive(received_packet))
         {
+            impl_->packets.push_back(received_packet);
+
             if (on_packet_received_callable_)
             {
-                on_packet_received_callable_->invoke(p);
+                on_packet_received_callable_->invoke(received_packet);
+            }
+        }
+
+        if (enabled())
+        {
+            if (!impl_->packets.empty())
+            {
+                std::lock_guard<std::mutex> lock(transmit_mutex_);
+                transmitting_.store(true);
             }
 
-            if (enabled())
+            while (!impl_->packets.empty() && !stop_token.stop_requested())
             {
                 try
                 {
+                    packet p = impl_->packets.front();
+
                     if (on_transmit_started_callable_)
                     {
                         on_transmit_started_callable_->invoke(p);
                     }
 
                     m_->get().transmit(p);
+
+                    // Pop only after successful transmit
+                    impl_->packets.pop_front();
 
                     if (on_transmit_completed_callable_)
                     {
@@ -514,8 +590,15 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
                 catch (...)
                 {
                     enabled(false);
+                    break;
                 }
             }
+
+            {
+                std::lock_guard<std::mutex> lock(transmit_mutex_);
+                transmitting_.store(false);
+            }
+            transmit_cv_.notify_all();
         }
 
         wait_data_received(10);

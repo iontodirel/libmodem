@@ -89,6 +89,9 @@ public:
     bool wait_data_received(const std::chrono::duration<Rep, Period>& timeout_duration);
 
     virtual bool wait_data_received(int timeout_ms = -1) = 0;
+
+    virtual void enabled(bool enable) = 0;
+    virtual bool enabled() = 0;
 };
 
 template<typename Rep, typename Period>
@@ -136,12 +139,15 @@ public:
     bool wait_data_received(int timeout_ms = -1) override;
 
     template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, std::size_t, std::decay_t<Args>...>
+        requires std::invocable<std::decay_t<Func>, const tcp_client_connection&, std::decay_t<Args>...>
     void add_on_client_connected(Func&& f, Args&&... args);
 
     template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, std::size_t, std::decay_t<Args>...>
+        requires std::invocable<std::decay_t<Func>, const tcp_client_connection&, std::decay_t<Args>...>
     void add_on_client_disconnected(Func&& f, Args&&... args);
+
+    void enabled(bool enable) override;
+    bool enabled() override;
 
 private:
     void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
@@ -150,7 +156,7 @@ private:
 
     struct client_callable_base
     {
-        virtual void invoke(std::size_t id) = 0;
+        virtual void invoke(const tcp_client_connection& connection) = 0;
         virtual ~client_callable_base() = default;
     };
 
@@ -165,15 +171,15 @@ private:
         {
         }
 
-        void invoke(std::size_t id) override
+        void invoke(const tcp_client_connection& connection) override
         {
             if constexpr (std::is_pointer_v<Func>)
             {
-                std::apply(*func_, std::tuple_cat(std::make_tuple(id), args_));
+                std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(connection)), args_));
             }
             else
             {
-                std::apply(func_, std::tuple_cat(std::make_tuple(id), args_));
+                std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(connection)), args_));
             }
         }
     };
@@ -186,10 +192,11 @@ private:
     int port_ = 0;
     std::unique_ptr<client_callable_base> on_client_connected_callable_;
     std::unique_ptr<client_callable_base> on_client_disconnected_callable_;
+    std::atomic<bool> enabled_ = true;
 };
 
 template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, std::size_t, std::decay_t<Args>...>
+    requires std::invocable<std::decay_t<Func>, const tcp_client_connection&, std::decay_t<Args>...>
 LIBMODEM_INLINE void tcp_transport::add_on_client_connected(Func&& f, Args&&... args)
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
@@ -203,7 +210,7 @@ LIBMODEM_INLINE void tcp_transport::add_on_client_connected(Func&& f, Args&&... 
 }
 
 template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, std::size_t, std::decay_t<Args>...>
+    requires std::invocable<std::decay_t<Func>, const tcp_client_connection&, std::decay_t<Args>...>
 LIBMODEM_INLINE void tcp_transport::add_on_client_disconnected(Func&& f, Args&&... args)
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
@@ -227,8 +234,8 @@ LIBMODEM_INLINE void tcp_transport::add_on_client_disconnected(Func&& f, Args&&.
 struct serial_transport : public transport
 {
 public:
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
 
     void write(const std::vector<uint8_t>& data) override;
     size_t read(std::size_t client_id, std::vector<uint8_t>& data, size_t size) override;
@@ -239,8 +246,12 @@ public:
 
     bool wait_data_received(int timeout_ms = -1) override;
 
+    void enabled(bool enable) override;
+    bool enabled() override;
+
 private:
     serial_port port_;
+    std::atomic<bool> enabled_ = true;
 };
 
 // **************************************************************** //
@@ -400,11 +411,14 @@ private:
 //                                                                  //
 // **************************************************************** //
 
+struct modem_data_stream_impl;
+
 class modem_data_stream : public data_stream
 {
 public:
     using data_stream::enabled;
 
+    modem_data_stream();
     virtual ~modem_data_stream();
 
     void modem(struct modem& m);
@@ -430,6 +444,8 @@ public:
     template<typename Func, typename... Args>
         requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
     void add_on_transmit_completed(Func&& f, Args&&... args);
+
+    bool wait_transmit_idle(int timeout_ms = -1);
 
 private:
     void receive_callback(std::stop_token stop_token);
@@ -474,6 +490,10 @@ private:
     std::unique_ptr<packet_callable_base> on_packet_received_callable_;
     std::unique_ptr<packet_callable_base> on_transmit_started_callable_;
     std::unique_ptr<packet_callable_base> on_transmit_completed_callable_;
+    std::atomic<bool> transmitting_{ false };
+    std::mutex transmit_mutex_;
+    std::condition_variable transmit_cv_;
+    std::unique_ptr<modem_data_stream_impl> impl_;
 };
 
 template<typename Func, typename... Args>
