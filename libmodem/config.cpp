@@ -112,6 +112,9 @@ audio_stream_config parse_audio_stream(const nlohmann::json& j)
     c.audio_port = j.value("audio_port", 0);
     c.control_port = j.value("control_port", 0);
     c.filename = j.value("file_path", "");
+    c.max_recovery_attempts = j.value("max_recovery_attempts", 10);
+    c.recovery_delay_seconds = j.value("recovery_delay_seconds", 5);
+    c.max_error_count = j.value("max_error_count", 3);
 
     return c;
 }
@@ -130,6 +133,8 @@ ptt_control_config parse_ptt_control(const nlohmann::json& j)
     c.trigger = j.value("active", "on");
     c.library_path = j.value("path", "");
     c.platform = j.value("platform", "");
+    c.max_recovery_attempts = j.value("max_recovery_attempts", 10);
+    c.recovery_delay_seconds = j.value("recovery_delay_seconds", 5);
 
     return c;
 }
@@ -187,6 +192,8 @@ data_stream_config parse_data_stream(const nlohmann::json& j)
     c.format = parse_format_type(j.value("format", "ax25_kiss"));
     c.transport = parse_transport_type(j.value("transport", "tcp"));
     c.bind_address = j.value("bind_address", "127.0.0.1");
+    c.max_recovery_attempts = j.value("max_recovery_attempts", 10);
+    c.recovery_delay_seconds = j.value("recovery_delay_seconds", 5);
 
     if (j.contains("port"))
     {

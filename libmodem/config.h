@@ -73,6 +73,9 @@ struct audio_stream_config
     int audio_port = 0;
     int control_port = 0;
     std::string filename;
+    int max_recovery_attempts = 10;
+    int recovery_delay_seconds = 5;
+    int max_error_count = 3;
 };
 
 enum class ptt_control_config_type
@@ -96,6 +99,8 @@ struct ptt_control_config
     std::string trigger = "on";
     std::string library_path;
     std::string platform = "";
+    int max_recovery_attempts = 10;
+    int recovery_delay_seconds = 5;
 };
 
 enum class modulator_config_type
@@ -153,6 +158,8 @@ struct data_stream_config
     std::string bind_address;
     int port;
     std::string serial_port;
+    int max_recovery_attempts = 10;
+    int recovery_delay_seconds = 5;
 };
 
 struct config

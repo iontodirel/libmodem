@@ -219,12 +219,14 @@ struct pipeline_events
     virtual void started() = 0;
     virtual void stopped() = 0;
     virtual void on_audio_stream_created(audio_entry& entry) = 0;
+    virtual void on_audio_stream_init_failed(const audio_stream_config& config, const std::string& reason) = 0;
     virtual void on_audio_stream_faulted(audio_entry& entry, const error_info& error) = 0;
     virtual void on_audio_stream_recovery_started(audio_entry& entry) = 0;
     virtual void on_audio_stream_recovery_attempt(audio_entry& entry, int attempt, int max_attempts) = 0;
     virtual void on_audio_stream_recovered(audio_entry& entry) = 0;
     virtual void on_audio_stream_recovery_failed(audio_entry& entry) = 0;
     virtual void on_ptt_control_created(ptt_entry& entry) = 0;
+    virtual void on_ptt_control_init_failed(const ptt_control_config& config, const std::string& reason) = 0;
     virtual void on_ptt_control_faulted(ptt_entry& entry, const error_info& error) = 0;
     virtual void on_ptt_control_recovery_started(ptt_entry& entry) = 0;
     virtual void on_ptt_control_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) = 0;
@@ -238,20 +240,27 @@ struct pipeline_events
     virtual void on_serial_port_recovered(ptt_entry& entry) = 0;
     virtual void on_serial_port_recovery_failed(ptt_entry& entry) = 0;
     virtual void on_transport_created(data_stream_entry& entry) = 0;
+    virtual void on_transport_init_failed(const data_stream_config& config, const std::string& reason) = 0;
     virtual void on_transport_faulted(data_stream_entry& entry, const error_info& error) = 0;
     virtual void on_transport_recovery_started(data_stream_entry& entry) = 0;
     virtual void on_transport_recovery_attempt(data_stream_entry& entry, int attempt, int max_attempts) = 0;
     virtual void on_transport_recovered(data_stream_entry& entry) = 0;
     virtual void on_transport_recovery_failed(data_stream_entry& entry) = 0;
-    virtual void on_client_connected(data_stream_entry& entry, std::size_t client_id) = 0;
-    virtual void on_client_disconnected(data_stream_entry& entry, std::size_t client_id) = 0;
+    virtual void on_client_connected(data_stream_entry& entry, const tcp_client_connection& connection) = 0;
+    virtual void on_client_disconnected(data_stream_entry& entry, const tcp_client_connection& connection) = 0;
     virtual void on_data_stream_created(data_stream_entry& entry) = 0;
     virtual void on_data_stream_started(data_stream_entry& entry) = 0;
     virtual void on_data_stream_stopped(data_stream_entry& entry) = 0;
     virtual void on_data_stream_enabled(data_stream_entry& entry) = 0;
     virtual void on_data_stream_disabled(data_stream_entry& entry) = 0;
     virtual void on_modem_created(modem_entry& entry) = 0;
+    virtual void on_modem_init_failed(const modulator_config& config, const std::string& reason) = 0;
     virtual void on_modem_initialized(modem_entry& entry) = 0;
+    virtual void on_modem_transmit(const packet& p, uint64_t id) = 0;
+    virtual void on_modem_transmit(const std::vector<uint8_t>& bitstream, uint64_t id) = 0;
+    virtual void on_modem_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
+    virtual void on_modem_ptt(bool state, uint64_t id) = 0;
+    virtual void on_volume_changed(audio_entry& entry, int previous_volume, int new_volume) = 0;
     virtual void on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
     virtual void on_packet_transmit_started(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
     virtual void on_packet_transmit_completed(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) = 0;
@@ -270,12 +279,14 @@ struct pipeline_events_default : public pipeline_events
     void started() override;
     void stopped() override;
     void on_audio_stream_created(audio_entry& entry) override;
+    void on_audio_stream_init_failed(const audio_stream_config& config, const std::string& reason) override;
     void on_audio_stream_faulted(audio_entry& entry, const error_info& error) override;
     void on_audio_stream_recovery_started(audio_entry& entry) override;
     void on_audio_stream_recovery_attempt(audio_entry& entry, int attempt, int max_attempts) override;
     void on_audio_stream_recovered(audio_entry& entry) override;
     void on_audio_stream_recovery_failed(audio_entry& entry) override;
     void on_ptt_control_created(ptt_entry& entry) override;
+    void on_ptt_control_init_failed(const ptt_control_config& config, const std::string& reason) override;
     void on_ptt_control_faulted(ptt_entry& entry, const error_info& error) override;
     void on_ptt_control_recovery_started(ptt_entry& entry) override;
     void on_ptt_control_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts) override;
@@ -289,20 +300,27 @@ struct pipeline_events_default : public pipeline_events
     void on_serial_port_recovered(ptt_entry& entry) override;
     void on_serial_port_recovery_failed(ptt_entry& entry) override;
     void on_transport_created(data_stream_entry& entry) override;
+    void on_transport_init_failed(const data_stream_config& config, const std::string& reason) override;
     void on_transport_faulted(data_stream_entry& entry, const error_info& error) override;
     void on_transport_recovery_started(data_stream_entry& entry) override;
     void on_transport_recovery_attempt(data_stream_entry& entry, int attempt, int max_attempts) override;
     void on_transport_recovered(data_stream_entry& entry) override;
     void on_transport_recovery_failed(data_stream_entry& entry) override;
-    void on_client_connected(data_stream_entry& entry, std::size_t client_id) override;
-    void on_client_disconnected(data_stream_entry& entry, std::size_t client_id) override;
+    void on_client_connected(data_stream_entry& entry, const tcp_client_connection& connection) override;
+    void on_client_disconnected(data_stream_entry& entry, const tcp_client_connection& connection) override;
     void on_data_stream_created(data_stream_entry& entry) override;
     void on_data_stream_started(data_stream_entry& entry) override;
     void on_data_stream_stopped(data_stream_entry& entry) override;
     void on_data_stream_enabled(data_stream_entry& entry) override;
     void on_data_stream_disabled(data_stream_entry& entry) override;
     void on_modem_created(modem_entry& entry) override;
+    void on_modem_init_failed(const modulator_config& config, const std::string& reason) override;
     void on_modem_initialized(modem_entry& entry) override;
+    void on_modem_transmit(const packet& p, uint64_t id) override;
+    void on_modem_transmit(const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void on_modem_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) override;
+    void on_modem_ptt(bool state, uint64_t id) override;
+    void on_volume_changed(audio_entry& entry, int previous_volume, int new_volume) override;
     void on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
     void on_packet_transmit_started(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
     void on_packet_transmit_completed(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p) override;
@@ -318,7 +336,7 @@ struct pipeline_events_default : public pipeline_events
 
 struct pipeline_impl;
 
-class pipeline : public error_events
+class pipeline : public error_events, public modem_events
 {
 public:
     pipeline(const config& c);
@@ -330,6 +348,7 @@ public:
     void wait_stopped();
 
     void on_events(pipeline_events& e);
+    pipeline_events& on_events();
 
 private:
     void populate_audio_entries();
@@ -354,6 +373,7 @@ private:
     bool is_duplicate_library_file(const std::string& path);
     bool is_valid_ptt_config(const ptt_control_config& ptt_config);
     void register_ptt_control(const ptt_entry& entry, const ptt_control_config& ptt_config);
+    bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config);
     bool can_add_modem(const modulator_config& modulator_config);
     bool is_duplicate_modem_name(const std::string& name);
     void register_modem(const modem_entry& entry);
@@ -371,7 +391,6 @@ private:
     void schedule_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
 
-    bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config);
     bool try_recover_ptt_control(ptt_entry& entry, modem_entry& modem);
     void schedule_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
@@ -380,13 +399,15 @@ private:
     void schedule_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
     void attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
 
-    bool try_create_transport(data_stream_entry& entry);
+    bool try_recover_transport(data_stream_entry& entry);
     void schedule_transport_recovery(data_stream_entry& ds_entry);
     void attempt_transport_recovery(data_stream_entry& ds_entry);
 
     void try_reenable_data_stream(modem_entry& modem_entry, data_stream_entry& ds_entry);
 
     void invoke_ptt_event_async(bool enabled, ptt_entry& entry);
+
+    void on_transmit_starting(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p);
 
     template<typename Func>
     void invoke_async(Func&& fn);
@@ -395,6 +416,15 @@ private:
     void on_error(ptt_control_no_throw& component, ptt_entry& entry, const error_info& error) override;
     void on_error(serial_port_no_throw& component, ptt_entry& entry, const error_info& error) override;
     void on_error(transport_no_throw& component, data_stream_entry& entry, const error_info& error) override;
+
+    void transmit(const packet& packet, uint64_t id) override;
+    void receive(const packet& packet, uint64_t id) override;
+    void transmit(const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void receive(const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void ptt(bool state, uint64_t id) override;
+    void data_carrier_detected(uint64_t id) override;
+    void render_audio(const std::vector<double>& samples, size_t count, uint64_t id) override;
+    void capture_audio(const std::vector<double>& samples, uint64_t id) override;
 
     const struct config config;
     std::vector<std::unique_ptr<modem_entry>> modems_;
@@ -412,9 +442,6 @@ private:
     std::set<int> used_tcp_ports_;
     std::unique_ptr<pipeline_impl> impl_;
     std::optional<std::reference_wrapper<pipeline_events>> events_;
-    size_t max_audio_stream_error_count_ = 3;
-    int max_recovery_attempts_ = 10;
-    int recovery_delay_seconds_ = 5;
 };
 
 LIBMODEM_NAMESPACE_END

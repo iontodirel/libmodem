@@ -51,6 +51,7 @@ LIBMODEM_NAMESPACE_BEGIN
 bool try_create_audio_entry(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
 bool try_find_audio_device(const audio_stream_config& audio_config, audio_device& device);
 std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
+bool try_create_transport(data_stream_entry& entry, const data_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
 std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(std::vector<std::unique_ptr<audio_entry>>& entries, const std::string& name);
 std::optional<std::reference_wrapper<audio_entry>> get_output_stream(const modulator_config& config, std::vector<std::unique_ptr<audio_entry>>& audio_entries);
 std::unique_ptr<modem_entry> create_modem_entry(const modulator_config& config);
@@ -400,6 +401,8 @@ public:
     std::vector<std::size_t> clients() override;
     void flush() override;
     bool wait_data_received(int timeout_ms) override;
+    void enabled(bool enable) override;
+    bool enabled() override;
 
 private:
     std::unique_ptr<transport> inner_;
@@ -455,6 +458,16 @@ bool transport_no_throw::wait_data_received(int timeout_ms)
     return wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { return inner_->wait_data_received(timeout_ms); }, false);
 }
 
+void transport_no_throw::enabled(bool enable)
+{
+    wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { inner_->enabled(enable); });
+}
+
+bool transport_no_throw::enabled()
+{
+    return wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { return inner_->enabled(); }, false);
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -470,6 +483,9 @@ public:
 
     void entry(ptt_entry& entry);
     bool faulted() const;
+
+    bool open(const std::string& port_name, unsigned int baud_rate = 9600, unsigned int data_bits = 8, parity parity = parity::none, stop_bits stop_bits = stop_bits::one, flow_control flow_control = flow_control::none);
+    void close();
 
     void rts(bool enable) override;
     bool rts() override;
@@ -509,6 +525,25 @@ void serial_port_no_throw::entry(ptt_entry& entry)
 bool serial_port_no_throw::faulted() const
 {
     return faulted_;
+}
+
+bool serial_port_no_throw::open(const std::string& port_name, unsigned int baud_rate, unsigned int data_bits, parity parity, stop_bits stop_bits, flow_control flow_control)
+{
+    auto* serial_port = dynamic_cast<class serial_port*>(inner_.get());
+    if (!serial_port)
+    {
+        return false;
+    }
+    return wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { return serial_port->open(port_name, baud_rate, data_bits, parity, stop_bits, flow_control); }, false);
+}
+
+void serial_port_no_throw::close()
+{
+    auto* serial_port = dynamic_cast<class serial_port*>(inner_.get());
+    if (serial_port)
+    {
+        wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { serial_port->close(); });
+    }
 }
 
 void serial_port_no_throw::rts(bool enable)
@@ -668,6 +703,11 @@ void pipeline::on_events(pipeline_events& e)
     events_ = e;
 }
 
+pipeline_events& pipeline::on_events()
+{
+    return events_.value();
+}
+
 template<typename Func>
 void pipeline::invoke_async(Func&& fn)
 {
@@ -689,8 +729,78 @@ void pipeline::invoke_ptt_event_async(bool enabled, ptt_entry& entry)
     }
 }
 
+void pipeline::transmit(const packet& p, uint64_t id)
+{
+    if (events_)
+    {
+        invoke_async([this, p, id]() { events_->get().on_modem_transmit(p, id); });
+    }
+}
+
+void pipeline::receive(const packet& p, uint64_t id)
+{
+    (void)p;
+    (void)id;
+}
+
+void pipeline::transmit(const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    if (events_)
+    {
+        invoke_async([this, bitstream = bitstream, id]() { events_->get().on_modem_transmit(bitstream, id); });
+    }
+}
+
+void pipeline::receive(const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    (void)bitstream;
+    (void)id;
+}
+
+void pipeline::ptt(bool state, uint64_t id)
+{
+    if (events_)
+    {
+        invoke_async([this, state, id]() { events_->get().on_modem_ptt(state, id); });
+    }
+}
+
+void pipeline::data_carrier_detected(uint64_t id)
+{
+    (void)id;
+}
+
+void pipeline::render_audio(const std::vector<double>& samples, size_t count, uint64_t id)
+{
+    if (events_)
+    {
+        invoke_async([this, samples, count, id]() { events_->get().on_modem_render_audio(samples, count, id); });
+    }
+}
+
+void pipeline::capture_audio(const std::vector<double>& samples, uint64_t id)
+{
+    (void)samples;
+    (void)id;
+}
+
 void pipeline::start()
 {
+    // Open serial ports for PTT controls
+    for (auto& ptt : ptt_controls_)
+    {
+        if (ptt->enabled && ptt->type == ptt_control_type::serial_port && ptt->serial_port)
+        {
+            auto* serial_port = dynamic_cast<serial_port_no_throw*>(ptt->serial_port.get());
+            if (serial_port)
+            {
+                serial_port->open(ptt->port_name, ptt->baud_rate, ptt->data_bits, ptt->parity, ptt->stop_bits, ptt->flow_control);
+                ptt->ptt_control->ptt(false);
+            }
+        }
+    }
+
+    // Start data streams (which also starts transports)
     for (auto& data_stream : data_streams_)
     {
         if (data_stream->enabled)
@@ -712,6 +822,20 @@ void pipeline::stop()
             invoke_async([this, &ds = *data_stream]() { events_->get().on_data_stream_stopped(ds); });
         }
     }
+
+    // Close serial ports
+    for (auto& ptt : ptt_controls_)
+    {
+        if (ptt->enabled && ptt->type == ptt_control_type::serial_port && ptt->serial_port)
+        {
+            auto* sp = dynamic_cast<serial_port_no_throw*>(ptt->serial_port.get());
+            if (sp)
+            {
+                sp->close();
+            }
+        }
+    }
+
     invoke_async([this]() { events_->get().stopped(); });
     impl_->pool->join();
 }
@@ -739,6 +863,7 @@ void pipeline::populate_audio_entries()
         auto entry = std::make_unique<audio_entry>();
         if (!try_create_audio_entry(*entry, audio_config, *this, *impl_->pool.get()))
         {
+            invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "failed to create audio stream"); });
             continue;
         }
 
@@ -749,6 +874,7 @@ void pipeline::populate_audio_entries()
         {
             if (is_duplicate_audio_device(entry->device.id, entry->device.type))
             {
+                invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate audio device"); });
                 continue;
             }
         }
@@ -782,6 +908,7 @@ void pipeline::populate_ptt_controls()
 
         if (!try_create_ptt_control(*entry, ptt_config))
         {
+            invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "failed to create ptt control"); });
             continue;
         }
 
@@ -798,6 +925,7 @@ void pipeline::populate_data_streams()
     {
         if (!can_add_data_stream(data_stream_config))
         {
+            invoke_async([this, data_stream_config]() { events_->get().on_transport_init_failed(data_stream_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -814,9 +942,31 @@ void pipeline::populate_data_streams()
                 break;
         }
 
-        if (!try_create_transport(*entry))
+        // Create transport - inline tcp to wire callbacks before wrapping
+        switch (data_stream_config.transport)
         {
-            continue;
+            case data_stream_transport_type::tcp:
+            {
+                auto tcp = std::make_unique<tcp_transport>(data_stream_config.bind_address, data_stream_config.port);
+
+                tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
+                    invoke_async([this, conn, &ds]() { events_->get().on_client_connected(ds, conn); });
+                }, std::ref(*entry));
+
+                tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
+                    invoke_async([this, conn, &ds]() { events_->get().on_client_disconnected(ds, conn); });
+                }, std::ref(*entry));
+
+                entry->transport = std::make_unique<transport_no_throw>(std::move(tcp), *entry, *this, *impl_->pool.get());
+
+                break;
+            }
+            case data_stream_transport_type::serial:
+                entry->transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), *entry, *this, *impl_->pool.get());
+                break;
+            default:
+                invoke_async([this, data_stream_config]() { events_->get().on_transport_init_failed(data_stream_config, "unknown transport type"); });
+                continue;
         }
 
         entry->data_stream = std::make_unique<modem_data_stream>();
@@ -838,6 +988,7 @@ void pipeline::populate_transmit_modems()
     {
         if (!can_add_modem(modulator_config))
         {
+            invoke_async([this, modulator_config]() { events_->get().on_modem_init_failed(modulator_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -872,6 +1023,7 @@ void pipeline::assign_audio_streams()
         if (!audio_entry || !audio_entry->get().enabled)
         {
             modem_entry->enabled = false;
+            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "no audio output stream available"); });
             continue;
         }
 
@@ -879,6 +1031,7 @@ void pipeline::assign_audio_streams()
         if (!audio_entry->get().referenced_by.empty())
         {
             modem_entry->enabled = false;
+            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "audio stream already in use"); });
             continue;
         }
 
@@ -891,10 +1044,14 @@ void pipeline::assign_audio_streams()
         if (!modem_entry->modulator)
         {
             modem_entry->enabled = false;
+            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "failed to create modulator"); });
             continue;
         }
 
         modem_entry->modem.modulator(*modem_entry->modulator);
+
+        // Wire modem events - pipeline implements modem_events
+        modem_entry->modem.on_events(*this);
 
         // Initialize modem
         modem_entry->modem.initialize();
@@ -938,6 +1095,7 @@ void pipeline::assign_modems()
                 invoke_async([this, &me, &ds, p]() { events_->get().on_packet_received(me, ds, p); });
             });
             ds_entry->get().data_stream->add_on_transmit_started([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p) {
+                on_transmit_starting(me, ds, p);
                 invoke_async([this, &me, &ds, p]() { events_->get().on_packet_transmit_started(me, ds, p); });
             });
             ds_entry->get().data_stream->add_on_transmit_completed([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p) {
@@ -994,11 +1152,13 @@ bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
 {
     if (!is_valid_audio_config(audio_config))
     {
+        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "invalid configuration"); });
         return false;
     }
 
     if (is_duplicate_audio_name(audio_config.name))
     {
+        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate name"); });
         return false;
     }
 
@@ -1007,11 +1167,13 @@ bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
         !is_input_stream(audio_config.type) &&
         is_duplicate_audio_file(audio_config.filename))
     {
+        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate file"); });
         return false;
     }
 
     if (!is_audio_stream_referenced(audio_config.name))
     {
+        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "not referenced"); });
         return false;
     }
 
@@ -1063,11 +1225,13 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
 {
     if (!is_valid_ptt_config(ptt_config))
     {
+        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "unsupported platform"); });
         return false;
     }
 
     if (is_duplicate_ptt_name(ptt_config.name))
     {
+        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate name"); });
         return false;
     }
 
@@ -1075,6 +1239,7 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
     if (ptt_config.type == ptt_control_config_type::serial_port_ptt_control &&
         is_duplicate_serial_port(ptt_config.serial_port))
     {
+        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate serial port"); });
         return false;
     }
 
@@ -1083,11 +1248,13 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
         !ptt_config.library_path.empty() &&
         is_duplicate_library_file(ptt_config.library_path))
     {
+        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate library file"); });
         return false;
     }
 
     if (!is_ptt_control_referenced(ptt_config.name))
     {
+        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "not referenced"); });
         return false;
     }
 
@@ -1355,6 +1522,8 @@ bool pipeline::try_recover_audio_stream(audio_entry& audio_entry, modem_entry& m
 
 void pipeline::schedule_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry)
 {
+    ds_entry.data_stream->wait_transmit_idle(5000);
+
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         auto& context = impl_->audio_recovery_contexts[&entry];
@@ -1381,7 +1550,7 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = max_recovery_attempts_]() { events_->get().on_audio_stream_recovery_attempt(entry, attempts, max); });
+    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_audio_stream_recovery_attempt(entry, attempts, max); });
 
     if (try_recover_audio_stream(entry, modem_entry))
     {
@@ -1395,7 +1564,7 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
         return;
     }
 
-    if (attempts >= max_recovery_attempts_)
+    if (attempts >= entry.config.max_recovery_attempts)
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->audio_recovery_contexts.erase(&entry);
@@ -1411,7 +1580,7 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
         {
             return;
         }
-        it->second.timer->expires_after(std::chrono::seconds(recovery_delay_seconds_));
+        it->second.timer->expires_after(std::chrono::seconds(entry.config.recovery_delay_seconds));
         it->second.timer->async_wait([this, &entry, &modem_entry, &ds_entry](const boost::system::error_code& ec) {
             if (!ec)
             {
@@ -1428,6 +1597,20 @@ bool pipeline::try_recover_ptt_control(ptt_entry& entry, modem_entry& modem_entr
         return false;
     }
 
+    // For serial port PTT, we need to open the serial port after creating it
+    if (entry.type == ptt_control_type::serial_port && entry.serial_port)
+    {
+        auto* serial_port = dynamic_cast<serial_port_no_throw*>(entry.serial_port.get());
+        if (serial_port)
+        {
+            if (!serial_port->open(entry.port_name, entry.baud_rate, entry.data_bits, entry.parity, entry.stop_bits, entry.flow_control))
+            {
+                return false; // Open failed, will trigger retry loop
+            }
+            entry.ptt_control->ptt(false);
+        }
+    }
+
     modem_entry.modem.ptt_control(*entry.ptt_control);
 
     return true;
@@ -1435,6 +1618,8 @@ bool pipeline::try_recover_ptt_control(ptt_entry& entry, modem_entry& modem_entr
 
 void pipeline::schedule_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry)
 {
+    ds_entry.data_stream->wait_transmit_idle(5000);
+
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         auto& context = impl_->ptt_recovery_contexts[&entry];
@@ -1461,7 +1646,7 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = max_recovery_attempts_]() { events_->get().on_ptt_control_recovery_attempt(entry, attempts, max); });
+    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_ptt_control_recovery_attempt(entry, attempts, max); });
 
     if (try_recover_ptt_control(entry, modem_entry))
     {
@@ -1475,7 +1660,7 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
         return;
     }
 
-    if (attempts >= max_recovery_attempts_)
+    if (attempts >= entry.config.max_recovery_attempts)
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->ptt_recovery_contexts.erase(&entry);
@@ -1491,7 +1676,7 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
         {
             return;
         }
-        it->second.timer->expires_after(std::chrono::seconds(recovery_delay_seconds_));
+        it->second.timer->expires_after(std::chrono::seconds(entry.config.recovery_delay_seconds));
         it->second.timer->async_wait([this, &entry, &modem_entry, &ds_entry](const boost::system::error_code& ec) {
             if (!ec)
             {
@@ -1514,6 +1699,20 @@ bool pipeline::try_recover_serial_port(ptt_entry& entry, modem_entry& modem_entr
         return false;
     }
 
+    // Open the serial port (this was missing - the port was created but never opened)
+    if (entry.serial_port)
+    {
+        auto* serial_port = dynamic_cast<serial_port_no_throw*>(entry.serial_port.get());
+        if (serial_port)
+        {
+            if (!serial_port->open(entry.port_name, entry.baud_rate, entry.data_bits, entry.parity, entry.stop_bits, entry.flow_control))
+            {
+                return false; // Open failed, will trigger retry loop
+            }
+            entry.ptt_control->ptt(false);
+        }
+    }
+
     modem_entry.modem.ptt_control(*entry.ptt_control);
 
     return true;
@@ -1521,6 +1720,8 @@ bool pipeline::try_recover_serial_port(ptt_entry& entry, modem_entry& modem_entr
 
 void pipeline::schedule_serial_port_recovery(ptt_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry)
 {
+    ds_entry.data_stream->wait_transmit_idle(5000);
+
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         auto& context = impl_->serial_port_recovery_contexts[&entry];
@@ -1547,7 +1748,7 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = max_recovery_attempts_]() { events_->get().on_serial_port_recovery_attempt(entry, attempts, max); });
+    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_serial_port_recovery_attempt(entry, attempts, max); });
 
     if (try_recover_serial_port(entry, modem_entry))
     {
@@ -1561,7 +1762,7 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
         return;
     }
 
-    if (attempts >= max_recovery_attempts_)
+    if (attempts >= entry.config.max_recovery_attempts)
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->serial_port_recovery_contexts.erase(&entry);
@@ -1577,7 +1778,7 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
         {
             return;
         }
-        it->second.timer->expires_after(std::chrono::seconds(recovery_delay_seconds_));
+        it->second.timer->expires_after(std::chrono::seconds(entry.config.recovery_delay_seconds));
         it->second.timer->async_wait([this, &entry, &modem_entry, &ds_entry](const boost::system::error_code& ec) {
             if (!ec)
             {
@@ -1587,20 +1788,21 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
     }
 }
 
-bool pipeline::try_create_transport(data_stream_entry& entry)
+bool pipeline::try_recover_transport(data_stream_entry& entry)
 {
+    // Create transport - inline tcp to wire callbacks before wrapping
     switch (entry.config.transport)
     {
         case data_stream_transport_type::tcp:
         {
             auto tcp = std::make_unique<tcp_transport>(entry.config.bind_address, entry.config.port);
 
-            tcp->add_on_client_connected([this](std::size_t client_id, data_stream_entry& ds) {
-                invoke_async([this, client_id, &ds]() { events_->get().on_client_connected(ds, client_id); });
+            tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
+                invoke_async([this, conn, &ds]() { events_->get().on_client_connected(ds, conn); });
             }, std::ref(entry));
 
-            tcp->add_on_client_disconnected([this](std::size_t client_id, data_stream_entry& ds) {
-                invoke_async([this, client_id, &ds]() { events_->get().on_client_disconnected(ds, client_id); });
+            tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
+                invoke_async([this, conn, &ds]() { events_->get().on_client_disconnected(ds, conn); });
             }, std::ref(entry));
 
             entry.transport = std::make_unique<transport_no_throw>(std::move(tcp), entry, *this, *impl_->pool.get());
@@ -1613,6 +1815,8 @@ bool pipeline::try_create_transport(data_stream_entry& entry)
         default:
             return false;
     }
+
+    entry.data_stream->transport(*entry.transport);
 
     return true;
 }
@@ -1645,11 +1849,10 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &ds_entry, attempts, max = max_recovery_attempts_]() { events_->get().on_transport_recovery_attempt(ds_entry, attempts, max); });
+    invoke_async([this, &ds_entry, attempts, max = ds_entry.config.max_recovery_attempts]() { events_->get().on_transport_recovery_attempt(ds_entry, attempts, max); });
 
-    if (try_create_transport(ds_entry))
+    if (try_recover_transport(ds_entry))
     {
-        ds_entry.data_stream->transport(*ds_entry.transport);
         ds_entry.faulted.store(false);
         {
             std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
@@ -1659,12 +1862,13 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
         invoke_async([this, &ds_entry]() { events_->get().on_transport_recovered(ds_entry); });
 
         // For transport, just re-enable directly since it's the only dependency
-        ds_entry.data_stream->enabled(true);
+        //ds_entry.data_stream->enabled(true);
+        ds_entry.transport->enabled(true);
         invoke_async([this, &ds_entry]() { events_->get().on_data_stream_enabled(ds_entry); });
         return;
     }
 
-    if (attempts >= max_recovery_attempts_)
+    if (attempts >= ds_entry.config.max_recovery_attempts)
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->transport_recovery_contexts.erase(&ds_entry);
@@ -1680,7 +1884,7 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
         {
             return;
         }
-        it->second.timer->expires_after(std::chrono::seconds(recovery_delay_seconds_));
+        it->second.timer->expires_after(std::chrono::seconds(ds_entry.config.recovery_delay_seconds));
         it->second.timer->async_wait([this, &ds_entry](const boost::system::error_code& ec) {
             if (!ec)
             {
@@ -1729,7 +1933,6 @@ void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, co
     (void)component;
 
     entry.faulted.store(true);
-    entry.stream.close();
 
     invoke_async([this, &entry, error]() { events_->get().on_audio_stream_faulted(entry, error); });
 
@@ -1743,7 +1946,7 @@ void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, co
             invoke_async([this, &ds]() { events_->get().on_data_stream_disabled(ds); });
 
             size_t error_count = ds.data_stream->audio_stream_error_count(ds.data_stream->audio_stream_error_count() + 1);
-            if (error_count > max_audio_stream_error_count_)
+            if (error_count > static_cast<size_t>(entry.config.max_error_count))
             {
                 return;
             }
@@ -1802,12 +2005,27 @@ void pipeline::on_error(transport_no_throw& component, data_stream_entry& entry,
     (void)component;
 
     entry.faulted.store(true);
-    entry.data_stream->enabled(false);
+    entry.transport->enabled(false);
 
     invoke_async([this, &entry, error]() { events_->get().on_transport_faulted(entry, error); });
     invoke_async([this, &entry]() { events_->get().on_data_stream_disabled(entry); });
 
     schedule_transport_recovery(entry);
+}
+
+void pipeline::on_transmit_starting(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)
+{
+    (void)p;
+    (void)ds_entry;
+
+    if (modem_entry.associated_audio_entry)
+    {
+        auto& audio_entry = modem_entry.associated_audio_entry->get();
+        int previous_volume = audio_entry.stream.volume();
+        int new_volume = audio_entry.config.volume;
+        audio_entry.stream.volume(new_volume);
+        invoke_async([this, &audio_entry, previous_volume, new_volume]() { events_->get().on_volume_changed(audio_entry, previous_volume, new_volume); });
+    }
 }
 
 // **************************************************************** //
@@ -1896,14 +2114,14 @@ std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(audio_entry&
     return std::make_unique<audio_stream_no_throw>(std::move(stream_base), entry, events, pool);
 }
 
-bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config)
+bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config& c)
 {
-    switch (config.type)
+    switch (c.type)
     {
         case ptt_control_config_type::null_ptt_control:
         {
             entry.type = ptt_control_type::null;
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<null_ptt_control>(), entry, *this, *impl_->pool.get());
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<null_ptt_control>(), entry, *this, *impl_->pool);
             ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
                 invoke_ptt_event_async(enabled, pe);
             }, std::ref(entry));
@@ -1913,8 +2131,8 @@ bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config
         case ptt_control_config_type::serial_port_ptt_control:
         {
             entry.type = ptt_control_type::serial_port;
-            auto serial = std::make_unique<serial_port_no_throw>(std::make_unique<serial_port>(), entry, *this, *impl_->pool.get());
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<serial_port_ptt_control>(*serial), entry, *this, *impl_->pool.get());
+            auto serial = std::make_unique<serial_port_no_throw>(std::make_unique<serial_port>(), entry, *this, *impl_->pool);
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<serial_port_ptt_control>(*serial), entry, *this, *impl_->pool);
             ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
                 invoke_ptt_event_async(enabled, pe);
             }, std::ref(entry));
@@ -1925,7 +2143,7 @@ bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config
         case ptt_control_config_type::library_ptt_control:
         {
             entry.type = ptt_control_type::library;
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<library_ptt_control>(entry.ptt_library), entry, *this, *impl_->pool.get());
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<library_ptt_control>(entry.ptt_library), entry, *this, *impl_->pool);
             ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
                 invoke_ptt_event_async(enabled, pe);
             }, std::ref(entry));
@@ -1934,6 +2152,21 @@ bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config
         }
         case ptt_control_config_type::tcp_ptt_control:
             return false;
+        default:
+            return false;
+    }
+}
+
+bool try_create_transport(data_stream_entry& entry, const data_stream_config& config, error_events& events, boost::asio::thread_pool& pool)
+{
+    switch (config.transport)
+    {
+        case data_stream_transport_type::tcp:
+            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<tcp_transport>(config.bind_address, config.port), entry, events, pool);
+            return true;
+        case data_stream_transport_type::serial:
+            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), entry, events, pool);
+            return true;
         default:
             return false;
     }
@@ -2126,6 +2359,11 @@ void pipeline_events_default::on_audio_stream_created(audio_entry& entry)
     std::printf("audio_stream: created '%s'\n", entry.name.c_str());
 }
 
+void pipeline_events_default::on_audio_stream_init_failed(const audio_stream_config& config, const std::string& reason)
+{
+    std::printf("audio_stream: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+}
+
 void pipeline_events_default::on_audio_stream_faulted(audio_entry& entry, const error_info& error)
 {
     std::printf("audio_stream: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
@@ -2154,6 +2392,11 @@ void pipeline_events_default::on_audio_stream_recovery_failed(audio_entry& entry
 void pipeline_events_default::on_ptt_control_created(ptt_entry& entry)
 {
     std::printf("ptt_control: created '%s'\n", entry.name.c_str());
+}
+
+void pipeline_events_default::on_ptt_control_init_failed(const ptt_control_config& config, const std::string& reason)
+{
+    std::printf("ptt_control: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_faulted(ptt_entry& entry, const error_info& error)
@@ -2221,6 +2464,11 @@ void pipeline_events_default::on_transport_created(data_stream_entry& entry)
     std::printf("transport: created '%s'\n", entry.name.c_str());
 }
 
+void pipeline_events_default::on_transport_init_failed(const data_stream_config& config, const std::string& reason)
+{
+    std::printf("transport: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+}
+
 void pipeline_events_default::on_transport_faulted(data_stream_entry& entry, const error_info& error)
 {
     std::printf("transport: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
@@ -2246,14 +2494,14 @@ void pipeline_events_default::on_transport_recovery_failed(data_stream_entry& en
     std::printf("transport: recovery failed '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_client_connected(data_stream_entry& entry, std::size_t client_id)
+void pipeline_events_default::on_client_connected(data_stream_entry& entry, const tcp_client_connection& connection)
 {
-    std::printf("transport: client connected '%s' id=%zu\n", entry.name.c_str(), client_id);
+    std::printf("transport: client connected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
-void pipeline_events_default::on_client_disconnected(data_stream_entry& entry, std::size_t client_id)
+void pipeline_events_default::on_client_disconnected(data_stream_entry& entry, const tcp_client_connection& connection)
 {
-    std::printf("transport: client disconnected '%s' id=%zu\n", entry.name.c_str(), client_id);
+    std::printf("transport: client disconnected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
 void pipeline_events_default::on_data_stream_created(data_stream_entry& entry)
@@ -2289,6 +2537,36 @@ void pipeline_events_default::on_modem_created(modem_entry& entry)
 void pipeline_events_default::on_modem_initialized(modem_entry& entry)
 {
     std::printf("modem: initialized '%s'\n", entry.name.c_str());
+}
+
+void pipeline_events_default::on_modem_init_failed(const modulator_config& config, const std::string& reason)
+{
+    std::printf("modem: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+}
+
+void pipeline_events_default::on_modem_transmit(const packet& p, uint64_t id)
+{
+    std::printf("modem: transmit id=%lu from='%s' to='%s'\n", (unsigned long)id, p.from.c_str(), p.to.c_str());
+}
+
+void pipeline_events_default::on_modem_transmit(const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    std::printf("modem: transmit id=%lu bitstream size=%zu\n", (unsigned long)id, bitstream.size());
+}
+
+void pipeline_events_default::on_modem_render_audio(const std::vector<double>& audio, uint64_t sample_rate, uint64_t id)
+{
+    std::printf("modem: render_audio id=%lu samples=%zu sample_rate=%lu\n", (unsigned long)id, audio.size(), (unsigned long)sample_rate);
+}
+
+void pipeline_events_default::on_modem_ptt(bool state, uint64_t id)
+{
+    std::printf("modem: ptt id=%lu state=%s\n", (unsigned long)id, state ? "on" : "off");
+}
+
+void pipeline_events_default::on_volume_changed(audio_entry& entry, int previous_volume, int new_volume)
+{
+    std::printf("audio: volume changed '%s' %d -> %d\n", entry.name.c_str(), previous_volume, new_volume);
 }
 
 void pipeline_events_default::on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)

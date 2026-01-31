@@ -195,7 +195,6 @@ private:
     };
 
     void postprocess_audio(std::vector<double>& audio_buffer);
-    void render_audio(const std::vector<double>& audio_buffer);
     void render_audio(const std::vector<double>& audio_buffer, uint64_t id);
     void modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator);
     void ptt(bool enable, uint64_t id);
