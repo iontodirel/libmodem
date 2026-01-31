@@ -144,12 +144,12 @@ ptt_control_base& modem::ptt_control()
     return ptt_control_.value().get();
 }
 
-void modem::events(modem_events& events)
+void modem::on_events(modem_events& events)
 {
     events_ = std::ref(events);
 }
 
-modem_events& modem::events()
+modem_events& modem::on_events()
 {
     if (!events_.has_value())
     {
@@ -370,7 +370,7 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
         throw;
     }
 
-    ptt(false);
+    ptt(false, id);
 
     // Stop the playback
     audio_stream.stop();

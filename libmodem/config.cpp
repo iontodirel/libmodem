@@ -247,7 +247,8 @@ modulator_config_type parse_modulator_type(const std::string& type_str)
 
 bitstream_convertor_config_type parse_convertor_type(const std::string& type_str)
 {
-    if (type_str == "ax25_bitstream_convertor") return bitstream_convertor_config_type::ax25_bitstream_convertor;
+    if (type_str == "ax25_bitstream_converter") return bitstream_convertor_config_type::ax25_bitstream_convertor;
+    if (type_str == "fx25_bitstream_converter") return bitstream_convertor_config_type::fx25_bitstream_converter;
 
     return bitstream_convertor_config_type::unknown;
 }

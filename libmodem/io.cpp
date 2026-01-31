@@ -317,7 +317,7 @@ void serial_port::close()
 
 void serial_port::rts(bool enable)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -356,7 +356,7 @@ void serial_port::rts(bool enable)
 
 bool serial_port::rts()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -381,7 +381,7 @@ bool serial_port::rts()
 
 void serial_port::dtr(bool enable)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -420,7 +420,7 @@ void serial_port::dtr(bool enable)
 
 bool serial_port::dtr()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -445,7 +445,7 @@ bool serial_port::dtr()
 
 bool serial_port::cts()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -471,7 +471,7 @@ bool serial_port::cts()
 
 bool serial_port::dsr()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -497,7 +497,7 @@ bool serial_port::dsr()
 
 bool serial_port::dcd()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -523,7 +523,7 @@ bool serial_port::dcd()
 
 std::size_t serial_port::write(const std::vector<uint8_t>& data)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -540,7 +540,7 @@ std::size_t serial_port::write(const std::vector<uint8_t>& data)
 
 std::size_t serial_port::write(const std::string& data)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -557,7 +557,7 @@ std::size_t serial_port::write(const std::string& data)
 
 std::vector<uint8_t> serial_port::read(std::size_t size)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -578,7 +578,7 @@ std::vector<uint8_t> serial_port::read(std::size_t size)
 
 std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -599,7 +599,7 @@ std::vector<uint8_t> serial_port::read_some(std::size_t max_size)
 
 std::string serial_port::read_until(const std::string& delimiter)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -622,12 +622,38 @@ std::string serial_port::read_until(const std::string& delimiter)
 
 bool serial_port::is_open()
 {
-    return is_open_;
+    if (!is_open_ || !impl_ || !impl_->serial_port.is_open())
+    {
+        return false;
+    }
+
+    try
+    {
+#ifdef WIN32
+        DWORD status;
+        if (!::GetCommModemStatus(impl_->serial_port.native_handle(), &status))
+        {
+            return false;
+        }
+#endif
+#if defined(__linux__) || defined(__APPLE__)
+        int status;
+        if (::ioctl(impl_->serial_port.native_handle(), TIOCMGET, &status) < 0)
+        {
+            return false;
+        }
+#endif
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 std::size_t serial_port::bytes_available()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -657,7 +683,7 @@ std::size_t serial_port::bytes_available()
 
 void serial_port::flush()
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }
@@ -672,7 +698,7 @@ void serial_port::flush()
 
 void serial_port::timeout(unsigned int milliseconds)
 {
-    if (!is_open_)
+    if (!is_open())
     {
         throw io_exception("Serial port not open", io_error::not_initialized);
     }

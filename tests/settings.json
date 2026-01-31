@@ -36,33 +36,13 @@
       "end_silence_ms": 100,
       "audio_output_streams": [ "wasapi_audio_stream_default" ],
       "data_streams": [ "tcp_default" ],
-      "ptt_controls": [ "serial_ptt_default", "gpio_ptt_raspberrypi", "gpio_ptt_raspberrypi_2" ]
-    },
-    {
-      "name": "1200 APRS modulator (wav renderer)",
-      "enabled": true,
-      "inherit": "1200 APRS modulator",
-      "input_data_streams": [ "random_packet_stream" ],
-      "output_audio_streams": [ "wav_file_default" ]
-    },
-    {
-      "name": "1200 APRS modulator (multiple)",
-      "enabled": true,
-      "inherit": "1200 APRS modulator",
-      "output_audio_streams": [ "wasapi_audio_stream_default", "wav_file_default" ],
-      "input_data_streams": [ "tcp_default", "serial_default" ]
+      "ptt_controls": [ "serial_ptt_default" ]
     }
   ],
   "audio_streams": [
     {
       "name": "wasapi_audio_stream_default",
       "type": "wasapi_audio_output_stream",
-      "device_name": "default",
-      "volume": 20
-    },
-    {
-      "name": "wasapi_audio_stream_default2",
-      "type": "wasapi_audio_input_stream",
       "device_name": "default",
       "volume": 20
     },
@@ -76,15 +56,7 @@
       "name": "wav_file_default",
       "type": "wav_audio_output_stream",
       "file_path": "output.wav",
-      "sample_rate": 44100,
-      "file_mode": "append",
-      "max_size": "500MB",
-      "max_files": 10
-    },
-    {
-      "name": "modulator_test_wav_file",
-      "type": "wav_audio_input_stream",
-      "file_path": "test.wav"
+      "sample_rate": 44100
     },
     {
       "name": "null_audio",
@@ -105,16 +77,8 @@
       "name": "serial_ptt_default",
       "type": "serial_ptt_stream",
       "port": "COM4",
-      "line": "dtr",
-      "active": "high",
-      "platform": "windows"
-    },
-    {
-      "name": "serial_ptt_default_2",
-      "type": "serial_ptt_stream",
-      "port": "COM5",
       "line": "rts",
-      "active": "low",
+      "active": "high",
       "platform": "windows"
     },
     {
@@ -128,6 +92,10 @@
       "type": "library_ptt_control",
       "platform": "windows",
       "path": "ptt_library.dll"
+    },
+    {
+      "name":  "null_ptt",
+      "type": "null_ptt_control"
     }
   ]
 }

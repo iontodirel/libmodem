@@ -119,8 +119,8 @@ struct modem
     bitstream_converter_base& converter();
     void ptt_control(ptt_control_base& ptt_control);
     ptt_control_base& ptt_control();
-    void events(modem_events& events);
-    modem_events& events();
+    void on_events(modem_events& events);
+    modem_events& on_events();
 
     void transmit();
     void transmit(packet p);
