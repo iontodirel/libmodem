@@ -65,8 +65,15 @@
 #ifdef __linux__
 
 #include <alsa/asoundlib.h>
+#include <pthread.h>
 
 #endif // __linux__
+
+#if defined(__APPLE__)
+
+#include <pthread.h>
+
+#endif // __APPLE__
 
 #include <sndfile.h>
 
@@ -223,7 +230,7 @@ bool is_float32_format(WAVEFORMATEX* device_format)
     return float32_format;
 }
 
-static audio_stream_error hresult_to_error(HRESULT hr)
+audio_stream_error hresult_to_error(HRESULT hr)
 {
     switch (hr)
     {
@@ -269,13 +276,34 @@ static audio_stream_error hresult_to_error(HRESULT hr)
     }
 }
 
-static void throw_hresult_error(HRESULT hr, const char* message)
+void throw_hresult_error(HRESULT hr, const char* message)
 {
     audio_stream_error error = hresult_to_error(hr);
     throw audio_stream_exception(message, error);
 }
 
 #endif
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// thread_name                                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void thread_name(const std::string& name)
+{
+#if defined(_WIN32)
+    SetThreadDescription(GetCurrentThread(), std::wstring(name.begin(), name.end()).c_str());
+#elif defined(__linux__)
+    // Linux limits names to 15 characters + null terminator
+    pthread_setname_np(pthread_self(), name.substr(0, 15).c_str());
+#elif defined(__APPLE__)
+    // macOS only allows setting name of current thread
+    pthread_setname_np(name.c_str());
+#endif // defined(_WIN32)
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -1954,15 +1982,44 @@ void wasapi_audio_output_stream::start()
 
     ensure_com_initialized();
 
+    // Pre-fill endpoint buffer with silence to kick-start event-driven playback.
+    // Some WASAPI drivers won't signal the audio_samples_ready_event until there's
+    // data in the buffer. Without this, the render thread may block forever on
+    // WaitForMultipleObjects waiting for an event that never comes.
+
+    HRESULT hr;
+
+    UINT32 padding;
+    if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
+    {
+        throw_hresult_error(hr, "Failed to get current padding");
+    }
+
+    UINT32 frames_available_to_fill = static_cast<UINT32>(buffer_size_) - padding;
+    if (frames_available_to_fill > 0)
+    {
+        BYTE* buffer;
+        if (FAILED(hr = impl_->render_client_->GetBuffer(frames_available_to_fill, &buffer)))
+        {
+            throw_hresult_error(hr, "Failed to get buffer for silence pre-fill");
+        }
+
+        // Using AUDCLNT_BUFFERFLAGS_SILENT eliminates the need to explicitly
+        // write silence data to the rendering buffer
+        if (FAILED(hr = impl_->render_client_->ReleaseBuffer(frames_available_to_fill, AUDCLNT_BUFFERFLAGS_SILENT)))
+        {
+            throw_hresult_error(hr, "Failed to release buffer for silence pre-fill");
+        }
+    }
+
     // Start the render thread
     // The render thread will write audio data to the WASAPI render client from a ring buffer
     // After we start the render thread, we start the audio client to begin rendering audio
+    // It's ok for the thread to start before the audio client, it will just block waiting for events
 
     render_thread_ = std::jthread(std::bind(&wasapi_audio_output_stream::run, this, std::placeholders::_1));
 
     // The render thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
-
-    HRESULT hr;
 
     if (FAILED(hr = impl_->audio_client_->Start()))
     {
@@ -2083,6 +2140,8 @@ wasapi_audio_output_stream::operator bool()
 
 void wasapi_audio_output_stream::run(std::stop_token stop_token)
 {
+    thread_name("wasapi_audio_output_stream");
+
     try
     {
         run_internal(stop_token);
@@ -2820,6 +2879,8 @@ wasapi_audio_input_stream::operator bool()
 
 void wasapi_audio_input_stream::run(std::stop_token stop_token)
 {
+    thread_name("wasapi_audio_input_stream");
+
     try
     {
         run_internal(stop_token);
