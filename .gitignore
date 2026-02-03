@@ -46,3 +46,4 @@ out/*
 tests/external/*
 build/*
 libmodem/out/*
+modem/out/*
