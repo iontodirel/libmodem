@@ -4184,7 +4184,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
 
     {
         std::vector<double> audio_buffer;
-     
+
         fx25_bitstream_converter bitstream_converter;
 
         std::vector<uint8_t> bitstream = bitstream_converter.encode(p, 45, 30);
@@ -4194,7 +4194,7 @@ TEST(modem, modulate_afsk_1200_fx25_packet_with_bit_errors)
         {
             bitstream[i] ^= 1;
         }
-        
+
         dds_afsk_modulator_double modulator(1200.0, 2200.0, 1200, 48000, 1.0); // Coherent 1200 baud AFSK
         
         for (uint8_t bit : bitstream)
@@ -5949,7 +5949,7 @@ TEST(config, read_config)
 {
     config c = read_config("settings.json");
 
-    EXPECT_EQ(c.modulators.size(), 3);
+    EXPECT_EQ(c.modulators.size(), 1);
 
     // First modulator: "1200 APRS modulator"
     EXPECT_EQ(c.modulators[0].name, "1200 APRS modulator");
@@ -5959,93 +5959,78 @@ TEST(config, read_config)
     EXPECT_EQ(c.modulators[0].baud_rate, 1200);
     EXPECT_DOUBLE_EQ(c.modulators[0].f_mark, 1200.0);
     EXPECT_DOUBLE_EQ(c.modulators[0].f_space, 2200.0);
-    EXPECT_EQ(c.modulators[0].tx_delay_ms, 300);
-    EXPECT_EQ(c.modulators[0].tx_tail_ms, 30);
+    EXPECT_EQ(c.modulators[0].tx_delay_ms, 500);
+    EXPECT_EQ(c.modulators[0].tx_tail_ms, 300);
     EXPECT_DOUBLE_EQ(c.modulators[0].gain, 0.3);
-    EXPECT_EQ(c.modulators[0].preemphasis, true);
-    EXPECT_EQ(c.modulators[0].begin_silence_ms, 100);
-    EXPECT_EQ(c.modulators[0].end_silence_ms, 100);
+    EXPECT_EQ(c.modulators[0].preemphasis, false);
+    EXPECT_EQ(c.modulators[0].begin_silence_ms, 10);
+    EXPECT_EQ(c.modulators[0].end_silence_ms, 10);
     ASSERT_EQ(c.modulators[0].audio_output_streams.size(), 1);
     EXPECT_EQ(c.modulators[0].audio_output_streams[0], "wasapi_audio_stream_default");
     ASSERT_EQ(c.modulators[0].data_streams.size(), 1);
     EXPECT_EQ(c.modulators[0].data_streams[0], "tcp_default");
-    ASSERT_EQ(c.modulators[0].ptt_controls.size(), 3);
+    ASSERT_EQ(c.modulators[0].ptt_controls.size(), 1);
     EXPECT_EQ(c.modulators[0].ptt_controls[0], "serial_ptt_default");
-    EXPECT_EQ(c.modulators[0].ptt_controls[1], "gpio_ptt_raspberrypi");
-    EXPECT_EQ(c.modulators[0].ptt_controls[2], "gpio_ptt_raspberrypi_2");
+    ASSERT_EQ(c.modulators[0].loggers.size(), 5);
+    EXPECT_EQ(c.modulators[0].loggers[0], "bitstream_file_logger");
+    EXPECT_EQ(c.modulators[0].loggers[1], "bitstream_file_logger_backup");
+    EXPECT_EQ(c.modulators[0].loggers[2], "bitstream_tcp_logger");
+    EXPECT_EQ(c.modulators[0].loggers[3], "packet_file_logger");
+    EXPECT_EQ(c.modulators[0].loggers[4], "wav_file_logger");
 
-    // Second modulator: "1200 APRS modulator (wav renderer)"
-    EXPECT_EQ(c.modulators[1].name, "1200 APRS modulator (wav renderer)");
-    EXPECT_EQ(c.modulators[1].enabled, true);
-
-    // Third modulator: "1200 APRS modulator (multiple)"
-    EXPECT_EQ(c.modulators[2].name, "1200 APRS modulator (multiple)");
-    EXPECT_EQ(c.modulators[2].enabled, true);
-
-    ASSERT_EQ(c.audio_streams.size(), 6);
+    ASSERT_EQ(c.audio_streams.size(), 4);
 
     // wasapi_audio_stream_default
     EXPECT_EQ(c.audio_streams[0].name, "wasapi_audio_stream_default");
     EXPECT_EQ(c.audio_streams[0].type, audio_stream_config_type::wasapi_audio_output_stream);
-    EXPECT_EQ(c.audio_streams[0].device_name, "default");
-    EXPECT_EQ(c.audio_streams[0].volume, 20);
-
-    // wasapi_audio_stream_default2
-    EXPECT_EQ(c.audio_streams[1].name, "wasapi_audio_stream_default2");
-    EXPECT_EQ(c.audio_streams[1].type, audio_stream_config_type::wasapi_audio_input_stream);
-    EXPECT_EQ(c.audio_streams[1].device_name, "default");
-    EXPECT_EQ(c.audio_streams[1].volume, 20);
+    EXPECT_EQ(c.audio_streams[0].device_id, "{0.0.0.00000000}.{37b0c850-d234-486f-add7-7c6f81d5eb6e}");
+    EXPECT_EQ(c.audio_streams[0].volume, 35);
+    EXPECT_EQ(c.audio_streams[0].max_recovery_attempts, 20);
+    EXPECT_EQ(c.audio_streams[0].recovery_delay_seconds, 10);
 
     // alsa_audio_stream_default
-    EXPECT_EQ(c.audio_streams[2].name, "alsa_audio_stream_default");
-    EXPECT_EQ(c.audio_streams[2].type, audio_stream_config_type::alsa_audio_output_stream);
-    EXPECT_EQ(c.audio_streams[2].device_id, "hw:0,0");
-    EXPECT_EQ(c.audio_streams[2].volume, 10);
+    EXPECT_EQ(c.audio_streams[1].name, "alsa_audio_stream_default");
+    EXPECT_EQ(c.audio_streams[1].type, audio_stream_config_type::alsa_audio_output_stream);
+    EXPECT_EQ(c.audio_streams[1].device_id, "hw:0,0");
+    EXPECT_EQ(c.audio_streams[1].volume, 10);
 
     // wav_file_default
-    EXPECT_EQ(c.audio_streams[3].name, "wav_file_default");
-    EXPECT_EQ(c.audio_streams[3].type, audio_stream_config_type::wav_audio_output_stream);
-    EXPECT_EQ(c.audio_streams[3].filename, "output.wav");
-    EXPECT_EQ(c.audio_streams[3].sample_rate, 44100);
-
-    // modulator_test_wav_file
-    EXPECT_EQ(c.audio_streams[4].name, "modulator_test_wav_file");
-    EXPECT_EQ(c.audio_streams[4].type, audio_stream_config_type::wav_audio_input_stream);
-    EXPECT_EQ(c.audio_streams[4].filename, "test.wav");
+    EXPECT_EQ(c.audio_streams[2].name, "wav_file_default");
+    EXPECT_EQ(c.audio_streams[2].type, audio_stream_config_type::wav_audio_output_stream);
+    EXPECT_EQ(c.audio_streams[2].filename, "output.wav");
+    EXPECT_EQ(c.audio_streams[2].sample_rate, 44100);
 
     // null_audio
-    EXPECT_EQ(c.audio_streams[5].name, "null_audio");
-    EXPECT_EQ(c.audio_streams[5].type, audio_stream_config_type::null_audio_stream);
+    EXPECT_EQ(c.audio_streams[3].name, "null_audio");
+    EXPECT_EQ(c.audio_streams[3].type, audio_stream_config_type::null_audio_stream);
 
     ASSERT_EQ(c.ptt_controls.size(), 4);
 
     // serial_ptt_default
     EXPECT_EQ(c.ptt_controls[0].name, "serial_ptt_default");
     EXPECT_EQ(c.ptt_controls[0].type, ptt_control_config_type::serial_port_ptt_control);
-    EXPECT_EQ(c.ptt_controls[0].serial_port, "COM4");
-    EXPECT_EQ(c.ptt_controls[0].line, "dtr");
+    EXPECT_EQ(c.ptt_controls[0].serial_port, "COM16");
+    EXPECT_EQ(c.ptt_controls[0].line, "rts");
     EXPECT_EQ(c.ptt_controls[0].trigger, "high");
     EXPECT_EQ(c.ptt_controls[0].platform, "windows");
-
-    // serial_ptt_default_2
-    EXPECT_EQ(c.ptt_controls[1].name, "serial_ptt_default_2");
-    EXPECT_EQ(c.ptt_controls[1].type, ptt_control_config_type::serial_port_ptt_control);
-    EXPECT_EQ(c.ptt_controls[1].serial_port, "COM5");
-    EXPECT_EQ(c.ptt_controls[1].line, "rts");
-    EXPECT_EQ(c.ptt_controls[1].trigger, "low");
-    EXPECT_EQ(c.ptt_controls[1].platform, "windows");
+    EXPECT_EQ(c.ptt_controls[0].max_recovery_attempts, 40);
+    EXPECT_EQ(c.ptt_controls[0].recovery_delay_seconds, 2);
 
     // library_ptt_1
-    EXPECT_EQ(c.ptt_controls[2].name, "library_ptt_1");
-    EXPECT_EQ(c.ptt_controls[2].type, ptt_control_config_type::library_ptt_control);
-    EXPECT_EQ(c.ptt_controls[2].library_path, "ptt_library.so");
-    EXPECT_EQ(c.ptt_controls[2].platform, "linux");
+    EXPECT_EQ(c.ptt_controls[1].name, "library_ptt_1");
+    EXPECT_EQ(c.ptt_controls[1].type, ptt_control_config_type::library_ptt_control);
+    EXPECT_EQ(c.ptt_controls[1].library_path, "ptt_library.so");
+    EXPECT_EQ(c.ptt_controls[1].platform, "linux");
 
     // library_ptt_2
-    EXPECT_EQ(c.ptt_controls[3].name, "library_ptt_2");
-    EXPECT_EQ(c.ptt_controls[3].type, ptt_control_config_type::library_ptt_control);
-    EXPECT_EQ(c.ptt_controls[3].library_path, "ptt_library.dll");
-    EXPECT_EQ(c.ptt_controls[3].platform, "windows");
+    EXPECT_EQ(c.ptt_controls[2].name, "library_ptt_2");
+    EXPECT_EQ(c.ptt_controls[2].type, ptt_control_config_type::library_ptt_control);
+    EXPECT_EQ(c.ptt_controls[2].library_path, "ptt_library.dll");
+    EXPECT_EQ(c.ptt_controls[2].platform, "windows");
+
+    // null_ptt
+    EXPECT_EQ(c.ptt_controls[3].name, "null_ptt");
+    EXPECT_EQ(c.ptt_controls[3].type, ptt_control_config_type::null_ptt_control);
 
     ASSERT_EQ(c.data_streams.size(), 1);
 
@@ -6055,6 +6040,40 @@ TEST(config, read_config)
     EXPECT_EQ(c.data_streams[0].format, data_stream_format_type::ax25_kiss_formatter);
     EXPECT_EQ(c.data_streams[0].bind_address, "127.0.0.1");
     EXPECT_EQ(c.data_streams[0].port, 1234);
+
+    ASSERT_EQ(c.loggers.size(), 4);
+
+    // bitstream_file_logger
+    EXPECT_EQ(c.loggers[0].name, "bitstream_file_logger");
+    EXPECT_EQ(c.loggers[0].format, "bitstream");
+    EXPECT_EQ(c.loggers[0].type, logger_type::file);
+    EXPECT_EQ(c.loggers[0].log_file, "bitstream.txt");
+    EXPECT_EQ(c.loggers[0].max_file_size_bytes, 100);
+    EXPECT_EQ(c.loggers[0].max_files, 3);
+
+    // bitstream_file_logger_backup
+    EXPECT_EQ(c.loggers[1].name, "bitstream_file_logger_backup");
+    EXPECT_EQ(c.loggers[1].format, "bitstream");
+    EXPECT_EQ(c.loggers[1].type, logger_type::file);
+    EXPECT_EQ(c.loggers[1].log_file, "bitstream_backup.txt");
+    EXPECT_EQ(c.loggers[1].max_file_size_bytes, 100);
+    EXPECT_EQ(c.loggers[1].max_files, 3);
+
+    // packet_file_logger
+    EXPECT_EQ(c.loggers[2].name, "packet_file_logger");
+    EXPECT_EQ(c.loggers[2].format, "packet");
+    EXPECT_EQ(c.loggers[2].type, logger_type::file);
+    EXPECT_EQ(c.loggers[2].log_file, "packets.txt");
+    EXPECT_EQ(c.loggers[2].max_file_size_bytes, 100);
+    EXPECT_EQ(c.loggers[2].max_files, 3);
+
+    // wav_file_logger
+    EXPECT_EQ(c.loggers[3].name, "wav_file_logger");
+    EXPECT_EQ(c.loggers[3].format, "audio");
+    EXPECT_EQ(c.loggers[3].type, logger_type::file);
+    EXPECT_EQ(c.loggers[3].log_file, "audio.wav");
+    EXPECT_EQ(c.loggers[3].max_file_size_bytes, 100);
+    EXPECT_EQ(c.loggers[3].max_files, 3);
 }
 
 #ifdef ENABLE_SLOW_TNC_TESTS

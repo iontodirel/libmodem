@@ -1,50 +1,34 @@
 {
-  // - supports arbitrary numbers of audio streams, ex: a modulator can render to an arbitrary number of audio devices
-  // - audio streams can be shared as many times as wanted across all modulators/demodulators
-  // - supports an arbitrary number of data streams, ex: multiple KISS interfaces for the same modulator
-  // - modulators/demodulators can use different audio streams and data streams
-  // - random fsk/afsk and data stream sources; this is useful for testing and generating demo packets
-  // - can mix modulators and demodulators as desired 
-  // - audio streams can be wav to file, native WASAPI audio devices or native ALSA; I will look into Mac later
-  // - data streams can be JSON files, or TCP, serial ports, or stdout, or a C dynamic library interface for extensibility; stdout and logging to disk are just another data stream
-  // - data streams formats can be AX25/KISS, JSON format, or text (TNC2 format)
-  // - PTT interface can be serial, gpio on the Pi or a C dynamic library interface
-  // - data stream formats: 
-  //   - aprs_text
-  //   - aprs_json
-  //   - ax25_hex
-  //   - ax25_kiss
-  //   - ax25_bin
-  //   - telemetry
-  //   - bitstream
-  // - telemetry format can be appended to most formats with "_with_telemetry"
-  // - telemetry format is not supported in some modes like KISS
   "modulators": [
     {
       "name": "1200 APRS modulator",
       "type": "dds_afsk_modulator",
-      "convertor": "ax25_bitstream_convertor",
+      "convertor": "ax25_bitstream_converter",
       "enabled": true,
       "baud_rate": 1200,
       "mark_freq_hz": 1200.0,
       "space_freq_hz": 2200.0,
-      "tx_delay_ms": 300,
-      "tx_tail_ms": 30,
+      "tx_delay_ms": 500,
+      "tx_tail_ms": 300,
       "gain": 0.3,
-      "preemphasis": true,
-      "begin_silence_ms": 100,
-      "end_silence_ms": 100,
+      "preemphasis": false,
+      "begin_silence_ms": 10,
+      "end_silence_ms": 10,
       "audio_output_streams": [ "wasapi_audio_stream_default" ],
       "data_streams": [ "tcp_default" ],
-      "ptt_controls": [ "serial_ptt_default" ]
+      "ptt_controls": [ "serial_ptt_default" ],
+      "loggers": [ "bitstream_file_logger", "bitstream_file_logger_backup", "bitstream_tcp_logger", "packet_file_logger", "wav_file_logger" ]
     }
   ],
   "audio_streams": [
     {
       "name": "wasapi_audio_stream_default",
       "type": "wasapi_audio_output_stream",
-      "device_name": "default",
-      "volume": 20
+      // "device_name": "default",
+      "device_id": "{0.0.0.00000000}.{37b0c850-d234-486f-add7-7c6f81d5eb6e}",
+      "volume": 35,
+      "max_recovery_attempts": 20,
+      "recovery_delay_seconds": 10
     },
     {
       "name": "alsa_audio_stream_default",
@@ -76,10 +60,12 @@
     {
       "name": "serial_ptt_default",
       "type": "serial_ptt_stream",
-      "port": "COM4",
+      "port": "COM16",
       "line": "rts",
       "active": "high",
-      "platform": "windows"
+      "platform": "windows",
+      "max_recovery_attempts": 40,
+      "recovery_delay_seconds": 2
     },
     {
       "name": "library_ptt_1",
@@ -94,8 +80,42 @@
       "path": "ptt_library.dll"
     },
     {
-      "name":  "null_ptt",
+      "name": "null_ptt",
       "type": "null_ptt_control"
+    }
+  ],
+  "loggers": [
+    {
+      "name": "bitstream_file_logger",
+      "format": "bitstream",
+      "type": "file",
+      "log_file": "bitstream.txt",
+      "max_file_size_bytes": 100,
+      "max_files": 3
+    },
+    {
+      "name": "bitstream_file_logger_backup",
+      "format": "bitstream",
+      "type": "file",
+      "log_file": "bitstream_backup.txt",
+      "max_file_size_bytes": 100,
+      "max_files": 3
+    },
+    {
+      "name": "packet_file_logger",
+      "format": "packet",
+      "type": "file",
+      "log_file": "packets.txt",
+      "max_file_size_bytes": 100,
+      "max_files": 3
+    },
+    {
+      "name": "wav_file_logger",
+      "format": "audio",
+      "type": "file",
+      "log_file": "audio.wav",
+      "max_file_size_bytes": 100,
+      "max_files": 3
     }
   ]
 }
