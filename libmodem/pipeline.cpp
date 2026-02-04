@@ -1,4 +1,4 @@
-// **************************************************************** //
+﻿// **************************************************************** //
 // libmodem - APRS modem                                            //
 // Version 0.1.0                                                    //
 // https://github.com/iontodirel/libmodem                           //
@@ -33,12 +33,57 @@
 
 #include <cstdio>
 #include <mutex>
+#include <iostream>
+#include <functional>
+#include <algorithm>
+#include <thread>
+#include <cstdlib>
+#include <string>
+#include <mutex>
+#include <filesystem>
+#include <cstddef>
+#include <fstream>
+#include <typeinfo>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#endif
 
 #include <boost/asio/thread_pool.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+// Cross-platform URL opener                                        //
+//                                                                  //
+// **************************************************************** //
+
+void open_url(const std::string& url)
+{
+#ifdef _WIN32
+    ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+    std::string cmd = "open \"" + url + "\"";
+    std::system(cmd.c_str());
+#else
+    std::string cmd = "xdg-open \"" + url + "\" &";
+    std::system(cmd.c_str());
+#endif
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -97,7 +142,7 @@ R wrap(Component& component, Entry& entry, std::atomic<bool>& faulted, std::opti
             error.exception = std::current_exception();
             boost::asio::post(pool, [&component, &entry, &events, error]() {
                 events->get().on_error(component, entry, error);
-            });
+                });
         }
         return fallback;
     }
@@ -125,7 +170,7 @@ void wrap(Component& component, Entry& entry, std::atomic<bool>& faulted, std::o
             error.exception = std::current_exception();
             boost::asio::post(pool, [&component, &entry, &events, error]() {
                 events->get().on_error(component, entry, error);
-            });
+                });
         }
     }
 }
@@ -684,7 +729,10 @@ void pipeline::init()
     used_modem_names_.clear();
     used_data_stream_names_.clear();
     used_tcp_ports_.clear();
+    used_logger_names_.clear();
+    used_logger_tcp_ports_.clear();
 
+    populate_loggers();
     populate_audio_entries();
     populate_ptt_controls();
     populate_data_streams();
@@ -694,6 +742,7 @@ void pipeline::init()
     assign_audio_streams();
     assign_ptt_controls();
     assign_modems();
+    assign_loggers();
 
     validate_entries();
 }
@@ -717,71 +766,107 @@ void pipeline::invoke_async(Func&& fn)
     }
 }
 
+template<typename Func>
+void pipeline::invoke_loggers_async(Func&& fn)
+{
+    for (auto& logger : loggers_)
+    {
+        boost::asio::post(*impl_->pool, [&logger, fn]() {
+            fn(logger.get());
+        });
+    }
+    for (auto& entry : owned_loggers_)
+    {
+        if (entry->logger)
+        {
+            boost::asio::post(*impl_->pool, [&entry, fn]() {
+                fn(*entry->logger);
+            });
+        }
+    }
+}
+
+template<typename Func>
+void pipeline::invoke_modem_loggers_async(modem_entry& modem, Func&& fn)
+{
+    for (auto& logger_ref : modem.associated_loggers)
+    {
+        logger_entry& entry = logger_ref.get();
+        if (entry.logger)
+        {
+            boost::asio::post(*impl_->pool, [&entry, fn]() {
+                fn(*entry.logger);
+            });
+        }
+    }
+}
+
+template<typename Func>
+void pipeline::invoke_audio_entry_loggers_async(audio_entry& entry, Func&& fn)
+{
+    if (entry.associated_modem_entry)
+    {
+        invoke_modem_loggers_async(entry.associated_modem_entry->get(), std::forward<Func>(fn));
+    }
+}
+
+template<typename Func>
+void pipeline::invoke_ptt_entry_loggers_async(ptt_entry& entry, Func&& fn)
+{
+    if (entry.associated_modem_entry)
+    {
+        invoke_modem_loggers_async(entry.associated_modem_entry->get(), std::forward<Func>(fn));
+    }
+}
+
+template<typename Func>
+void pipeline::invoke_data_stream_loggers_async(data_stream_entry& entry, Func&& fn)
+{
+    for (const auto& modem_name : entry.referenced_by)
+    {
+        auto modem = find_modem_entry(modem_name);
+        if (modem)
+        {
+            invoke_modem_loggers_async(modem->get(), fn);
+        }
+    }
+}
+
+void pipeline::add_logger(logger_base& logger)
+{
+    loggers_.push_back(logger);
+}
+
+void pipeline::remove_logger(logger_base& logger)
+{
+    loggers_.erase(std::remove_if(loggers_.begin(), loggers_.end(), [&logger](const std::reference_wrapper<logger_base>& ref) {
+        return &ref.get() == &logger;
+    }), loggers_.end());
+}
+
+const std::vector<std::reference_wrapper<logger_base>>& pipeline::loggers() const
+{
+    return loggers_;
+}
+
+uint64_t pipeline::next_seq()
+{
+    return event_sequence_.fetch_add(1);
+}
+
 void pipeline::invoke_ptt_event_async(bool enabled, ptt_entry& entry)
 {
+    uint64_t seq = next_seq();
     if (enabled)
     {
-        invoke_async([this, &entry]() { events_->get().on_ptt_activated(entry); });
+        invoke_async([this, seq, &entry]() { events_->get().on_ptt_activated(seq, entry); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_ptt_activated(seq, entry); });
     }
     else
     {
-        invoke_async([this, &entry]() { events_->get().on_ptt_deactivated(entry); });
+        invoke_async([this, seq, &entry]() { events_->get().on_ptt_deactivated(seq, entry); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_ptt_deactivated(seq, entry); });
     }
-}
-
-void pipeline::transmit(const packet& p, uint64_t id)
-{
-    if (events_)
-    {
-        invoke_async([this, p, id]() { events_->get().on_modem_transmit(p, id); });
-    }
-}
-
-void pipeline::receive(const packet& p, uint64_t id)
-{
-    (void)p;
-    (void)id;
-}
-
-void pipeline::transmit(const std::vector<uint8_t>& bitstream, uint64_t id)
-{
-    if (events_)
-    {
-        invoke_async([this, bitstream = bitstream, id]() { events_->get().on_modem_transmit(bitstream, id); });
-    }
-}
-
-void pipeline::receive(const std::vector<uint8_t>& bitstream, uint64_t id)
-{
-    (void)bitstream;
-    (void)id;
-}
-
-void pipeline::ptt(bool state, uint64_t id)
-{
-    if (events_)
-    {
-        invoke_async([this, state, id]() { events_->get().on_modem_ptt(state, id); });
-    }
-}
-
-void pipeline::data_carrier_detected(uint64_t id)
-{
-    (void)id;
-}
-
-void pipeline::render_audio(const std::vector<double>& samples, size_t count, uint64_t id)
-{
-    if (events_)
-    {
-        invoke_async([this, samples, count, id]() { events_->get().on_modem_render_audio(samples, count, id); });
-    }
-}
-
-void pipeline::capture_audio(const std::vector<double>& samples, uint64_t id)
-{
-    (void)samples;
-    (void)id;
 }
 
 void pipeline::start()
@@ -806,10 +891,15 @@ void pipeline::start()
         if (data_stream->enabled)
         {
             data_stream->data_stream->start();
-            invoke_async([this, &ds = *data_stream]() { events_->get().on_data_stream_started(ds); });
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &ds = *data_stream]() { events_->get().on_data_stream_started(seq, ds); });
+            invoke_data_stream_loggers_async(*data_stream, [seq, &ds = *data_stream](logger_base& l) { l.on_data_stream_started(seq, ds); });
         }
     }
-    invoke_async([this]() { events_->get().started(); });
+
+    uint64_t seq = next_seq();
+    invoke_async([this, seq]() { events_->get().on_started(seq); });
+    invoke_loggers_async([seq](logger_base& l) { l.on_started(seq); });
 }
 
 void pipeline::stop()
@@ -819,7 +909,10 @@ void pipeline::stop()
         if (data_stream->enabled)
         {
             data_stream->data_stream->stop();
-            invoke_async([this, &ds = *data_stream]() { events_->get().on_data_stream_stopped(ds); });
+
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &ds = *data_stream]() { events_->get().on_data_stream_stopped(seq, ds); });
+            invoke_data_stream_loggers_async(*data_stream, [seq, &ds = *data_stream](logger_base& l) { l.on_data_stream_stopped(seq, ds); });
         }
     }
 
@@ -836,7 +929,10 @@ void pipeline::stop()
         }
     }
 
-    invoke_async([this]() { events_->get().stopped(); });
+    uint64_t seq = next_seq();
+    invoke_async([this, seq]() { events_->get().on_stopped(seq); });
+    invoke_loggers_async([seq](logger_base& l) { l.on_stopped(seq); });
+
     impl_->pool->join();
 }
 
@@ -863,7 +959,9 @@ void pipeline::populate_audio_entries()
         auto entry = std::make_unique<audio_entry>();
         if (!try_create_audio_entry(*entry, audio_config, *this, *impl_->pool.get()))
         {
-            invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "failed to create audio stream"); });
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "failed to create audio stream"); });
+            invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "failed to create audio stream"); });
             continue;
         }
 
@@ -874,7 +972,9 @@ void pipeline::populate_audio_entries()
         {
             if (is_duplicate_audio_device(entry->device.id, entry->device.type))
             {
-                invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate audio device"); });
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "duplicate audio device"); });
+                invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "duplicate audio device"); });
                 continue;
             }
         }
@@ -883,7 +983,10 @@ void pipeline::populate_audio_entries()
 
         audio_entry* entry_ptr = entry.get();
         audio_entries_.push_back(std::move(entry));
-        invoke_async([this, entry_ptr]() { events_->get().on_audio_stream_created(*entry_ptr); });
+
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, entry_ptr]() { events_->get().on_audio_stream_created(seq, *entry_ptr); });
+        invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_audio_stream_created(seq, *entry_ptr); });
     }
 }
 
@@ -908,14 +1011,20 @@ void pipeline::populate_ptt_controls()
 
         if (!try_create_ptt_control(*entry, ptt_config))
         {
-            invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "failed to create ptt control"); });
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "failed to create ptt control"); });
+            invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "failed to create ptt control"); });
             continue;
         }
 
         register_ptt_control(*entry, ptt_config);
+
         ptt_entry* entry_ptr = entry.get();
         ptt_controls_.push_back(std::move(entry));
-        invoke_async([this, entry_ptr]() { events_->get().on_ptt_control_created(*entry_ptr); });
+
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, entry_ptr]() { events_->get().on_ptt_control_created(seq, *entry_ptr); });
+        invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_ptt_control_created(seq, *entry_ptr); });
     }
 }
 
@@ -925,7 +1034,9 @@ void pipeline::populate_data_streams()
     {
         if (!can_add_data_stream(data_stream_config))
         {
-            invoke_async([this, data_stream_config]() { events_->get().on_transport_init_failed(data_stream_config, "invalid configuration or duplicate"); });
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "invalid configuration or duplicate"); });
+            invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -942,7 +1053,6 @@ void pipeline::populate_data_streams()
                 break;
         }
 
-        // Create transport - inline tcp to wire callbacks before wrapping
         switch (data_stream_config.transport)
         {
             case data_stream_transport_type::tcp:
@@ -950,11 +1060,15 @@ void pipeline::populate_data_streams()
                 auto tcp = std::make_unique<tcp_transport>(data_stream_config.bind_address, data_stream_config.port);
 
                 tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                    invoke_async([this, conn, &ds]() { events_->get().on_client_connected(ds, conn); });
+                    uint64_t seq = next_seq();
+                    invoke_async([this, seq, conn, &ds]() { events_->get().on_client_connected(seq, ds, conn); });
+                    invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_connected(seq, ds, conn); });
                 }, std::ref(*entry));
 
                 tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                    invoke_async([this, conn, &ds]() { events_->get().on_client_disconnected(ds, conn); });
+                    uint64_t seq = next_seq();
+                    invoke_async([this, seq, conn, &ds]() { events_->get().on_client_disconnected(seq, ds, conn); });
+                    invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_disconnected(seq, ds, conn); });
                 }, std::ref(*entry));
 
                 entry->transport = std::make_unique<transport_no_throw>(std::move(tcp), *entry, *this, *impl_->pool.get());
@@ -965,7 +1079,9 @@ void pipeline::populate_data_streams()
                 entry->transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), *entry, *this, *impl_->pool.get());
                 break;
             default:
-                invoke_async([this, data_stream_config]() { events_->get().on_transport_init_failed(data_stream_config, "unknown transport type"); });
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
+                invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
                 continue;
         }
 
@@ -977,8 +1093,16 @@ void pipeline::populate_data_streams()
 
         data_stream_entry* entry_ptr = entry.get();
         data_streams_.push_back(std::move(entry));
-        invoke_async([this, entry_ptr]() { events_->get().on_transport_created(*entry_ptr); });
-        invoke_async([this, entry_ptr]() { events_->get().on_data_stream_created(*entry_ptr); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, entry_ptr]() { events_->get().on_transport_created(seq, *entry_ptr); });
+            invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_transport_created(seq, *entry_ptr); });
+        }
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, entry_ptr]() { events_->get().on_data_stream_created(seq, *entry_ptr); });
+            invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_data_stream_created(seq, *entry_ptr); });
+        }
     }
 }
 
@@ -988,7 +1112,9 @@ void pipeline::populate_transmit_modems()
     {
         if (!can_add_modem(modulator_config))
         {
-            invoke_async([this, modulator_config]() { events_->get().on_modem_init_failed(modulator_config, "invalid configuration or duplicate"); });
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, modulator_config]() { events_->get().on_modem_init_failed(seq, modulator_config, "invalid configuration or duplicate"); });
+            invoke_loggers_async([seq, modulator_config](logger_base& l) { l.on_modem_init_failed(seq, modulator_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -998,7 +1124,9 @@ void pipeline::populate_transmit_modems()
 
         modem_entry* entry_ptr = entry.get();
         modems_.push_back(std::move(entry));
-        invoke_async([this, entry_ptr]() { events_->get().on_modem_created(*entry_ptr); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, entry_ptr]() { events_->get().on_modem_created(seq, *entry_ptr); });
+        invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_modem_created(seq, *entry_ptr); });
     }
 }
 
@@ -1008,6 +1136,60 @@ void pipeline::populate_receive_modems()
     // - Match bitstream converters of the modulator and demodulator
     // - Match data sources
     // TODO: Implement receive modem population
+}
+
+void pipeline::populate_loggers()
+{
+    for (const auto& logger_config : config.loggers)
+    {
+        if (!can_add_logger(logger_config))
+        {
+            continue;
+        }
+
+        auto entry = std::make_unique<logger_entry>();
+        entry->name = logger_config.name;
+        entry->config = logger_config;
+
+        switch (logger_config.type)
+        {
+            case logger_type::file:
+            {
+                file_policy_config policy_config;
+                policy_config.base_path = logger_config.log_file;
+                policy_config.max_file_size = logger_config.max_file_size_bytes > 0 ? static_cast<size_t>(logger_config.max_file_size_bytes) : 10 * 1024 * 1024;
+                policy_config.max_file_count = logger_config.max_files > 0 ? static_cast<size_t>(logger_config.max_files) : 5;
+                policy_config.mode = rotation_mode::rotate_on_size;
+
+                entry->file_policy = std::make_unique<rotating_file_policy>(policy_config);
+
+                if (logger_config.format == "bitstream")
+                {
+                    entry->logger = std::make_unique<bitstream_file_logger>(*entry->file_policy);
+                }
+                else if (logger_config.format == "packet")
+                {
+                    entry->logger = std::make_unique<packet_file_logger>(*entry->file_policy);
+                }
+                else if (logger_config.format == "audio")
+                {
+                    entry->logger = std::make_unique<audio_file_logger>(*entry->file_policy);
+                }
+                break;
+            }
+            case logger_type::tcp:
+                continue;
+            default:
+                continue;
+        }
+
+        entry->logger->name(logger_config.name);
+        entry->logger->events(*this);
+
+        register_logger(*entry, logger_config);
+
+        owned_loggers_.push_back(std::move(entry));
+    }
 }
 
 void pipeline::assign_audio_streams()
@@ -1023,7 +1205,10 @@ void pipeline::assign_audio_streams()
         if (!audio_entry || !audio_entry->get().enabled)
         {
             modem_entry->enabled = false;
-            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "no audio output stream available"); });
+
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "no audio output stream available"); });
+            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "no audio output stream available"); });
             continue;
         }
 
@@ -1031,7 +1216,10 @@ void pipeline::assign_audio_streams()
         if (!audio_entry->get().referenced_by.empty())
         {
             modem_entry->enabled = false;
-            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "audio stream already in use"); });
+
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "audio stream already in use"); });
+            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "audio stream already in use"); });
             continue;
         }
 
@@ -1044,14 +1232,14 @@ void pipeline::assign_audio_streams()
         if (!modem_entry->modulator)
         {
             modem_entry->enabled = false;
-            invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_init_failed(me.modulator_config, "failed to create modulator"); });
+
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "failed to create modulator"); });
+            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "failed to create modulator"); });
             continue;
         }
 
         modem_entry->modem.modulator(*modem_entry->modulator);
-
-        // Wire modem events - pipeline implements modem_events
-        modem_entry->modem.on_events(*this);
 
         // Initialize modem
         modem_entry->modem.initialize();
@@ -1060,7 +1248,9 @@ void pipeline::assign_audio_streams()
         audio_entry->get().associated_modem_entry = *modem_entry;
         modem_entry->associated_audio_entry = audio_entry;
 
-        invoke_async([this, &me = *modem_entry]() { events_->get().on_modem_initialized(me); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_initialized(seq, me); });
+        invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_initialized(seq, me); });
     }
 }
 
@@ -1090,16 +1280,100 @@ void pipeline::assign_modems()
             // Wire modem to data stream
             ds_entry->get().data_stream->modem(modem_entry->modem);
 
-            // Wire packet callbacks
-            ds_entry->get().data_stream->add_on_packet_received([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p) {
-                invoke_async([this, &me, &ds, p]() { events_->get().on_packet_received(me, ds, p); });
+            // Wire packet callbacks - id is generated by data_stream and propagated through
+            ds_entry->get().data_stream->add_on_packet_received([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
+                // Call synchronously to establish TX tracking BEFORE any async events are posted
+                if (events_)
+                {
+                    events_->get().on_begin_packet_received(me, ds, p, id);
+                }
+
+                // Synchronously invoke modem's associated loggers
+                for (auto& logger_ref : me.associated_loggers)
+                {
+                    logger_entry& entry = logger_ref.get();
+                    if (entry.logger)
+                    {
+                        entry.logger->on_begin_packet_received(me, ds, p, id);
+                    }
+                }
+
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_received(seq, me, ds, p, id); });
+                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_received(seq, me, ds, p, id); });
             });
-            ds_entry->get().data_stream->add_on_transmit_started([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p) {
-                on_transmit_starting(me, ds, p);
-                invoke_async([this, &me, &ds, p]() { events_->get().on_packet_transmit_started(me, ds, p); });
+
+            ds_entry->get().data_stream->add_on_transmit_started([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
+                auto [previous_volume, new_volume] = adjust_audio_volume(me, ds, p, id);
+
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_transmit_started(seq, me, ds, p, id); });
+                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_transmit_started(seq, me, ds, p, id); });
+
+                if (me.associated_audio_entry)
+                {
+                    auto& audio_entry = me.associated_audio_entry->get();
+                    invoke_async([this, seq = next_seq(), &audio_entry, previous_volume, new_volume, id]() { events_->get().on_volume_changed(seq, audio_entry, previous_volume, new_volume, id); });
+                    invoke_modem_loggers_async(me, [seq = next_seq(), &audio_entry, previous_volume, new_volume, id](logger_base& l) { l.on_volume_changed(seq, audio_entry, previous_volume, new_volume, id); });
+                }
             });
-            ds_entry->get().data_stream->add_on_transmit_completed([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p) {
-                invoke_async([this, &me, &ds, p]() { events_->get().on_packet_transmit_completed(me, ds, p); });
+
+            ds_entry->get().data_stream->add_on_transmit_completed([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_transmit_completed(seq, me, ds, p, id); });
+                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_transmit_completed(seq, me, ds, p, id); });
+            });
+
+            // Wire modem event callbacks - modem_data_stream intercepts modem events and re-fires with data_stream's id
+            ds_entry->get().data_stream->add_on_modem_transmit_packet([this, &me = *modem_entry](const packet& p, uint64_t id) {
+                uint64_t seq = next_seq();
+                if (events_)
+                {
+                    invoke_async([this, seq, p, id]() { events_->get().on_modem_transmit(seq, p, id); });
+                }
+                invoke_modem_loggers_async(me, [seq, p, id](logger_base& l) { l.on_modem_transmit(seq, p, id); });
+            });
+
+            ds_entry->get().data_stream->add_on_modem_transmit_bitstream([this, &me = *modem_entry](const std::vector<uint8_t>& bitstream, uint64_t id) {
+                uint64_t seq = next_seq();
+                if (events_)
+                {
+                    invoke_async([this, seq, &me, bitstream = bitstream, id]() { events_->get().on_modem_transmit(seq, me, bitstream, id); });
+                }
+                invoke_modem_loggers_async(me, [seq, &me, bitstream = bitstream, id](logger_base& l) { l.on_modem_transmit(seq, me, bitstream, id); });
+            });
+
+            ds_entry->get().data_stream->add_on_modem_ptt([this, &me = *modem_entry](bool state, uint64_t id) {
+                uint64_t seq = next_seq();
+                if (events_)
+                {
+                    invoke_async([this, seq, state, id]() { events_->get().on_modem_ptt(seq, state, id); });
+                }
+                invoke_modem_loggers_async(me, [seq, state, id](logger_base& l) { l.on_modem_ptt(seq, state, id); });
+            });
+
+            ds_entry->get().data_stream->add_on_modem_before_start_render_audio([this, &me = *modem_entry](uint64_t id) {
+                if (me.associated_audio_entry)
+                {
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        invoke_async([this, seq, &ae = me.associated_audio_entry->get(), id]() { events_->get().on_modem_before_start_render_audio(seq, ae, id); });
+                    }
+                    invoke_modem_loggers_async(me, [seq, &ae = me.associated_audio_entry->get(), id](logger_base& l) { l.on_modem_before_start_render_audio(seq, ae, id); });
+                }
+            });
+
+            ds_entry->get().data_stream->add_on_modem_end_render_audio([this, &me = *modem_entry](const std::vector<double>& samples, size_t count, uint64_t id) {
+                if (me.associated_audio_entry)
+                {
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        invoke_async([this, seq, &ae = me.associated_audio_entry->get(), samples, count, id]() { events_->get().on_modem_end_render_audio(seq, ae, samples, count, id); });
+                    }
+                    invoke_modem_loggers_async(me, [seq, &ae = me.associated_audio_entry->get(), samples, count, id](logger_base& l) { l.on_modem_end_render_audio(seq, ae, samples, count, id); });
+                }
             });
 
             ds_entry->get().referenced_by.push_back(modem_entry->name);
@@ -1148,17 +1422,43 @@ void pipeline::assign_ptt_controls()
     }
 }
 
+void pipeline::assign_loggers()
+{
+    for (auto& modem_entry : modems_)
+    {
+        if (!modem_entry->enabled)
+        {
+            continue;
+        }
+
+        for (const auto& logger_name : modem_entry->modulator_config.loggers)
+        {
+            auto logger_entry = find_logger_entry(logger_name);
+            if (!logger_entry)
+            {
+                continue;
+            }
+
+            modem_entry->associated_loggers.push_back(logger_entry.value());
+        }
+    }
+}
+
 bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
 {
     if (!is_valid_audio_config(audio_config))
     {
-        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "invalid configuration"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "invalid configuration"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "invalid configuration"); });
         return false;
     }
 
     if (is_duplicate_audio_name(audio_config.name))
     {
-        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate name"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "duplicate name"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "duplicate name"); });
         return false;
     }
 
@@ -1167,13 +1467,17 @@ bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
         !is_input_stream(audio_config.type) &&
         is_duplicate_audio_file(audio_config.filename))
     {
-        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "duplicate file"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "duplicate file"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "duplicate file"); });
         return false;
     }
 
     if (!is_audio_stream_referenced(audio_config.name))
     {
-        invoke_async([this, audio_config]() { events_->get().on_audio_stream_init_failed(audio_config, "not referenced"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "not referenced"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "not referenced"); });
         return false;
     }
 
@@ -1225,13 +1529,17 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
 {
     if (!is_valid_ptt_config(ptt_config))
     {
-        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "unsupported platform"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "unsupported platform"); });
+        invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "unsupported platform"); });
         return false;
     }
 
     if (is_duplicate_ptt_name(ptt_config.name))
     {
-        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate name"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "duplicate name"); });
+        invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "duplicate name"); });
         return false;
     }
 
@@ -1239,7 +1547,9 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
     if (ptt_config.type == ptt_control_config_type::serial_port_ptt_control &&
         is_duplicate_serial_port(ptt_config.serial_port))
     {
-        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate serial port"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "duplicate serial port"); });
+        invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "duplicate serial port"); });
         return false;
     }
 
@@ -1248,13 +1558,17 @@ bool pipeline::can_add_ptt_control(const ptt_control_config& ptt_config)
         !ptt_config.library_path.empty() &&
         is_duplicate_library_file(ptt_config.library_path))
     {
-        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "duplicate library file"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "duplicate library file"); });
+        invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "duplicate library file"); });
         return false;
     }
 
     if (!is_ptt_control_referenced(ptt_config.name))
     {
-        invoke_async([this, ptt_config]() { events_->get().on_ptt_control_init_failed(ptt_config, "not referenced"); });
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, ptt_config]() { events_->get().on_ptt_control_init_failed(seq, ptt_config, "not referenced"); });
+        invoke_loggers_async([seq, ptt_config](logger_base& l) { l.on_ptt_control_init_failed(seq, ptt_config, "not referenced"); });
         return false;
     }
 
@@ -1466,6 +1780,96 @@ bool pipeline::is_data_stream_referenced(const std::string& name)
     return false;
 }
 
+bool pipeline::can_add_logger(const logger_config& logger_config)
+{
+    if (!is_valid_logger_config(logger_config))
+    {
+        return false;
+    }
+
+    if (is_duplicate_logger_name(logger_config.name))
+    {
+        return false;
+    }
+
+    if (logger_config.type == logger_type::tcp && is_duplicate_logger_tcp_port(logger_config.port))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool pipeline::is_duplicate_logger_name(const std::string& name)
+{
+    return used_logger_names_.count(name) > 0;
+}
+
+bool pipeline::is_duplicate_logger_tcp_port(int port)
+{
+    return used_logger_tcp_ports_.count(port) > 0 || used_tcp_ports_.count(port) > 0;
+}
+
+bool pipeline::is_valid_logger_config(const logger_config& logger_config)
+{
+    if (logger_config.name.empty())
+    {
+        return false;
+    }
+
+    if (logger_config.type == logger_type::unknown)
+    {
+        return false;
+    }
+
+    if (logger_config.type == logger_type::file && logger_config.log_file.empty())
+    {
+        return false;
+    }
+
+    if (logger_config.type == logger_type::tcp && logger_config.port <= 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void pipeline::register_logger(const logger_entry& entry, const logger_config& logger_config)
+{
+    (void)entry;
+    used_logger_names_.insert(logger_config.name);
+
+    if (logger_config.type == logger_type::tcp)
+    {
+        used_logger_tcp_ports_.insert(logger_config.port);
+    }
+}
+
+std::optional<std::reference_wrapper<logger_entry>> pipeline::find_logger_entry(const std::string& name)
+{
+    for (auto& entry : owned_loggers_)
+    {
+        if (entry->name == name)
+        {
+            return *entry;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::reference_wrapper<modem_entry>> pipeline::find_modem_entry(const std::string& name)
+{
+    for (auto& entry : modems_)
+    {
+        if (entry->name == name)
+        {
+            return *entry;
+        }
+    }
+    return std::nullopt;
+}
+
 void pipeline::validate_entries()
 {
     // Disable data streams without modems
@@ -1531,7 +1935,9 @@ void pipeline::schedule_audio_recovery(audio_entry& entry, modem_entry& modem_en
         context.timer = std::make_unique<boost::asio::steady_timer>(impl_->pool->get_executor());
     }
 
-    invoke_async([this, &entry]() { events_->get().on_audio_stream_recovery_started(entry); });
+    uint64_t seq = next_seq();
+    invoke_async([this, seq, &entry]() { events_->get().on_audio_stream_recovery_started(seq, entry); });
+    invoke_audio_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_audio_stream_recovery_started(seq, entry); });
 
     attempt_audio_recovery(entry, modem_entry, ds_entry);
 }
@@ -1550,7 +1956,11 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_audio_stream_recovery_attempt(entry, attempts, max); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_audio_stream_recovery_attempt(seq, entry, attempts, max); });
+        invoke_audio_entry_loggers_async(entry, [seq, &entry, attempts, max = entry.config.max_recovery_attempts](logger_base& l) { l.on_audio_stream_recovery_attempt(seq, entry, attempts, max); });
+    }
 
     if (try_recover_audio_stream(entry, modem_entry))
     {
@@ -1559,7 +1969,11 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
             std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
             impl_->audio_recovery_contexts.erase(&entry);
         }
-        invoke_async([this, &entry]() { events_->get().on_audio_stream_recovered(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_audio_stream_recovered(seq, entry); });
+            invoke_audio_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_audio_stream_recovered(seq, entry); });
+        }
         try_reenable_data_stream(modem_entry, ds_entry);
         return;
     }
@@ -1568,7 +1982,11 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->audio_recovery_contexts.erase(&entry);
-        invoke_async([this, &entry]() { events_->get().on_audio_stream_recovery_failed(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_audio_stream_recovery_failed(seq, entry); });
+            invoke_audio_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_audio_stream_recovery_failed(seq, entry); });
+        }
         return;
     }
 
@@ -1627,7 +2045,9 @@ void pipeline::schedule_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry,
         context.timer = std::make_unique<boost::asio::steady_timer>(impl_->pool->get_executor());
     }
 
-    invoke_async([this, &entry]() { events_->get().on_ptt_control_recovery_started(entry); });
+    uint64_t seq = next_seq();
+    invoke_async([this, seq, &entry]() { events_->get().on_ptt_control_recovery_started(seq, entry); });
+    invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_ptt_control_recovery_started(seq, entry); });
 
     attempt_ptt_recovery(entry, modem_entry, ds_entry);
 }
@@ -1646,7 +2066,11 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_ptt_control_recovery_attempt(entry, attempts, max); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_ptt_control_recovery_attempt(seq, entry, attempts, max); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry, attempts, max = entry.config.max_recovery_attempts](logger_base& l) { l.on_ptt_control_recovery_attempt(seq, entry, attempts, max); });
+    }
 
     if (try_recover_ptt_control(entry, modem_entry))
     {
@@ -1655,7 +2079,11 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
             std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
             impl_->ptt_recovery_contexts.erase(&entry);
         }
-        invoke_async([this, &entry]() { events_->get().on_ptt_control_recovered(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_ptt_control_recovered(seq, entry); });
+            invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_ptt_control_recovered(seq, entry); });
+        }
         try_reenable_data_stream(modem_entry, ds_entry);
         return;
     }
@@ -1664,7 +2092,11 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->ptt_recovery_contexts.erase(&entry);
-        invoke_async([this, &entry]() { events_->get().on_ptt_control_recovery_failed(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_ptt_control_recovery_failed(seq, entry); });
+            invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_ptt_control_recovery_failed(seq, entry); });
+        }
         return;
     }
 
@@ -1729,7 +2161,9 @@ void pipeline::schedule_serial_port_recovery(ptt_entry& entry, modem_entry& mode
         context.timer = std::make_unique<boost::asio::steady_timer>(impl_->pool->get_executor());
     }
 
-    invoke_async([this, &entry]() { events_->get().on_serial_port_recovery_started(entry); });
+    uint64_t seq = next_seq();
+    invoke_async([this, seq, &entry]() { events_->get().on_serial_port_recovery_started(seq, entry); });
+    invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_serial_port_recovery_started(seq, entry); });
 
     attempt_serial_port_recovery(entry, modem_entry, ds_entry);
 }
@@ -1748,7 +2182,11 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_serial_port_recovery_attempt(entry, attempts, max); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, attempts, max = entry.config.max_recovery_attempts]() { events_->get().on_serial_port_recovery_attempt(seq, entry, attempts, max); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry, attempts, max = entry.config.max_recovery_attempts](logger_base& l) { l.on_serial_port_recovery_attempt(seq, entry, attempts, max); });
+    }
 
     if (try_recover_serial_port(entry, modem_entry))
     {
@@ -1757,7 +2195,11 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
             std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
             impl_->serial_port_recovery_contexts.erase(&entry);
         }
-        invoke_async([this, &entry]() { events_->get().on_serial_port_recovered(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_serial_port_recovered(seq, entry); });
+            invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_serial_port_recovered(seq, entry); });
+        }
         try_reenable_data_stream(modem_entry, ds_entry);
         return;
     }
@@ -1766,7 +2208,11 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->serial_port_recovery_contexts.erase(&entry);
-        invoke_async([this, &entry]() { events_->get().on_serial_port_recovery_failed(entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &entry]() { events_->get().on_serial_port_recovery_failed(seq, entry); });
+            invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_serial_port_recovery_failed(seq, entry); });
+        }
         return;
     }
 
@@ -1790,7 +2236,6 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
 
 bool pipeline::try_recover_transport(data_stream_entry& entry)
 {
-    // Create transport - inline tcp to wire callbacks before wrapping
     switch (entry.config.transport)
     {
         case data_stream_transport_type::tcp:
@@ -1798,11 +2243,15 @@ bool pipeline::try_recover_transport(data_stream_entry& entry)
             auto tcp = std::make_unique<tcp_transport>(entry.config.bind_address, entry.config.port);
 
             tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                invoke_async([this, conn, &ds]() { events_->get().on_client_connected(ds, conn); });
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, conn, &ds]() { events_->get().on_client_connected(seq, ds, conn); });
+                invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_connected(seq, ds, conn); });
             }, std::ref(entry));
 
             tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                invoke_async([this, conn, &ds]() { events_->get().on_client_disconnected(ds, conn); });
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, conn, &ds]() { events_->get().on_client_disconnected(seq, ds, conn); });
+                invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_disconnected(seq, ds, conn); });
             }, std::ref(entry));
 
             entry.transport = std::make_unique<transport_no_throw>(std::move(tcp), entry, *this, *impl_->pool.get());
@@ -1830,7 +2279,9 @@ void pipeline::schedule_transport_recovery(data_stream_entry& ds_entry)
         context.timer = std::make_unique<boost::asio::steady_timer>(impl_->pool->get_executor());
     }
 
-    invoke_async([this, &ds_entry]() { events_->get().on_transport_recovery_started(ds_entry); });
+    uint64_t seq = next_seq();
+    invoke_async([this, seq, &ds_entry]() { events_->get().on_transport_recovery_started(seq, ds_entry); });
+    invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_transport_recovery_started(seq, ds_entry); });
 
     attempt_transport_recovery(ds_entry);
 }
@@ -1849,7 +2300,11 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
         attempts = it->second.attempts;
     }
 
-    invoke_async([this, &ds_entry, attempts, max = ds_entry.config.max_recovery_attempts]() { events_->get().on_transport_recovery_attempt(ds_entry, attempts, max); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &ds_entry, attempts, max = ds_entry.config.max_recovery_attempts]() { events_->get().on_transport_recovery_attempt(seq, ds_entry, attempts, max); });
+        invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry, attempts, max = ds_entry.config.max_recovery_attempts](logger_base& l) { l.on_transport_recovery_attempt(seq, ds_entry, attempts, max); });
+    }
 
     if (try_recover_transport(ds_entry))
     {
@@ -1859,12 +2314,19 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
             impl_->transport_recovery_contexts.erase(&ds_entry);
         }
 
-        invoke_async([this, &ds_entry]() { events_->get().on_transport_recovered(ds_entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &ds_entry]() { events_->get().on_transport_recovered(seq, ds_entry); });
+            invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_transport_recovered(seq, ds_entry); });
+        }
 
         // For transport, just re-enable directly since it's the only dependency
-        //ds_entry.data_stream->enabled(true);
         ds_entry.transport->enabled(true);
-        invoke_async([this, &ds_entry]() { events_->get().on_data_stream_enabled(ds_entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &ds_entry]() { events_->get().on_data_stream_enabled(seq, ds_entry); });
+            invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_data_stream_enabled(seq, ds_entry); });
+        }
         return;
     }
 
@@ -1872,7 +2334,11 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
         impl_->transport_recovery_contexts.erase(&ds_entry);
-        invoke_async([this, &ds_entry]() { events_->get().on_transport_recovery_failed(ds_entry); });
+        {
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, &ds_entry]() { events_->get().on_transport_recovery_failed(seq, ds_entry); });
+            invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_transport_recovery_failed(seq, ds_entry); });
+        }
         return;
     }
 
@@ -1925,7 +2391,11 @@ void pipeline::try_reenable_data_stream(modem_entry& modem_entry, data_stream_en
 
     // All dependencies healthy, re-enable
     ds_entry.data_stream->enabled(true);
-    invoke_async([this, &ds_entry]() { events_->get().on_data_stream_enabled(ds_entry); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &ds_entry]() { events_->get().on_data_stream_enabled(seq, ds_entry); });
+        invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_data_stream_enabled(seq, ds_entry); });
+    }
 }
 
 void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, const error_info& error)
@@ -1934,7 +2404,11 @@ void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, co
 
     entry.faulted.store(true);
 
-    invoke_async([this, &entry, error]() { events_->get().on_audio_stream_faulted(entry, error); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, error]() { events_->get().on_audio_stream_faulted(seq, entry, error); });
+        invoke_audio_entry_loggers_async(entry, [seq, &entry, error](logger_base& l) { l.on_audio_stream_faulted(seq, entry, error); });
+    }
 
     if (entry.associated_modem_entry)
     {
@@ -1943,7 +2417,11 @@ void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, co
         {
             auto& ds = modem_entry.associated_data_stream_entry->get();
             ds.data_stream->enabled(false);
-            invoke_async([this, &ds]() { events_->get().on_data_stream_disabled(ds); });
+            {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
+                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+            }
 
             size_t error_count = ds.data_stream->audio_stream_error_count(ds.data_stream->audio_stream_error_count() + 1);
             if (error_count > static_cast<size_t>(entry.config.max_error_count))
@@ -1962,7 +2440,11 @@ void pipeline::on_error(ptt_control_no_throw& component, ptt_entry& entry, const
 
     entry.faulted.store(true);
 
-    invoke_async([this, &entry, error]() { events_->get().on_ptt_control_faulted(entry, error); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, error]() { events_->get().on_ptt_control_faulted(seq, entry, error); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry, error](logger_base& l) { l.on_ptt_control_faulted(seq, entry, error); });
+    }
 
     if (entry.associated_modem_entry)
     {
@@ -1971,7 +2453,11 @@ void pipeline::on_error(ptt_control_no_throw& component, ptt_entry& entry, const
         {
             auto& ds = modem_entry.associated_data_stream_entry->get();
             ds.data_stream->enabled(false);
-            invoke_async([this, &ds]() { events_->get().on_data_stream_disabled(ds); });
+            {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
+                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+            }
 
             schedule_ptt_recovery(entry, modem_entry, ds);
         }
@@ -1984,7 +2470,11 @@ void pipeline::on_error(serial_port_no_throw& component, ptt_entry& entry, const
 
     entry.serial_port_faulted.store(true);
 
-    invoke_async([this, &entry, error]() { events_->get().on_serial_port_faulted(entry, error); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, error]() { events_->get().on_serial_port_faulted(seq, entry, error); });
+        invoke_ptt_entry_loggers_async(entry, [seq, &entry, error](logger_base& l) { l.on_serial_port_faulted(seq, entry, error); });
+    }
 
     if (entry.associated_modem_entry)
     {
@@ -1993,7 +2483,11 @@ void pipeline::on_error(serial_port_no_throw& component, ptt_entry& entry, const
         {
             auto& ds = modem_entry.associated_data_stream_entry->get();
             ds.data_stream->enabled(false);
-            invoke_async([this, &ds]() { events_->get().on_data_stream_disabled(ds); });
+            {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
+                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+            }
 
             schedule_serial_port_recovery(entry, modem_entry, ds);
         }
@@ -2007,25 +2501,734 @@ void pipeline::on_error(transport_no_throw& component, data_stream_entry& entry,
     entry.faulted.store(true);
     entry.transport->enabled(false);
 
-    invoke_async([this, &entry, error]() { events_->get().on_transport_faulted(entry, error); });
-    invoke_async([this, &entry]() { events_->get().on_data_stream_disabled(entry); });
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry, error]() { events_->get().on_transport_faulted(seq, entry, error); });
+        invoke_data_stream_loggers_async(entry, [seq, &entry, error](logger_base& l) { l.on_transport_faulted(seq, entry, error); });
+    }
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, &entry]() { events_->get().on_data_stream_disabled(seq, entry); });
+        invoke_data_stream_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_data_stream_disabled(seq, entry); });
+    }
 
     schedule_transport_recovery(entry);
 }
 
-void pipeline::on_transmit_starting(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)
+void pipeline::on_log(logger_base& logger, uint64_t id)
+{
+    uint64_t seq = next_seq();
+    if (events_)
+    {
+        events_->get().on_log(seq, logger, id);
+    }
+}
+
+std::pair<int, int> pipeline::adjust_audio_volume(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
 {
     (void)p;
     (void)ds_entry;
+    (void)id;
+
+    int previous_volume = 0;
+    int new_volume = 0;
 
     if (modem_entry.associated_audio_entry)
     {
         auto& audio_entry = modem_entry.associated_audio_entry->get();
-        int previous_volume = audio_entry.stream.volume();
-        int new_volume = audio_entry.config.volume;
-        audio_entry.stream.volume(new_volume);
-        invoke_async([this, &audio_entry, previous_volume, new_volume]() { events_->get().on_volume_changed(audio_entry, previous_volume, new_volume); });
+        previous_volume = audio_entry.stream.volume();
+        audio_entry.stream.volume(audio_entry.config.volume);
+        new_volume = audio_entry.stream.volume();
     }
+
+    return { previous_volume, new_volume };
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// rotating_file_policy                                             //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+rotating_file_policy::rotating_file_policy(file_policy_config config) : config_(std::move(config))
+{
+    if (config_.base_path.empty())
+    {
+        throw std::invalid_argument("base_path cannot be empty");
+    }
+    if (config_.max_file_count == 0)
+    {
+        throw std::invalid_argument("max_file_count must be > 0");
+    }
+
+    parse_base_path();
+    scan_existing_files();
+}
+
+std::string rotating_file_policy::resolve_write_path(size_t bytes_to_write)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    should_truncate_ = false;
+
+    if (current_index_ == 0)
+    {
+        current_index_ = 1;
+        should_truncate_ = true;
+    }
+    else if (config_.mode == rotation_mode::new_file_per_write)
+    {
+        rotate_to_next_file();
+    }
+    else if (config_.mode == rotation_mode::rotate_on_size)
+    {
+        if (current_file_size_ + bytes_to_write > config_.max_file_size)
+        {
+            rotate_to_next_file();
+        }
+    }
+
+    return build_path(current_index_);
+}
+
+void rotating_file_policy::on_write_complete(size_t bytes_written)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    current_file_size_ += bytes_written;
+}
+
+size_t rotating_file_policy::current_file_index() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_index_;
+}
+
+size_t rotating_file_policy::current_file_size() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_file_size_;
+}
+
+bool rotating_file_policy::should_truncate() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return should_truncate_;
+}
+
+void rotating_file_policy::reset()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    current_index_ = 0;
+    current_file_size_ = 0;
+    should_truncate_ = false;
+}
+
+const file_policy_config& rotating_file_policy::config() const
+{
+    return config_;
+}
+
+void rotating_file_policy::parse_base_path()
+{
+    namespace fs = std::filesystem;
+
+    fs::path p(config_.base_path);
+    extension_ = p.extension().string();
+    stem_ = p.parent_path() / p.stem();
+}
+
+std::string rotating_file_policy::build_path(size_t index) const
+{
+    return stem_.string() + "_" + std::to_string(index) + extension_;
+}
+
+void rotating_file_policy::scan_existing_files()
+{
+    namespace fs = std::filesystem;
+
+    size_t highest_index = 0;
+    size_t file_size_at_highest = 0;
+
+    for (size_t i = 1; i <= config_.max_file_count; ++i)
+    {
+        fs::path candidate(build_path(i));
+        if (fs::exists(candidate))
+        {
+            highest_index = i;
+            file_size_at_highest = fs::file_size(candidate);
+        }
+    }
+
+    current_index_ = highest_index;
+    current_file_size_ = file_size_at_highest;
+}
+
+void rotating_file_policy::rotate_to_next_file()
+{
+    current_index_++;
+
+    if (current_index_ > config_.max_file_count)
+    {
+        current_index_ = 1;
+    }
+
+    current_file_size_ = 0;
+    should_truncate_ = true;
+}
+
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// logger_base                                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void logger_base::start()
+{
+}
+
+void logger_base::stop()
+{
+}
+
+void logger_base::notify_logged(uint64_t id)
+{
+    if (events_)
+    {
+        events_->get().on_log(*this, id);
+    }
+}
+
+void logger_base::on_started(uint64_t seq)
+{
+    (void)seq;
+}
+
+void logger_base::on_stopped(uint64_t seq)
+{
+    (void)seq;
+}
+
+void logger_base::on_log(uint64_t seq, logger_base& logger, uint64_t id)
+{
+    (void)seq;
+    (void)logger;
+    (void)id;
+}
+
+void logger_base::on_audio_stream_created(uint64_t seq, audio_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason)
+{
+    (void)seq;
+    (void)config;
+    (void)reason;
+}
+
+void logger_base::on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error)
+{
+    (void)seq;
+    (void)entry;
+    (void)error;
+}
+
+void logger_base::on_audio_stream_recovery_started(uint64_t seq, audio_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_audio_stream_recovery_attempt(uint64_t seq, audio_entry& entry, int attempt, int max_attempts)
+{
+    (void)seq;
+    (void)entry;
+    (void)attempt;
+    (void)max_attempts;
+}
+
+void logger_base::on_audio_stream_recovered(uint64_t seq, audio_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_audio_stream_recovery_failed(uint64_t seq, audio_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_control_created(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_control_init_failed(uint64_t seq, const ptt_control_config& config, const std::string& reason)
+{
+    (void)seq;
+    (void)config;
+    (void)reason;
+}
+
+void logger_base::on_ptt_control_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
+{
+    (void)seq;
+    (void)entry;
+    (void)error;
+}
+
+void logger_base::on_ptt_control_recovery_started(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_control_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
+{
+    (void)seq;
+    (void)entry;
+    (void)attempt;
+    (void)max_attempts;
+}
+
+void logger_base::on_ptt_control_recovered(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_activated(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_ptt_deactivated(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
+{
+    (void)seq;
+    (void)entry;
+    (void)error;
+}
+
+void logger_base::on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
+{
+    (void)seq;
+    (void)entry;
+    (void)attempt;
+    (void)max_attempts;
+}
+
+void logger_base::on_serial_port_recovered(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_serial_port_recovery_failed(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_transport_created(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_transport_init_failed(uint64_t seq, const data_stream_config& config, const std::string& reason)
+{
+    (void)seq;
+    (void)config;
+    (void)reason;
+}
+
+void logger_base::on_transport_faulted(uint64_t seq, data_stream_entry& entry, const error_info& error)
+{
+    (void)seq;
+    (void)entry;
+    (void)error;
+}
+
+void logger_base::on_transport_recovery_started(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_transport_recovery_attempt(uint64_t seq, data_stream_entry& entry, int attempt, int max_attempts)
+{
+    (void)seq;
+    (void)entry;
+    (void)attempt;
+    (void)max_attempts;
+}
+
+void logger_base::on_transport_recovered(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_transport_recovery_failed(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_client_connected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
+{
+    (void)seq;
+    (void)entry;
+    (void)connection;
+}
+
+void logger_base::on_client_disconnected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
+{
+    (void)seq;
+    (void)entry;
+    (void)connection;
+}
+
+void logger_base::on_data_stream_created(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_data_stream_started(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_data_stream_stopped(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_data_stream_enabled(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_data_stream_disabled(uint64_t seq, data_stream_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_modem_created(uint64_t seq, modem_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason)
+{
+    (void)seq;
+    (void)config;
+    (void)reason;
+}
+
+void logger_base::on_modem_initialized(uint64_t seq, modem_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_modem_transmit(uint64_t seq, const packet& p, uint64_t id)
+{
+    (void)seq;
+    (void)p;
+    (void)id;
+}
+
+void logger_base::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    (void)seq;
+    (void)entry;
+    (void)bitstream;
+    (void)id;
+}
+
+void logger_base::on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id)
+{
+    (void)seq;
+    (void)entry;
+    (void)id;
+}
+
+void logger_base::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id)
+{
+    (void)seq;
+    (void)entry;
+    (void)samples;
+    (void)count;
+    (void)id;
+}
+
+void logger_base::on_modem_ptt(uint64_t seq, bool state, uint64_t id)
+{
+    (void)seq;
+    (void)state;
+    (void)id;
+}
+
+void logger_base::on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id)
+{
+    (void)seq;
+    (void)entry;
+    (void)previous_volume;
+    (void)new_volume;
+    (void)id;
+}
+
+void logger_base::on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)modem_entry;
+    (void)ds_entry;
+    (void)p;
+    (void)id;
+}
+
+void logger_base::on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)seq;
+    (void)modem_entry;
+    (void)ds_entry;
+    (void)p;
+    (void)id;
+}
+
+void logger_base::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)seq;
+    (void)modem_entry;
+    (void)ds_entry;
+    (void)p;
+    (void)id;
+}
+
+void logger_base::on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)seq;
+    (void)modem_entry;
+    (void)ds_entry;
+    (void)p;
+    (void)id;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// bitstream_file_logger                                            //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+bitstream_file_logger::bitstream_file_logger(file_write_policy& policy) : policy_(policy)
+{
+}
+
+bitstream_file_logger::~bitstream_file_logger()
+{
+}
+
+std::string bitstream_file_logger::target() const
+{
+    return last_written_path_;
+}
+
+void bitstream_file_logger::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    (void)seq;
+    (void)entry;
+
+    write_bitstream(bitstream);
+    notify_logged(id);
+}
+
+void bitstream_file_logger::write_bitstream(const std::vector<uint8_t>& data)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (data.empty())
+    {
+        return;
+    }
+
+    std::string path = policy_.resolve_write_path(data.size());
+
+    auto mode = std::ios::out;
+    mode |= policy_.should_truncate() ? std::ios::trunc : std::ios::app;
+
+    std::ofstream file(path, mode);
+    if (!file)
+    {
+        throw std::runtime_error("failed to open file: " + path);
+    }
+
+    std::vector<char> buffer(data.size());
+    size_t buffer_size = 0;
+    for (size_t i = 0, j = 0; j < data.size(); j++)
+    {
+        if (data[j] == 1 || data[j] == 0)
+        {
+            buffer[i] = data[j] == 1 ? '1' : '0';
+            i++;
+            buffer_size++;
+        }
+    }
+
+    file.write(buffer.data(), static_cast<std::streamsize>(buffer_size));
+    file.put('\n');
+    file.flush();
+
+    policy_.on_write_complete(buffer_size + 1);
+
+    last_written_path_ = path;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// packet_file_logger                                               //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+packet_file_logger::packet_file_logger(file_write_policy& policy) : policy_(policy)
+{
+}
+
+packet_file_logger::~packet_file_logger()
+{
+}
+
+std::string packet_file_logger::target() const
+{
+    return last_written_path_;
+}
+
+void packet_file_logger::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)seq;
+    (void)modem_entry;
+    (void)ds_entry;
+
+    write_packet(p);
+    notify_logged(id);
+}
+
+void packet_file_logger::write_packet(const packet& p)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::string packet_string = to_string(p);
+    size_t data_size = packet_string.size() + 1;
+
+    std::string path = policy_.resolve_write_path(data_size);
+
+    auto mode = std::ios::out;
+    mode |= policy_.should_truncate() ? std::ios::trunc : std::ios::app;
+
+    std::ofstream file(path, mode);
+    if (!file)
+    {
+        throw std::runtime_error("failed to open file: " + path);
+    }
+
+    file << packet_string << '\n';
+    file.flush();
+
+    policy_.on_write_complete(data_size);
+
+    last_written_path_ = path;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_file_logger                                                //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+audio_file_logger::audio_file_logger(file_write_policy& policy) : policy_(policy)
+{
+}
+
+audio_file_logger::~audio_file_logger()
+{
+}
+
+std::string audio_file_logger::target() const
+{
+    return last_written_path_;
+}
+
+void audio_file_logger::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id)
+{
+    (void)seq;
+
+    int sample_rate = entry.config.sample_rate;
+    write_audio(samples, count, sample_rate);
+    notify_logged(id);
+}
+
+void audio_file_logger::write_audio(const std::vector<double>& samples, size_t count, int sample_rate)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (samples.empty() || count == 0)
+    {
+        return;
+    }
+
+    std::string path = policy_.resolve_write_path(count * sizeof(double));
+
+    // Change extension to .wav
+    std::filesystem::path p(path);
+    p.replace_extension(".wav");
+    path = p.string();
+
+    wav_audio_output_stream wav(path, sample_rate);
+    wav.write(samples.data(), count);
+    wav.close();
+
+    policy_.on_write_complete(count * sizeof(double));
+
+    last_written_path_ = path;
 }
 
 // **************************************************************** //
@@ -2224,18 +3427,23 @@ std::unique_ptr<modem_entry> create_modem_entry(const modulator_config& config)
     entry->name = config.name;
     entry->modulator_config = config;
 
+    std::unique_ptr<bitstream_converter_base> base_converter;
+
     switch (config.converter)
     {
         case bitstream_convertor_config_type::fx25_bitstream_converter:
-            entry->converter = std::make_unique<fx25_bitstream_converter_adapter>();
+            base_converter = std::make_unique<fx25_bitstream_converter_adapter>();
+            entry->converter_name = "fx25_bitstream_converter";
             break;
         case bitstream_convertor_config_type::ax25_bitstream_convertor:
-            entry->converter = std::make_unique<ax25_bitstream_converter_adapter>();
+            base_converter = std::make_unique<ax25_bitstream_converter_adapter>();
+            entry->converter_name = "ax25_bitstream_converter";
             break;
         default:
             break;
     }
 
+    entry->converter = std::move(base_converter);
     entry->modem.converter(*entry->converter);
     entry->modem.baud_rate(config.baud_rate);
     entry->modem.tx_delay(config.tx_delay_ms);
@@ -2344,244 +3552,313 @@ std::string platform_name()
 //                                                                  //
 // **************************************************************** //
 
-void pipeline_events_default::started()
+void pipeline_events_default::on_started(uint64_t seq)
 {
+    (void)seq;
     std::printf("pipeline: started\n");
 }
 
-void pipeline_events_default::stopped()
+void pipeline_events_default::on_stopped(uint64_t seq)
 {
+    (void)seq;
     std::printf("pipeline: stopped\n");
 }
 
-void pipeline_events_default::on_audio_stream_created(audio_entry& entry)
+void pipeline_events_default::on_log(uint64_t seq, logger_base& logger, uint64_t id)
 {
+    (void)seq;
+    (void)logger;
+    (void)id;
+}
+
+void pipeline_events_default::on_audio_stream_created(uint64_t seq, audio_entry& entry)
+{
+    (void)seq;
     std::printf("audio_stream: created '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_init_failed(const audio_stream_config& config, const std::string& reason)
+void pipeline_events_default::on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason)
 {
-    std::printf("audio_stream: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+    (void)seq;
+    std::printf("audio_stream: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_faulted(audio_entry& entry, const error_info& error)
+void pipeline_events_default::on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error)
 {
-    std::printf("audio_stream: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
+    (void)seq;
+    std::printf("audio_stream: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_recovery_started(audio_entry& entry)
+void pipeline_events_default::on_audio_stream_recovery_started(uint64_t seq, audio_entry& entry)
 {
+    (void)seq;
     std::printf("audio_stream: recovery started '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_recovery_attempt(audio_entry& entry, int attempt, int max_attempts)
+void pipeline_events_default::on_audio_stream_recovery_attempt(uint64_t seq, audio_entry& entry, int attempt, int max_attempts)
 {
+    (void)seq;
     std::printf("audio_stream: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_recovered(audio_entry& entry)
+void pipeline_events_default::on_audio_stream_recovered(uint64_t seq, audio_entry& entry)
 {
+    (void)seq;
     std::printf("audio_stream: recovered '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_audio_stream_recovery_failed(audio_entry& entry)
+void pipeline_events_default::on_audio_stream_recovery_failed(uint64_t seq, audio_entry& entry)
 {
+    (void)seq;
     std::printf("audio_stream: recovery failed '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_created(ptt_entry& entry)
+void pipeline_events_default::on_ptt_control_created(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: created '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_init_failed(const ptt_control_config& config, const std::string& reason)
+void pipeline_events_default::on_ptt_control_init_failed(uint64_t seq, const ptt_control_config& config, const std::string& reason)
 {
-    std::printf("ptt_control: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+    (void)seq;
+    std::printf("ptt_control: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_faulted(ptt_entry& entry, const error_info& error)
+void pipeline_events_default::on_ptt_control_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
 {
-    std::printf("ptt_control: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
+    (void)seq;
+    std::printf("ptt_control: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_recovery_started(ptt_entry& entry)
+void pipeline_events_default::on_ptt_control_recovery_started(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: recovery started '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts)
+void pipeline_events_default::on_ptt_control_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
 {
+    (void)seq;
     std::printf("ptt_control: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_recovered(ptt_entry& entry)
+void pipeline_events_default::on_ptt_control_recovered(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: recovered '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_control_recovery_failed(ptt_entry& entry)
+void pipeline_events_default::on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: recovery failed '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_activated(ptt_entry& entry)
+void pipeline_events_default::on_ptt_activated(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: activated '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_ptt_deactivated(ptt_entry& entry)
+void pipeline_events_default::on_ptt_deactivated(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("ptt_control: deactivated '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_serial_port_faulted(ptt_entry& entry, const error_info& error)
+void pipeline_events_default::on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
 {
-    std::printf("serial_port: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
+    (void)seq;
+    std::printf("serial_port: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
 }
 
-void pipeline_events_default::on_serial_port_recovery_started(ptt_entry& entry)
+void pipeline_events_default::on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("serial_port: recovery started '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_serial_port_recovery_attempt(ptt_entry& entry, int attempt, int max_attempts)
+void pipeline_events_default::on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
 {
+    (void)seq;
     std::printf("serial_port: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
 }
 
-void pipeline_events_default::on_serial_port_recovered(ptt_entry& entry)
+void pipeline_events_default::on_serial_port_recovered(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("serial_port: recovered '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_serial_port_recovery_failed(ptt_entry& entry)
+void pipeline_events_default::on_serial_port_recovery_failed(uint64_t seq, ptt_entry& entry)
 {
+    (void)seq;
     std::printf("serial_port: recovery failed '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_transport_created(data_stream_entry& entry)
+void pipeline_events_default::on_transport_created(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("transport: created '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_transport_init_failed(const data_stream_config& config, const std::string& reason)
+void pipeline_events_default::on_transport_init_failed(uint64_t seq, const data_stream_config& config, const std::string& reason)
 {
-    std::printf("transport: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+    (void)seq;
+    std::printf("transport: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
 }
 
-void pipeline_events_default::on_transport_faulted(data_stream_entry& entry, const error_info& error)
+void pipeline_events_default::on_transport_faulted(uint64_t seq, data_stream_entry& entry, const error_info& error)
 {
-    std::printf("transport: faulted '%s' - %s\n", entry.name.c_str(), error.message.c_str());
+    (void)seq;
+    std::printf("transport: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
 }
 
-void pipeline_events_default::on_transport_recovery_started(data_stream_entry& entry)
+void pipeline_events_default::on_transport_recovery_started(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("transport: recovery started '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_transport_recovery_attempt(data_stream_entry& entry, int attempt, int max_attempts)
+void pipeline_events_default::on_transport_recovery_attempt(uint64_t seq, data_stream_entry& entry, int attempt, int max_attempts)
 {
+    (void)seq;
     std::printf("transport: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
 }
 
-void pipeline_events_default::on_transport_recovered(data_stream_entry& entry)
+void pipeline_events_default::on_transport_recovered(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("transport: recovered '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_transport_recovery_failed(data_stream_entry& entry)
+void pipeline_events_default::on_transport_recovery_failed(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("transport: recovery failed '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_client_connected(data_stream_entry& entry, const tcp_client_connection& connection)
+void pipeline_events_default::on_client_connected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
 {
+    (void)seq;
     std::printf("transport: client connected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
-void pipeline_events_default::on_client_disconnected(data_stream_entry& entry, const tcp_client_connection& connection)
+void pipeline_events_default::on_client_disconnected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
 {
+    (void)seq;
     std::printf("transport: client disconnected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
-void pipeline_events_default::on_data_stream_created(data_stream_entry& entry)
+void pipeline_events_default::on_data_stream_created(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("data_stream: created '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_data_stream_started(data_stream_entry& entry)
+void pipeline_events_default::on_data_stream_started(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("data_stream: started '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_data_stream_stopped(data_stream_entry& entry)
+void pipeline_events_default::on_data_stream_stopped(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("data_stream: stopped '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_data_stream_enabled(data_stream_entry& entry)
+void pipeline_events_default::on_data_stream_enabled(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("data_stream: enabled '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_data_stream_disabled(data_stream_entry& entry)
+void pipeline_events_default::on_data_stream_disabled(uint64_t seq, data_stream_entry& entry)
 {
+    (void)seq;
     std::printf("data_stream: disabled '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_modem_created(modem_entry& entry)
+void pipeline_events_default::on_modem_created(uint64_t seq, modem_entry& entry)
 {
+    (void)seq;
     std::printf("modem: created '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_modem_initialized(modem_entry& entry)
+void pipeline_events_default::on_modem_initialized(uint64_t seq, modem_entry& entry)
 {
+    (void)seq;
     std::printf("modem: initialized '%s'\n", entry.name.c_str());
 }
 
-void pipeline_events_default::on_modem_init_failed(const modulator_config& config, const std::string& reason)
+void pipeline_events_default::on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason)
 {
-    std::printf("modem: init failed '%s' - %s\n", config.name.c_str(), reason.c_str());
+    (void)seq;
+    std::printf("modem: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
 }
 
-void pipeline_events_default::on_modem_transmit(const packet& p, uint64_t id)
+void pipeline_events_default::on_modem_transmit(uint64_t seq, const packet& p, uint64_t id)
 {
+    (void)seq;
     std::printf("modem: transmit id=%lu from='%s' to='%s'\n", (unsigned long)id, p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_modem_transmit(const std::vector<uint8_t>& bitstream, uint64_t id)
+void pipeline_events_default::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
 {
-    std::printf("modem: transmit id=%lu bitstream size=%zu\n", (unsigned long)id, bitstream.size());
+    (void)seq;
+    std::printf("modem: transmit id=%lu '%s' bitstream_size=%zu\n", (unsigned long)id, entry.name.c_str(), bitstream.size());
 }
 
-void pipeline_events_default::on_modem_render_audio(const std::vector<double>& audio, uint64_t sample_rate, uint64_t id)
+void pipeline_events_default::on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id)
 {
-    std::printf("modem: render_audio id=%lu samples=%zu sample_rate=%lu\n", (unsigned long)id, audio.size(), (unsigned long)sample_rate);
+    (void)seq;
+    std::printf("modem: before_start_render_audio id=%lu '%s'\n", (unsigned long)id, entry.name.c_str());
 }
 
-void pipeline_events_default::on_modem_ptt(bool state, uint64_t id)
+void pipeline_events_default::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& audio, uint64_t sample_rate, uint64_t id)
 {
+    (void)seq;
+    std::printf("modem: end_render_audio id=%lu '%s' samples=%zu sample_rate=%lu\n", (unsigned long)id, entry.name.c_str(), audio.size(), (unsigned long)sample_rate);
+}
+
+void pipeline_events_default::on_modem_ptt(uint64_t seq, bool state, uint64_t id)
+{
+    (void)seq;
     std::printf("modem: ptt id=%lu state=%s\n", (unsigned long)id, state ? "on" : "off");
 }
 
-void pipeline_events_default::on_volume_changed(audio_entry& entry, int previous_volume, int new_volume)
+void pipeline_events_default::on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id)
 {
-    std::printf("audio: volume changed '%s' %d -> %d\n", entry.name.c_str(), previous_volume, new_volume);
+    (void)seq;
+    std::printf("audio: volume_changed id=%lu '%s' %d -> %d\n", (unsigned long)id, entry.name.c_str(), previous_volume, new_volume);
 }
 
-void pipeline_events_default::on_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)
+void pipeline_events_default::on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
 {
-    std::printf("packet: received modem='%s' ds='%s' from='%s' to='%s'\n", modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    (void)modem_entry;
+    (void)ds_entry;
+    (void)p;
+    (void)id;
 }
 
-void pipeline_events_default::on_packet_transmit_started(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)
+void pipeline_events_default::on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
 {
-    std::printf("packet: transmit started modem='%s' ds='%s' from='%s' to='%s'\n", modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    (void)seq;
+    std::printf("packet: received id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_packet_transmit_completed(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p)
+void pipeline_events_default::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
 {
-    std::printf("packet: transmit completed modem='%s' ds='%s' from='%s' to='%s'\n", modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    (void)seq;
+    std::printf("packet: transmit_started id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+}
+
+void pipeline_events_default::on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+{
+    (void)seq;
+    std::printf("packet: transmit_completed id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
 LIBMODEM_NAMESPACE_END

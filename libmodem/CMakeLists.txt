@@ -146,8 +146,23 @@ if(NOT libcorrect_POPULATED)
   endif()
 endif()
 
+FetchContent_Declare(
+  ftxui
+  GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+  GIT_TAG        v5.0.0
+  GIT_SHALLOW    TRUE
+)
+
+# Configure for static linking and disable extras
+set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(ftxui)
+
 add_library(libmodem STATIC  "audio_stream.cpp" "modulator.cpp" "modem.cpp" "bitstream.cpp" "io.cpp" "kiss.cpp" "pipeline.cpp" "config.cpp" "data_stream.cpp")
-target_link_libraries(libmodem PRIVATE nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct)
+target_link_libraries(libmodem PRIVATE nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct ftxui::screen ftxui::dom ftxui::component)
 target_include_directories(libmodem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)
 set_target_properties(libmodem PROPERTIES PREFIX "")

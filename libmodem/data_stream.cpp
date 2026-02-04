@@ -433,7 +433,7 @@ bool data_stream::enabled()
 
 struct modem_data_stream_impl
 {
-    boost::circular_buffer<libmodem::packet> packets;
+    boost::circular_buffer<std::pair<libmodem::packet, uint64_t>> packets;
 };
 
 // **************************************************************** //
@@ -538,23 +538,15 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
-        /*{
-            std::unique_lock<std::mutex> lock(enabled_mutex_);
-            enabled_cv_.wait(lock, stop_token, [this]() { return enabled(); });
-            if (stop_token.stop_requested())
-            {
-                break;
-            }
-        }*/
-
         packet received_packet;
         if (try_receive(received_packet))
         {
-            impl_->packets.push_back(received_packet);
+            uint64_t id = next_packet_id_.fetch_add(1);
+            impl_->packets.push_back({ received_packet, id });
 
             if (on_packet_received_callable_)
             {
-                on_packet_received_callable_->invoke(received_packet);
+                on_packet_received_callable_->invoke(received_packet, id);
             }
         }
 
@@ -570,11 +562,14 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
             {
                 try
                 {
-                    packet p = impl_->packets.front();
+                    auto [p, id] = impl_->packets.front();
+
+                    current_transmit_id_ = id;
+                    m_->get().on_events(*this);
 
                     if (on_transmit_started_callable_)
                     {
-                        on_transmit_started_callable_->invoke(p);
+                        on_transmit_started_callable_->invoke(p, id);
                     }
 
                     m_->get().transmit(p);
@@ -584,11 +579,14 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
 
                     if (on_transmit_completed_callable_)
                     {
-                        on_transmit_completed_callable_->invoke(p);
+                        on_transmit_completed_callable_->invoke(p, id);
                     }
+
+                    current_transmit_id_ = 0;
                 }
                 catch (...)
                 {
+                    current_transmit_id_ = 0;
                     enabled(false);
                     break;
                 }
@@ -623,6 +621,79 @@ bool modem_data_stream::wait_stopped(int timeout_ms)
     {
         return stop_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this]() { return !running_.load(); });
     }
+}
+
+void modem_data_stream::transmit(const packet& p, uint64_t id)
+{
+    (void)id;
+
+    if (on_modem_transmit_packet_callable_)
+    {
+        on_modem_transmit_packet_callable_->invoke(p, current_transmit_id_);
+    }
+}
+
+void modem_data_stream::receive(const packet& p, uint64_t id)
+{
+    (void)p;
+    (void)id;
+}
+
+void modem_data_stream::transmit(const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    (void)id;
+
+    if (on_modem_transmit_bitstream_callable_)
+    {
+        on_modem_transmit_bitstream_callable_->invoke(bitstream, current_transmit_id_);
+    }
+}
+
+void modem_data_stream::receive(const std::vector<uint8_t>& bitstream, uint64_t id)
+{
+    (void)bitstream;
+    (void)id;
+}
+
+void modem_data_stream::ptt(bool state, uint64_t id)
+{
+    (void)id;
+
+    if (on_modem_ptt_callable_)
+    {
+        on_modem_ptt_callable_->invoke(state, current_transmit_id_);
+    }
+}
+
+void modem_data_stream::data_carrier_detected(uint64_t id)
+{
+    (void)id;
+}
+
+void modem_data_stream::before_start_render_audio(uint64_t id)
+{
+    (void)id;
+
+    if (on_modem_before_start_render_audio_callable_)
+    {
+        on_modem_before_start_render_audio_callable_->invoke(current_transmit_id_);
+    }
+}
+
+void modem_data_stream::end_render_audio(const std::vector<double>& samples, size_t count, uint64_t id)
+{
+    (void)id;
+
+    if (on_modem_end_render_audio_callable_)
+    {
+        on_modem_end_render_audio_callable_->invoke(samples, count, current_transmit_id_);
+    }
+}
+
+void modem_data_stream::capture_audio(const std::vector<double>& samples, uint64_t id)
+{
+    (void)samples;
+    (void)id;
 }
 
 LIBMODEM_NAMESPACE_END

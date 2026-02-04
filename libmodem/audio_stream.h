@@ -486,6 +486,7 @@ private:
     int sample_rate_ = 0;
     int channels_ = 0;
     std::atomic<bool> started_ = false;
+    std::atomic<bool> render_thread_exited_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
     std::jthread render_thread_;
     std::mutex buffer_mutex_;
@@ -568,6 +569,7 @@ private:
     std::mutex buffer_mutex_;
     std::condition_variable buffer_cv_;
     std::exception_ptr capture_exception_;
+    std::atomic<bool> capture_thread_exited_ = false;
     size_t discontinuity_count_ = 0;
     size_t ring_buffer_size_seconds_ = 5;
     std::mutex start_stop_mutex_;

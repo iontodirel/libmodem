@@ -160,6 +160,8 @@ modem_events& modem::on_events()
 
 void modem::transmit()
 {
+    std::lock_guard<std::mutex> lock(transmit_mutex_);
+
     std::vector<uint8_t> bitstream({ 0 });
 
     transmit(bitstream);
@@ -167,6 +169,8 @@ void modem::transmit()
 
 void modem::transmit(packet p)
 {
+    std::lock_guard<std::mutex> lock(transmit_mutex_);
+
     if (!conv.has_value())
     {
         throw std::runtime_error("No bitstream converter");
@@ -185,15 +189,13 @@ void modem::transmit(packet p)
 
     std::vector<uint8_t> bitstream = converter.encode(p, preamble_flags, postamble_flags);
 
-    uint64_t id = next_data_id++;
+    uint64_t id = tx_id_++;
 
-    // Fire packet transmit event
     if (events_.has_value())
     {
         events_.value().get().transmit(p, id);
     }
 
-    // Fire bitstream transmit event
     if (events_.has_value())
     {
         events_.value().get().transmit(bitstream, id);
@@ -204,7 +206,9 @@ void modem::transmit(packet p)
 
 void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator)
 {
-    uint64_t id = next_data_id++;
+    std::lock_guard<std::mutex> lock(transmit_mutex_);
+
+    uint64_t id = tx_id_++;
 
     if (events_.has_value())
     {
@@ -334,6 +338,11 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
 
     try
     {
+        if (events_.has_value())
+        {
+            events_.value().get().before_start_render_audio(id);
+        }
+
         // Start the playback
         audio_stream.start();
 
@@ -355,11 +364,6 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
             written += audio_stream.write(audio_buffer.data() + written, audio_buffer.size() - written);
         }
 
-        if (events_.has_value())
-        {
-            events_.value().get().render_audio(audio_buffer, written, id);
-        }
-
         // Actually wait for all samples to be played
         audio_stream.wait_write_completed();
     }
@@ -374,6 +378,11 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
 
     // Stop the playback
     audio_stream.stop();
+
+    if (events_.has_value())
+    {
+        events_.value().get().end_render_audio(audio_buffer, audio_buffer.size(), id);
+    }
 }
 
 void modem::start()

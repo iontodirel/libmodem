@@ -37,6 +37,7 @@
 #include <vector>
 #include <functional>
 #include <initializer_list>
+#include <mutex>
 
 #include "audio_stream.h"
 #include "modulator.h"
@@ -77,7 +78,8 @@ struct modem_events
     virtual void receive(const std::vector<uint8_t>& bitstream, uint64_t id) = 0;
     virtual void ptt(bool state, uint64_t id) = 0;
     virtual void data_carrier_detected(uint64_t id) = 0;
-    virtual void render_audio(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
+    virtual void before_start_render_audio(uint64_t id) = 0;
+    virtual void end_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
     virtual void capture_audio(const std::vector<double>& samples, uint64_t id) = 0;
 };
 
@@ -205,6 +207,7 @@ private:
     std::optional<std::reference_wrapper<bitstream_converter_base>> conv;
     std::optional<std::reference_wrapper<ptt_control_base>> ptt_control_;
     std::optional<std::reference_wrapper<modem_events>> events_;
+    std::mutex transmit_mutex_;
     int start_silence_duration_ms = 0;
     int end_silence_duration_ms = 0;
     bool preemphasis_enabled = false;
@@ -216,7 +219,7 @@ private:
     int postamble_flags = 1; // Number of HDLC flags after frame
     std::unordered_map<uint32_t, std::unique_ptr<received_callable_base>> received_callbacks_;
     uint32_t next_receiver_callback_cookie_ = 0;
-    uint64_t next_data_id = 0;
+    uint64_t tx_id_ = 0;
 };
 
 template<typename Func, typename... Args>

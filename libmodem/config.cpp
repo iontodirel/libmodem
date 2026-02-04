@@ -50,6 +50,8 @@ modulator_config_type parse_modulator_type(const std::string& type_str);
 bitstream_convertor_config_type parse_convertor_type(const std::string& type_str);
 data_stream_format_type parse_format_type(const std::string& type_str);
 data_stream_transport_type parse_transport_type(const std::string& type_str);
+logger_config parse_logger(const nlohmann::json& j);
+logger_type parse_logger_type(const std::string& type_str);
 
 config read_config(const std::string& filename)
 {
@@ -92,6 +94,14 @@ config read_config(const std::string& filename)
         for (const auto& ds : j["data_streams"])
         {
             c.data_streams.push_back(parse_data_stream(ds));
+        }
+    }
+
+    if (j.contains("loggers") && j["loggers"].is_array())
+    {
+        for (const auto& logger : j["loggers"])
+        {
+            c.loggers.push_back(parse_logger(logger));
         }
     }
 
@@ -145,7 +155,21 @@ modulator_config parse_modulator(const nlohmann::json& j)
 
     c.name = j.value("name", "");
     c.type = parse_modulator_type(j.value("type", ""));
-    c.converter = parse_convertor_type(j.value("convertor", ""));
+
+    // Handle both string and object formats for convertor
+    if (j.contains("convertor"))
+    {
+        const auto& conv = j["convertor"];
+        if (conv.is_string())
+        {
+            c.converter = parse_convertor_type(conv.get<std::string>());
+        }
+        else if (conv.is_object())
+        {
+            c.converter = parse_convertor_type(conv.value("type", ""));
+        }
+    }
+
     c.enabled = j.value("enabled", true);
     c.baud_rate = j.value("baud_rate", 1200);
     c.f_mark = j.value("mark_freq_hz", 1200.0);
@@ -178,6 +202,14 @@ modulator_config parse_modulator(const nlohmann::json& j)
         for (const auto& s : j["data_streams"])
         {
             c.data_streams.push_back(s.get<std::string>());
+        }
+    }
+
+    if (j.contains("loggers") && j["loggers"].is_array())
+    {
+        for (const auto& s : j["loggers"])
+        {
+            c.loggers.push_back(s.get<std::string>());
         }
     }
 
@@ -273,6 +305,30 @@ data_stream_transport_type parse_transport_type(const std::string& type_str)
     if (type_str == "serial") return data_stream_transport_type::serial;
 
     return data_stream_transport_type::unknown;
+}
+
+logger_type parse_logger_type(const std::string& type_str)
+{
+    if (type_str == "file") return logger_type::file;
+    if (type_str == "tcp") return logger_type::tcp;
+
+    return logger_type::unknown;
+}
+
+logger_config parse_logger(const nlohmann::json& j)
+{
+    logger_config c;
+
+    c.name = j.value("name", "");
+    c.format = j.value("format", "");
+    c.type = parse_logger_type(j.value("type", ""));
+    c.log_file = j.value("log_file", "");
+    c.max_file_size_bytes = j.value("max_file_size_bytes", 0);
+    c.max_files = j.value("max_files", 0);
+    c.bind_address = j.value("bind_address", "");
+    c.port = j.value("port", 0);
+
+    return c;
 }
 
 LIBMODEM_NAMESPACE_END

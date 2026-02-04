@@ -135,6 +135,26 @@ struct modulator_config
     std::vector<std::string> audio_output_streams;
     std::vector<std::string> ptt_controls;
     std::vector<std::string> data_streams;
+    std::vector<std::string> loggers;
+};
+
+enum class logger_type
+{
+    unknown,
+    file,
+    tcp
+};
+
+struct logger_config
+{
+    std::string name;
+    std::string format;
+    logger_type type = logger_type::unknown;
+    std::string log_file;
+    int max_file_size_bytes = 0;
+    int max_files = 0;
+    std::string bind_address;
+    int port = 0;
 };
 
 enum class data_stream_format_type
@@ -168,6 +188,7 @@ struct config
     std::vector<ptt_control_config> ptt_controls;
     std::vector<modulator_config> modulators;
     std::vector<data_stream_config> data_streams;
+    std::vector<logger_config> loggers;
 };
 
 config read_config(const std::string& filename);

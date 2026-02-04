@@ -1880,13 +1880,13 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
         if (timeout_ms < 0)
         {
             buffer_cv_.wait(lock, [&]() {
-                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr;
+                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr || render_thread_exited_;
             });
         }
         else
         {
             if (!buffer_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&]() {
-                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr;
+                return impl_->ring_buffer_.empty() || !started_ || render_exception_ != nullptr || render_thread_exited_;
             }))
             {
                 return false; // Timeout waiting for ring buffer
@@ -1898,6 +1898,11 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
             std::exception_ptr ex = render_exception_;
             render_exception_ = nullptr;
             std::rethrow_exception(ex);
+        }
+
+        if (render_thread_exited_ && !impl_->ring_buffer_.empty() && started_)
+        {
+            throw audio_stream_exception("Render thread exited unexpectedly with buffer containing " + std::to_string(impl_->ring_buffer_.size()) + " samples", audio_stream_error::internal_error);
         }
 
         if (!started_)
@@ -1982,6 +1987,10 @@ void wasapi_audio_output_stream::start()
 
     ensure_com_initialized();
 
+    // Clear any leftover signal from previous stop
+    // The event may still be signaled if the previous render thread exited via stop_token instead of consuming the event
+    ResetEvent(impl_->stop_render_event_);
+
     // Pre-fill endpoint buffer with silence to kick-start event-driven playback.
     // Some WASAPI drivers won't signal the audio_samples_ready_event until there's
     // data in the buffer. Without this, the render thread may block forever on
@@ -2017,6 +2026,7 @@ void wasapi_audio_output_stream::start()
     // After we start the render thread, we start the audio client to begin rendering audio
     // It's ok for the thread to start before the audio client, it will just block waiting for events
 
+    render_thread_exited_ = false;
     render_thread_ = std::jthread(std::bind(&wasapi_audio_output_stream::run, this, std::placeholders::_1));
 
     // The render thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
@@ -2167,6 +2177,9 @@ void wasapi_audio_output_stream::run(std::stop_token stop_token)
         render_exception_ = std::make_exception_ptr(audio_stream_exception("Unknown error", audio_stream_error::internal_error));
         buffer_cv_.notify_all();
     }
+
+    render_thread_exited_ = true;
+    buffer_cv_.notify_all();
 }
 
 void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
@@ -2696,14 +2709,20 @@ size_t wasapi_audio_input_stream::read_interleaved(double* samples, size_t count
 
     // Wait until we have enough data or stopped
     buffer_cv_.wait(lock, [&]() {
-        return !impl_->ring_buffer_.empty() || !started_ || capture_exception_ != nullptr;
-        });
+        return !impl_->ring_buffer_.empty() || !started_ || capture_exception_ != nullptr || capture_thread_exited_;
+    });
 
     if (capture_exception_)
     {
         std::exception_ptr ex = capture_exception_;
         capture_exception_ = nullptr;
         std::rethrow_exception(ex);
+    }
+
+    // If capture thread exited unexpectedly while we were waiting for data
+    if (capture_thread_exited_ && impl_->ring_buffer_.empty() && started_)
+    {
+        throw audio_stream_exception("Capture thread exited unexpectedly with buffer containing " + std::to_string(impl_->ring_buffer_.size()) + " samples", audio_stream_error::internal_error);
     }
 
     if (!started_ && impl_->ring_buffer_.empty())
@@ -2750,10 +2769,16 @@ void wasapi_audio_input_stream::start()
 
     ensure_com_initialized();
 
+    // Clear any leftover signal from a previous stop. The stop event may still be signaled
+    // if the previous capture thread exited via stop_token (loop condition) instead of
+    // consuming the event through WaitForMultipleObjects.
+    ResetEvent(impl_->stop_capture_event_);
+
     // Start the capture thread
     // The capture thread will read audio data from the WASAPI capture client and place it in a ring buffer
     // After we start the capture thread, we start the audio client to begin capturing audio
 
+    capture_thread_exited_ = false;
     capture_thread_ = std::jthread(std::bind(&wasapi_audio_input_stream::run, this, std::placeholders::_1));
 
     // The capture thread is now running, and awaiting for the WASAPI audio samples ready event to be signaled
@@ -2906,6 +2931,10 @@ void wasapi_audio_input_stream::run(std::stop_token stop_token)
         capture_exception_ = std::make_exception_ptr(audio_stream_exception("Unknown error", audio_stream_error::internal_error));
         buffer_cv_.notify_all();
     }
+
+    // Always notify waiters when thread exits, regardless of how it exits
+    capture_thread_exited_ = true;
+    buffer_cv_.notify_all();
 }
 
 void wasapi_audio_input_stream::run_internal(std::stop_token stop_token)

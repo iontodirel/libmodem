@@ -413,7 +413,7 @@ private:
 
 struct modem_data_stream_impl;
 
-class modem_data_stream : public data_stream
+class modem_data_stream : public data_stream, private modem_events
 {
 public:
     using data_stream::enabled;
@@ -434,25 +434,55 @@ public:
     virtual bool wait_stopped(int timeout_ms = -1) override;
 
     template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+        requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
     void add_on_packet_received(Func&& f, Args&&... args);
 
     template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+        requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
     void add_on_transmit_started(Func&& f, Args&&... args);
 
     template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+        requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
     void add_on_transmit_completed(Func&& f, Args&&... args);
+
+    template<typename Func, typename... Args>
+        requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
+    void add_on_modem_transmit_packet(Func&& f, Args&&... args);
+
+    template<typename Func, typename... Args>
+        requires std::invocable<std::decay_t<Func>, const std::vector<uint8_t>&, uint64_t, std::decay_t<Args>...>
+    void add_on_modem_transmit_bitstream(Func&& f, Args&&... args);
+
+    template<typename Func, typename... Args>
+        requires std::invocable<std::decay_t<Func>, bool, uint64_t, std::decay_t<Args>...>
+    void add_on_modem_ptt(Func&& f, Args&&... args);
+
+    template<typename Func, typename... Args>
+        requires std::invocable<std::decay_t<Func>, uint64_t, std::decay_t<Args>...>
+    void add_on_modem_before_start_render_audio(Func&& f, Args&&... args);
+
+    template<typename Func, typename... Args>
+        requires std::invocable<std::decay_t<Func>, const std::vector<double>&, size_t, uint64_t, std::decay_t<Args>...>
+    void add_on_modem_end_render_audio(Func&& f, Args&&... args);
 
     bool wait_transmit_idle(int timeout_ms = -1);
 
 private:
     void receive_callback(std::stop_token stop_token);
 
+    void transmit(const packet& p, uint64_t id);
+    void receive(const packet& p, uint64_t id) override;
+    void transmit(const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void receive(const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void ptt(bool state, uint64_t id) override;
+    void data_carrier_detected(uint64_t id) override;
+    void before_start_render_audio(uint64_t id) override;
+    void end_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) override;
+    void capture_audio(const std::vector<double>& samples, uint64_t id) override;
+
     struct packet_callable_base
     {
-        virtual void invoke(const packet& p) = 0;
+        virtual void invoke(const packet& p, uint64_t id) = 0;
         virtual ~packet_callable_base() = default;
     };
 
@@ -466,15 +496,131 @@ private:
         packet_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
         {
         }
-        void invoke(const packet& p) override
+        void invoke(const packet& p, uint64_t id) override
         {
             if constexpr (std::is_pointer_v<Func>)
             {
-                std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(p)), args_));
+                std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(p), id), args_));
             }
             else
             {
-                std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(p)), args_));
+                std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(p), id), args_));
+            }
+        }
+    };
+
+    struct bitstream_callable_base
+    {
+        virtual void invoke(const std::vector<uint8_t>& bitstream, uint64_t id) = 0;
+        virtual ~bitstream_callable_base() = default;
+    };
+
+    template<typename Func, typename... Args>
+    struct bitstream_callable : public bitstream_callable_base
+    {
+        Func func_;
+        std::tuple<Args...> args_;
+
+        template<typename F, typename... A>
+        bitstream_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+        {
+        }
+        void invoke(const std::vector<uint8_t>& bitstream, uint64_t id) override
+        {
+            if constexpr (std::is_pointer_v<Func>)
+            {
+                std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(bitstream), id), args_));
+            }
+            else
+            {
+                std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(bitstream), id), args_));
+            }
+        }
+    };
+
+    struct ptt_callable_base
+    {
+        virtual void invoke(bool state, uint64_t id) = 0;
+        virtual ~ptt_callable_base() = default;
+    };
+
+    template<typename Func, typename... Args>
+    struct ptt_callable : public ptt_callable_base
+    {
+        Func func_;
+        std::tuple<Args...> args_;
+
+        template<typename F, typename... A>
+        ptt_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+        {
+        }
+        void invoke(bool state, uint64_t id) override
+        {
+            if constexpr (std::is_pointer_v<Func>)
+            {
+                std::apply(*func_, std::tuple_cat(std::make_tuple(state, id), args_));
+            }
+            else
+            {
+                std::apply(func_, std::tuple_cat(std::make_tuple(state, id), args_));
+            }
+        }
+    };
+
+    struct before_start_render_audio_callable_base
+    {
+        virtual void invoke(uint64_t id) = 0;
+        virtual ~before_start_render_audio_callable_base() = default;
+    };
+
+    template<typename Func, typename... Args>
+    struct before_start_render_audio_callable : public before_start_render_audio_callable_base
+    {
+        Func func_;
+        std::tuple<Args...> args_;
+
+        template<typename F, typename... A>
+        before_start_render_audio_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+        {
+        }
+        void invoke(uint64_t id) override
+        {
+            if constexpr (std::is_pointer_v<Func>)
+            {
+                std::apply(*func_, std::tuple_cat(std::make_tuple(id), args_));
+            }
+            else
+            {
+                std::apply(func_, std::tuple_cat(std::make_tuple(id), args_));
+            }
+        }
+    };
+
+    struct end_render_audio_callable_base
+    {
+        virtual void invoke(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
+        virtual ~end_render_audio_callable_base() = default;
+    };
+
+    template<typename Func, typename... Args>
+    struct end_render_audio_callable : public end_render_audio_callable_base
+    {
+        Func func_;
+        std::tuple<Args...> args_;
+
+        template<typename F, typename... A>
+        end_render_audio_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
+        {
+        }
+        void invoke(const std::vector<double>& samples, size_t count, uint64_t id) override
+        {
+            if constexpr (std::is_pointer_v<Func>)
+            {
+                std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(samples), count, id), args_));
+            }
+            else
+            {
+                std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(samples), count, id), args_));
             }
         }
     };
@@ -490,14 +636,21 @@ private:
     std::unique_ptr<packet_callable_base> on_packet_received_callable_;
     std::unique_ptr<packet_callable_base> on_transmit_started_callable_;
     std::unique_ptr<packet_callable_base> on_transmit_completed_callable_;
+    std::unique_ptr<packet_callable_base> on_modem_transmit_packet_callable_;
+    std::unique_ptr<bitstream_callable_base> on_modem_transmit_bitstream_callable_;
+    std::unique_ptr<ptt_callable_base> on_modem_ptt_callable_;
+    std::unique_ptr<before_start_render_audio_callable_base> on_modem_before_start_render_audio_callable_;
+    std::unique_ptr<end_render_audio_callable_base> on_modem_end_render_audio_callable_;
     std::atomic<bool> transmitting_{ false };
     std::mutex transmit_mutex_;
     std::condition_variable transmit_cv_;
     std::unique_ptr<modem_data_stream_impl> impl_;
+    std::atomic<uint64_t> next_packet_id_{ 0 };
+    uint64_t current_transmit_id_{ 0 };
 };
 
 template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+    requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
 LIBMODEM_INLINE void modem_data_stream::add_on_packet_received(Func&& f, Args&&... args)
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
@@ -511,7 +664,7 @@ LIBMODEM_INLINE void modem_data_stream::add_on_packet_received(Func&& f, Args&&.
 }
 
 template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+    requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
 LIBMODEM_INLINE void modem_data_stream::add_on_transmit_started(Func&& f, Args&&... args)
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
@@ -525,7 +678,7 @@ LIBMODEM_INLINE void modem_data_stream::add_on_transmit_started(Func&& f, Args&&
 }
 
 template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, const packet&, std::decay_t<Args>...>
+    requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
 LIBMODEM_INLINE void modem_data_stream::add_on_transmit_completed(Func&& f, Args&&... args)
 {
     if constexpr (std::is_lvalue_reference_v<Func>)
@@ -535,6 +688,76 @@ LIBMODEM_INLINE void modem_data_stream::add_on_transmit_completed(Func&& f, Args
     else
     {
         on_transmit_completed_callable_ = std::make_unique<packet_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename... Args>
+    requires std::invocable<std::decay_t<Func>, const packet&, uint64_t, std::decay_t<Args>...>
+LIBMODEM_INLINE void modem_data_stream::add_on_modem_transmit_packet(Func&& f, Args&&... args)
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        on_modem_transmit_packet_callable_ = std::make_unique<packet_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        on_modem_transmit_packet_callable_ = std::make_unique<packet_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename... Args>
+    requires std::invocable<std::decay_t<Func>, const std::vector<uint8_t>&, uint64_t, std::decay_t<Args>...>
+LIBMODEM_INLINE void modem_data_stream::add_on_modem_transmit_bitstream(Func&& f, Args&&... args)
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        on_modem_transmit_bitstream_callable_ = std::make_unique<bitstream_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        on_modem_transmit_bitstream_callable_ = std::make_unique<bitstream_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename... Args>
+    requires std::invocable<std::decay_t<Func>, bool, uint64_t, std::decay_t<Args>...>
+LIBMODEM_INLINE void modem_data_stream::add_on_modem_ptt(Func&& f, Args&&... args)
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        on_modem_ptt_callable_ = std::make_unique<ptt_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        on_modem_ptt_callable_ = std::make_unique<ptt_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename... Args>
+    requires std::invocable<std::decay_t<Func>, uint64_t, std::decay_t<Args>...>
+LIBMODEM_INLINE void modem_data_stream::add_on_modem_before_start_render_audio(Func&& f, Args&&... args)
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        on_modem_before_start_render_audio_callable_ = std::make_unique<before_start_render_audio_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        on_modem_before_start_render_audio_callable_ = std::make_unique<before_start_render_audio_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
+    }
+}
+
+template<typename Func, typename... Args>
+    requires std::invocable<std::decay_t<Func>, const std::vector<double>&, size_t, uint64_t, std::decay_t<Args>...>
+LIBMODEM_INLINE void modem_data_stream::add_on_modem_end_render_audio(Func&& f, Args&&... args)
+{
+    if constexpr (std::is_lvalue_reference_v<Func>)
+    {
+        on_modem_end_render_audio_callable_ = std::make_unique<end_render_audio_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
+    }
+    else
+    {
+        on_modem_end_render_audio_callable_ = std::make_unique<end_render_audio_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
     }
 }
 
