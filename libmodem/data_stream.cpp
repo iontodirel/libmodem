@@ -696,4 +696,11 @@ void modem_data_stream::capture_audio(const std::vector<double>& samples, uint64
     (void)id;
 }
 
+void modem_data_stream::modulate(const std::vector<uint8_t>& bitstream, const std::vector<double>& audio_buffer, uint64_t id)
+{
+    (void)bitstream;
+    (void)audio_buffer;
+    (void)id;
+}
+
 LIBMODEM_NAMESPACE_END

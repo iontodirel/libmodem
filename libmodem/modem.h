@@ -81,6 +81,7 @@ struct modem_events
     virtual void before_start_render_audio(uint64_t id) = 0;
     virtual void end_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) = 0;
     virtual void capture_audio(const std::vector<double>& samples, uint64_t id) = 0;
+    virtual void modulate(const std::vector<uint8_t>& bitstream, const std::vector<double>& audio_buffer, uint64_t id) = 0;
 };
 
 // **************************************************************** //
@@ -158,6 +159,8 @@ struct modem
     double tx_tail() const;
     void baud_rate(int baud_rate);
     int baud_rate() const;
+    void ptt_timeout(int ms);
+    int ptt_timeout() const;
 
 private:
     struct received_callable_base
@@ -198,7 +201,7 @@ private:
 
     void postprocess_audio(std::vector<double>& audio_buffer);
     void render_audio(const std::vector<double>& audio_buffer, uint64_t id);
-    void modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator);
+    void modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator, uint64_t id);
     void ptt(bool enable, uint64_t id);
     void transmit(const std::vector<uint8_t>& bits, bool reset_modulator, uint64_t id);
 
@@ -220,6 +223,7 @@ private:
     std::unordered_map<uint32_t, std::unique_ptr<received_callable_base>> received_callbacks_;
     uint32_t next_receiver_callback_cookie_ = 0;
     uint64_t tx_id_ = 0;
+    int ptt_timeout_ms_ = 10000;
 };
 
 template<typename Func, typename... Args>

@@ -63,6 +63,8 @@ config read_config(const std::string& filename)
         return c;
     }
 
+    c.filename = filename;
+
     nlohmann::json j = nlohmann::json::parse(file, nullptr, true, true);
 
     if (j.contains("modulators") && j["modulators"].is_array())

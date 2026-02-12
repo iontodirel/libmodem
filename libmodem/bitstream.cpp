@@ -778,7 +778,7 @@ std::vector<uint8_t> encode_frame(const packet& p)
 
 std::vector<uint8_t> encode_frame(const struct frame& frame)
 {
-    return encode_frame(frame.from, frame.to, frame.path, frame.data.begin(), frame.data.end());
+    return encode_frame(frame.from, frame.to, frame.path, frame.data.begin(), frame.data.end(), frame.control, frame.pid);
 }
 
 std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, std::string_view data)

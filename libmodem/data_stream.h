@@ -479,6 +479,7 @@ private:
     void before_start_render_audio(uint64_t id) override;
     void end_render_audio(const std::vector<double>& samples, size_t count, uint64_t id) override;
     void capture_audio(const std::vector<double>& samples, uint64_t id) override;
+    void modulate(const std::vector<uint8_t>& bitstream, const std::vector<double>& audio_buffer, uint64_t id);
 
     struct packet_callable_base
     {

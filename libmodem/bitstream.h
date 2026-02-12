@@ -212,8 +212,8 @@ struct frame
     std::vector<address> path;
     std::vector<uint8_t> data;
     std::array<uint8_t, 2> crc = { 0, 0 };
-    uint8_t control = 0xFF;
-    uint8_t pid = 0;
+    uint8_t control = 0x03;
+    uint8_t pid = 0xF0;
 };
 
 packet to_packet(const struct frame& frame);
@@ -882,11 +882,20 @@ std::vector<uint8_t> encode_frame(const struct frame& frame);
 template <typename InputIt>
 std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last);
 
+template <typename InputIt>
+std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt input_it_first, InputIt input_it_last, uint8_t control, uint8_t pid);
+
 template <typename Container, typename InputIt, typename Traits = container_traits<Container>>
 Container encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt data_it_first, InputIt data_it_last);
 
+template <typename Container, typename InputIt, typename Traits = container_traits<Container>>
+Container encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt data_it_first, InputIt data_it_last, uint8_t control, uint8_t pid);
+
 template <typename PathInputIt, typename DataInputIt, typename BidirIt>
 BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out);
+
+template <typename PathInputIt, typename DataInputIt, typename BidirIt>
+BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out, uint8_t control, uint8_t pid);
 
 template <typename BidirIt>
 BidirIt encode_frame(const packet& p, BidirIt out);
@@ -1090,18 +1099,33 @@ LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const add
     return encode_frame<std::vector<uint8_t>>(from, to, path, data_it_first, data_it_last);
 }
 
+template <typename InputIt>
+LIBMODEM_INLINE std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt data_it_first, InputIt data_it_last, uint8_t control, uint8_t pid)
+{
+    return encode_frame<std::vector<uint8_t>>(from, to, path, data_it_first, data_it_last, control, pid);
+}
+
 template <typename Container, typename InputIt, typename Traits>
 LIBMODEM_INLINE Container encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt data_it_first, InputIt data_it_last)
 {
     static constexpr uint8_t ui_frame = 0x03;
     static constexpr uint8_t pid_no_layer3 = 0xF0;
+    return encode_frame<Container, InputIt, Traits>(from, to, path, data_it_first, data_it_last, ui_frame, pid_no_layer3);
+}
 
+template <typename Container, typename InputIt, typename Traits>
+LIBMODEM_INLINE Container encode_frame(const address& from, const address& to, const std::vector<address>& path, InputIt data_it_first, InputIt data_it_last, uint8_t control, uint8_t pid)
+{
     // Encodes an AX.25 frame
     //
     //  - Build header (from, to, path)
-    //  - Add control and PID fields, typically 0x03 0xF0
-    //  - Append payload
+    //  - Add control field, and PID field if applicable
+    //  - Append payload if applicable
     //  - Compute 16 bits CRC and append at the end
+    //
+    // PID and info field are present for:
+    //  - I-frames: (control & 0x01) == 0
+    //  - UI frames: (control & 0xEF) == 0x03 (UI with P/F bit masked out)
 
     Container frame;
 
@@ -1109,12 +1133,19 @@ LIBMODEM_INLINE Container encode_frame(const address& from, const address& to, c
     std::vector<uint8_t> header = encode_header(from, to, path);
     std::copy(header.begin(), header.end(), traits_back_insert_iterator<Container, Traits>(frame));
 
-    // Control and PID
-    Traits::push_back(frame, static_cast<uint8_t>(ui_frame));      // Control: UI frame, 0x03
-    Traits::push_back(frame, static_cast<uint8_t>(pid_no_layer3)); // PID: No layer 3 protocol, 0xF0
+    // Control field (always present)
+    Traits::push_back(frame, control);
 
-    // Append payload
-    std::copy(data_it_first, data_it_last, traits_back_insert_iterator<Container, Traits>(frame));
+    // If I or UI frame, add PID and payload
+    bool is_i_or_ui_frame = ((control & 0x01) == 0) || ((control & 0xEF) == 0x03);
+    if (is_i_or_ui_frame)
+    {
+        // PID field
+        Traits::push_back(frame, pid);
+
+        // Append payload
+        std::copy(data_it_first, data_it_last, traits_back_insert_iterator<Container, Traits>(frame));
+    }
 
     // Compute 16 bits CRC
     // Append CRC at the end of the frame
@@ -1129,12 +1160,17 @@ LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, Pat
 {
     static constexpr uint8_t ui_frame = 0x03;
     static constexpr uint8_t pid_no_layer3 = 0xF0;
+    return encode_frame(from, to, path_first_it, path_last_it, data_it_first, data_it_last, out, ui_frame, pid_no_layer3);
+}
 
+template <typename PathInputIt, typename DataInputIt, typename BidirIt>
+LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, PathInputIt path_first_it, PathInputIt path_last_it, DataInputIt data_it_first, DataInputIt data_it_last, BidirIt out, uint8_t control, uint8_t pid)
+{
     // Encodes an AX.25 frame
     //
     //  - Build header (from, to, path)
-    //  - Add control and PID fields, 0x03 0xF0
-    //  - Append payload
+    //  - Add control field, and PID field if applicable
+    //  - Append payload if applicable
     //  - Compute 16 bits CRC and append at the end
 
     BidirIt frame_start = out;
@@ -1143,12 +1179,18 @@ LIBMODEM_INLINE BidirIt encode_frame(const address& from, const address& to, Pat
     // Encoding header
     out = encode_header(from, to, path_first_it, path_last_it, out);
 
-    // Control: UI frame, PID: No layer 3 protocol
-    std::array<uint8_t, 2> control_pid = { static_cast<uint8_t>(ui_frame), static_cast<uint8_t>(pid_no_layer3) };
-    out = std::copy(control_pid.begin(), control_pid.end(), out);
+    // Control field (always present)
+    *out++ = control;
 
-    // Append payload
-    out = std::copy(data_it_first, data_it_last, out);
+    bool is_i_or_ui_frame = ((control & 0x01) == 0) || ((control & 0xEF) == 0x03);
+    if (is_i_or_ui_frame)
+    {
+        // PID field
+        *out++ = pid;
+
+        // Append payload
+        out = std::copy(data_it_first, data_it_last, out);
+    }
 
     frame_end = out;
 

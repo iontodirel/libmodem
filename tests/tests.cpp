@@ -93,6 +93,10 @@
 #define STRINGIFY0(x) #x
 #define STRINGIFY(x) STRINGIFY0(x)
 
+#ifndef LIBMODEM_FILTER_TEST
+//#define LIBMODEM_FILTER_TEST bitstream.encode_end_to_end_demo
+#endif // LIBMODEM_FILTER_TEST
+
 using namespace LIBMODEM_NAMESPACE;
 
 // **************************************************************** //

@@ -189,6 +189,7 @@ struct config
     std::vector<modulator_config> modulators;
     std::vector<data_stream_config> data_streams;
     std::vector<logger_config> loggers;
+    std::string filename;
 };
 
 config read_config(const std::string& filename);

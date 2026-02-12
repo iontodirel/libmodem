@@ -4851,11 +4851,36 @@ wav_audio_input_stream::operator bool()
 //                                                                  //
 // **************************************************************** //
 
-wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, int sample_rate) : sample_rate_(sample_rate), filename_(filename)
+wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, int sample_rate, wav_file_mode mode) : sample_rate_(sample_rate), filename_(filename)
 {
     impl_ = std::make_unique<wav_audio_impl>();
 
     SF_INFO sfinfo = {};
+
+    if (mode == wav_file_mode::append)
+    {
+        // Try to open existing file for read/write (append)
+        impl_->sf_file_ = sf_open(filename.c_str(), SFM_RDWR, &sfinfo);
+        if (impl_->sf_file_ != nullptr)
+        {
+            if (sfinfo.samplerate != sample_rate)
+            {
+                sf_close(impl_->sf_file_);
+                impl_->sf_file_ = nullptr;
+                throw audio_stream_exception("Sample rate mismatch: existing file has '" + std::to_string(sfinfo.samplerate) + "' but requested '" + std::to_string(sample_rate) + "'", audio_stream_error::invalid_argument);
+            }
+            if (sfinfo.channels != channels_)
+            {
+                sf_close(impl_->sf_file_);
+                impl_->sf_file_ = nullptr;
+                throw audio_stream_exception("Channel count mismatch: existing file has '" + std::to_string(sfinfo.channels) + "' but expected '" + std::to_string(channels_) + "'", audio_stream_error::invalid_argument);
+            }
+            sf_seek(impl_->sf_file_, 0, SEEK_END);
+            return;
+        }
+
+        // File doesn't exist yet, fall through to create new file
+    }
 
     // Set format for writing
     sfinfo.samplerate = sample_rate;
@@ -4864,7 +4889,7 @@ wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, in
     sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
 
     impl_->sf_file_ = sf_open(filename.c_str(), SFM_WRITE, &sfinfo);
-    if (!impl_->sf_file_)
+    if (impl_->sf_file_ == nullptr)
     {
         throw audio_stream_exception(std::string("Failed to open WAV file: ") + sf_strerror(nullptr), audio_stream_error::device_open_failed);
     }

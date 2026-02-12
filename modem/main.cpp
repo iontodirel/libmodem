@@ -73,11 +73,11 @@ int main(int argc, char* argv[])
 
     config c = read_config(config_file);
 
-    pipeline_events_rich rich_events;
+    pipeline_events_rich events;
 
     pipeline p(c);
 
-    p.on_events(rich_events);
+    p.on_events(events);
 
     p.init();
 

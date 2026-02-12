@@ -70,6 +70,7 @@ class ptt_control_no_throw;
 class transport_no_throw;
 class serial_port_no_throw;
 class logger_base;
+class pipeline;
 
 // **************************************************************** //
 //                                                                  //
@@ -324,7 +325,9 @@ struct logger_entry
 struct pipeline_events
 {
     virtual ~pipeline_events() = default;
-    virtual void on_started(uint64_t seq) = 0;
+    virtual void on_config_load(uint64_t seq, const std::string& config_file) = 0;
+    virtual void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) = 0;
+    virtual void on_started(uint64_t seq, pipeline& p) = 0;
     virtual void on_stopped(uint64_t seq) = 0;
     virtual void on_log(uint64_t seq, logger_base& logger, uint64_t id) = 0;
     virtual void on_audio_stream_created(uint64_t seq, audio_entry& entry) = 0;
@@ -375,6 +378,9 @@ struct pipeline_events
     virtual void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
     virtual void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
     virtual void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
+    virtual void on_audio_devices_enumeration_started(uint64_t seq) = 0;
+    virtual void on_audio_device_detected(uint64_t seq, audio_device& device) = 0;
+    virtual void on_audio_devices_enumeration_completed(uint64_t seq) = 0;
 };
 
 // **************************************************************** //
@@ -387,7 +393,9 @@ struct pipeline_events
 
 struct pipeline_events_default : public pipeline_events
 {
-    void on_started(uint64_t seq) override;
+    void on_config_load(uint64_t seq, const std::string& config_file) override;
+    void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
+    void on_started(uint64_t seq, pipeline& p) override;
     void on_stopped(uint64_t seq) override;
     void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
     void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
@@ -438,6 +446,9 @@ struct pipeline_events_default : public pipeline_events
     void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
+    void on_audio_devices_enumeration_started(uint64_t seq) override;
+    void on_audio_device_detected(uint64_t seq, audio_device& device) override;
+    void on_audio_devices_enumeration_completed(uint64_t seq) override;
 };
 
 // **************************************************************** //
@@ -451,7 +462,9 @@ struct pipeline_events_default : public pipeline_events
 class pipeline_events_rich : public pipeline_events
 {
 public:
-    void on_started(uint64_t seq) override;
+    void on_config_load(uint64_t seq, const std::string& config_file) override;
+    void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
+    void on_started(uint64_t seq, pipeline& p) override;
     void on_stopped(uint64_t seq) override;
     void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
     void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
@@ -502,6 +515,9 @@ public:
     void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
+    void on_audio_devices_enumeration_started(uint64_t seq) override;
+    void on_audio_device_detected(uint64_t seq, audio_device& device) override;
+    void on_audio_devices_enumeration_completed(uint64_t seq) override;
 };
 
 // **************************************************************** //
@@ -548,12 +564,14 @@ public:
         return "";
     }
 
-    void events(logger_events& e)
+    void on_events(logger_events& e)
     {
         events_ = e;
     }
 
-    virtual void on_started(uint64_t seq) override;
+    virtual void on_config_load(uint64_t seq, const std::string& config_file) override;
+    virtual void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
+    virtual void on_started(uint64_t seq, pipeline& p) override;
     virtual void on_stopped(uint64_t seq) override;
     virtual void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
     virtual void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
@@ -604,6 +622,9 @@ public:
     virtual void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     virtual void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     virtual void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
+    virtual void on_audio_devices_enumeration_started(uint64_t seq) override;
+    virtual void on_audio_device_detected(uint64_t seq, audio_device& device) override;
+    virtual void on_audio_devices_enumeration_completed(uint64_t seq) override;
 
 protected:
     void notify_logged(uint64_t id);
@@ -687,6 +708,7 @@ public:
     void start();
     void stop();
     void wait_stopped();
+    void update();
 
     void on_events(pipeline_events& e);
     pipeline_events& on_events();
@@ -795,6 +817,7 @@ private:
     std::vector<std::unique_ptr<ptt_entry>> ptt_controls_;
     std::vector<std::unique_ptr<modem_entry>> modems_;
     std::vector<std::unique_ptr<data_stream_entry>> data_streams_;
+    std::vector<std::unique_ptr<audio_device>> audio_devices_;
 
     std::set<std::string> used_audio_names_;
     std::set<std::pair<std::string, audio_device_type>> used_audio_devices_;

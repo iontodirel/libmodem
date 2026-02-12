@@ -813,6 +813,20 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// wav_file_mode                                                    //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class wav_file_mode
+{
+    create,
+    append
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // wav_audio_output_stream                                          //
 //                                                                  //
 //                                                                  //
@@ -823,7 +837,7 @@ struct wav_audio_impl;
 struct wav_audio_output_stream : audio_stream_base
 {
 public:
-    wav_audio_output_stream(const std::string& filename, int sample_rate = 48000);
+    wav_audio_output_stream(const std::string& filename, int sample_rate = 48000, wav_file_mode mode = wav_file_mode::create);
     wav_audio_output_stream(const wav_audio_output_stream&) = delete;
     wav_audio_output_stream& operator=(const wav_audio_output_stream&) = delete;
     wav_audio_output_stream(wav_audio_output_stream&&) noexcept;

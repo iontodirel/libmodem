@@ -81,7 +81,7 @@ FetchContent_MakeAvailable(sndfile)
 FetchContent_Declare(
   libcorrect
   GIT_REPOSITORY https://github.com/quiet/libcorrect.git
-  GIT_TAG        f5a28c7
+  GIT_TAG        ee82e6673a806dfdf0a969b975ab36596ecc5401
   GIT_SHALLOW    TRUE
 )
 

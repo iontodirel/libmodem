@@ -39,6 +39,10 @@
 #include <thread>
 #include <algorithm>
 
+#include <boost/asio.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/post.hpp>
+
 // Turns out opening the port can assert the RTS line to on
 // If this macro is defined, we will call ptt(false) in the ctor of serial_port_ptt_control
 #ifndef LIBMODEM_AUTO_PTT_DISABLE
@@ -46,6 +50,129 @@
 #endif // LIBMODEM_AUTO_PTT_DISABLE
 
 LIBMODEM_NAMESPACE_BEGIN
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// timer                                                            //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class timer
+{
+public:
+    timer() = delete;
+    timer(const timer&) = delete;
+    timer& operator=(const timer&) = delete;
+    timer(timer&&) = delete;
+    timer& operator=(timer&&) = delete;
+
+    template <typename Callable>
+    explicit timer(Callable&& callback);
+
+    ~timer();
+
+    void start(std::chrono::milliseconds timeout);
+    void cancel();
+    bool running() const;
+
+private:
+    struct callback_base
+    {
+        virtual ~callback_base() = default;
+        virtual void invoke() = 0;
+    };
+
+    template <typename Callable>
+    struct callback_model : callback_base
+    {
+        explicit callback_model(Callable&& cb);
+        void invoke() override;
+        Callable callable_;
+    };
+
+    std::unique_ptr<callback_base> callback_;
+    boost::asio::io_context io_context_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard_;
+    boost::asio::steady_timer timer_;
+    std::atomic<bool> running_;
+    std::jthread thread_;
+};
+
+template <typename Callable>
+timer::callback_model<Callable>::callback_model(Callable&& callback) : callable_(std::forward<Callable>(callback))
+{
+}
+
+template <typename Callable>
+void timer::callback_model<Callable>::invoke()
+{
+    callable_();
+}
+
+template <typename Callable>
+timer::timer(Callable&& callback) : callback_(std::make_unique<callback_model<std::decay_t<Callable>>>(std::forward<Callable>(callback))), work_guard_(boost::asio::make_work_guard(io_context_)), timer_(io_context_), running_(false)
+{
+    thread_ = std::jthread([this](std::stop_token stoken) {
+        while (!stoken.stop_requested())
+        {
+            try
+            {
+                io_context_.run();
+
+                if (!stoken.stop_requested())
+                {
+                    io_context_.restart();
+                }
+            }
+            catch (...)
+            {
+                if (!stoken.stop_requested())
+                {
+                    io_context_.restart();
+                }
+            }
+        }
+    });
+}
+
+timer::~timer()
+{
+    timer_.cancel();
+    work_guard_.reset();
+    thread_.request_stop();
+}
+
+void timer::start(std::chrono::milliseconds timeout)
+{
+    boost::asio::post(io_context_, [this, timeout]() {
+        timer_.cancel();
+        timer_.expires_after(timeout);
+        running_.store(true, std::memory_order_release);
+
+        timer_.async_wait([this](const boost::system::error_code& ec) {
+            if (!ec && running_.load(std::memory_order_acquire))
+            {
+                callback_->invoke();
+            }
+            running_.store(false, std::memory_order_release);
+        });
+    });
+}
+
+void timer::cancel()
+{
+    running_.store(false, std::memory_order_release);
+    boost::asio::post(io_context_, [this]() {
+        timer_.cancel();
+    });
+}
+
+bool timer::running() const
+{
+    return running_.load(std::memory_order_acquire);
+}
 
 // **************************************************************** //
 //                                                                  //
@@ -234,7 +361,7 @@ void modem::transmit(const std::vector<uint8_t>& bits, bool reset_modulator, uin
 
     std::vector<double> audio_buffer;
 
-    modulate_bitstream(bits, audio_buffer, reset_modulator);
+    modulate_bitstream(bits, audio_buffer, reset_modulator, id);
 
     // Apply pre-emphasis filter and gain
 
@@ -281,7 +408,7 @@ void modem::postprocess_audio(std::vector<double>& audio_buffer)
     audio_buffer = std::move(audio_buffer_with_start_silence);
 }
 
-void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator)
+void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vector<double>& audio_buffer, bool reset_modulator, uint64_t id)
 {
     if (!mod.has_value())
     {
@@ -305,6 +432,11 @@ void modem::modulate_bitstream(const std::vector<uint8_t>& bitstream, std::vecto
         {
             audio_buffer.push_back(modulator.modulate_double(bit));
         }
+    }
+
+    if (events_.has_value())
+    {
+        events_.value().get().modulate(bitstream, audio_buffer, id);
     }
 
     if (reset_modulator)
@@ -336,6 +468,21 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
 
     struct audio_stream_base& audio_stream = audio.value().get();
 
+    std::atomic<bool> ptt_timed_out{ false };
+
+    timer ptt_timeout_timer([this, id, &ptt_timed_out]() {
+        // This runs on the timer's jthread – force PTT off immediately.
+        ptt_timed_out.store(true, std::memory_order_release);
+
+        try
+        {
+            ptt(false, id);
+        }
+        catch (...)
+        {
+        }
+    });
+
     try
     {
         if (events_.has_value())
@@ -347,6 +494,11 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
         audio_stream.start();
 
         ptt(true, id);
+
+        if (ptt_timeout_ms_ > 0)
+        {
+            ptt_timeout_timer.start(std::chrono::milliseconds(ptt_timeout_ms_));
+        }
 
         // Write audio samples to output device
         // The stream will automatically handle buffering, the stream typically has a 200ms buffer
@@ -361,11 +513,19 @@ void modem::render_audio(const std::vector<double>& audio_buffer, uint64_t id)
                 throw std::runtime_error("Audio stream became invalid");
             }
 
+            // If the PTT timeout timer already fired, bail out.
+            if (ptt_timed_out.load(std::memory_order_acquire))
+            {
+                throw std::runtime_error("PTT timeout expired during audio write");
+            }
+
             written += audio_stream.write(audio_buffer.data() + written, audio_buffer.size() - written);
         }
 
         // Actually wait for all samples to be played
         audio_stream.wait_write_completed();
+
+        ptt_timeout_timer.cancel();
     }
     catch (...)
     {
@@ -492,6 +652,17 @@ void modem::baud_rate(int b)
 int modem::baud_rate() const
 {
     return baud_rate_;
+}
+
+void modem::ptt_timeout(int ms)
+{
+    if (ms < 0) ms = 0;
+    ptt_timeout_ms_ = ms;
+}
+
+int modem::ptt_timeout() const
+{
+    return ptt_timeout_ms_;
 }
 
 // **************************************************************** //
