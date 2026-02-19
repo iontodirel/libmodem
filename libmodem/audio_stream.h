@@ -59,6 +59,12 @@
 #ifndef LIBMODEM_NAMESPACE_END
 #define LIBMODEM_NAMESPACE_END }
 #endif
+#ifndef LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN
+#define LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN namespace {
+#endif
+#ifndef LIBMODEM_ANONYMOUS_NAMESPACE_END
+#define LIBMODEM_ANONYMOUS_NAMESPACE_END }
+#endif
 
 LIBMODEM_NAMESPACE_BEGIN
 
@@ -191,6 +197,32 @@ struct audio_stream_base
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// audio_stream_control_base                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct audio_stream_control_base
+{
+    virtual std::string id() const = 0;
+    virtual std::string name() const = 0;
+    virtual int index() const = 0;
+
+    virtual void volume(int percent) = 0;
+    virtual int volume() = 0;
+
+    virtual void mute(bool mute) = 0;
+    virtual bool mute() = 0;
+
+    virtual int channel() const = 0;
+
+    virtual bool can_mute() = 0;
+    virtual bool can_set_volume() = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // audio_stream                                                     //
 //                                                                  //
 //                                                                  //
@@ -239,6 +271,52 @@ public:
 
 private:
     std::unique_ptr<audio_stream_base> stream_;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_control                                             //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+class audio_stream_control : public audio_stream_control_base
+{
+public:
+    audio_stream_control(std::nullptr_t);
+    explicit audio_stream_control(std::unique_ptr<audio_stream_control_base> s);
+    audio_stream_control(const audio_stream_control&) = delete;
+    audio_stream_control& operator=(const audio_stream_control&) = delete;
+    audio_stream_control(audio_stream_control&&) = default;
+    audio_stream_control& operator=(audio_stream_control&&) = default;
+    virtual ~audio_stream_control();
+
+    void close() noexcept;
+
+    std::string id() const override;
+    std::string name() const override;
+    int index() const override;
+
+    void volume(int percent) override;
+    int volume() override;
+
+    void mute(bool mute) override;
+    bool mute() override;
+
+    int channel() const override;
+
+    bool can_mute() override;
+    bool can_set_volume() override;
+
+    virtual audio_stream_control_base& get();
+
+    std::unique_ptr<audio_stream_control_base> release();
+
+    explicit operator bool();
+
+private:
+    std::unique_ptr<audio_stream_control_base> stream_control_;
 };
 
 // **************************************************************** //
@@ -423,6 +501,49 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// wasapi_audio_stream_control                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct wasapi_audio_stream_control_impl;
+
+class wasapi_audio_stream_control : public audio_stream_control_base
+{
+public:
+    wasapi_audio_stream_control(audio_device_impl* device, const std::string& name, int index, int channel, audio_stream_type type);
+    wasapi_audio_stream_control(const wasapi_audio_stream_control&) = delete;
+    wasapi_audio_stream_control& operator=(const wasapi_audio_stream_control&) = delete;
+    wasapi_audio_stream_control(wasapi_audio_stream_control&&) noexcept;
+    wasapi_audio_stream_control& operator=(wasapi_audio_stream_control&&) noexcept;
+    ~wasapi_audio_stream_control();
+
+    std::string id() const override;
+    std::string name() const override;
+    int index() const override;
+
+    void volume(int percent) override;
+    int volume() override;
+
+    void mute(bool mute) override;
+    bool mute() override;
+
+    int channel() const override;
+
+    bool can_mute() override;
+    bool can_set_volume() override;
+
+private:
+    std::unique_ptr<wasapi_audio_stream_control_impl> impl_;
+    std::string name_;
+    int index_ = 0;
+    int channel_ = 0;
+    audio_stream_type type_ = audio_stream_type::output;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // wasapi_audio_output_stream                                       //
 //                                                                  //
 //                                                                  //
@@ -477,6 +598,8 @@ public:
     void flush();
 
     explicit operator bool() override;
+
+    std::vector<audio_stream_control> controls();
 
 private:
     void run(std::stop_token stop_token);
@@ -556,6 +679,8 @@ public:
 
     explicit operator bool() override;
 
+    std::vector<audio_stream_control> controls();
+
 private:
     void run(std::stop_token stop_token);
     void run_internal(std::stop_token stop_token);
@@ -587,25 +712,25 @@ private:
 
 #if __linux__
 
-class alsa_audio_stream_control
+class alsa_audio_stream_control : public audio_stream_control_base
 {
 public:
     alsa_audio_stream_control(int card_id, const std::string& name, int index, int channel, audio_stream_type type);
 
-    std::string id() const;
-    std::string name() const;
-    int index() const;
+    std::string id() const override;
+    std::string name() const override;
+    int index() const override;
 
-    void volume(int percent);
-    int volume();
+    void volume(int percent) override;
+    int volume() override;
 
-    void mute(bool mute);
-    bool mute();
+    void mute(bool mute) override;
+    bool mute() override;
 
-    int channel() const;
+    int channel() const override;
 
-    bool can_mute();
-    bool can_set_volume();
+    bool can_mute() override;
+    bool can_set_volume() override;
 
 private:
     int card_id_ = -1;
@@ -670,7 +795,7 @@ public:
 
     explicit operator bool() override;
 
-    std::vector<alsa_audio_stream_control> controls();
+    std::vector<audio_stream_control> controls();
 
     int card_id = -1;
     int device_id = -1;
@@ -739,7 +864,7 @@ public:
 
     explicit operator bool() override;
 
-    std::vector<alsa_audio_stream_control> controls();
+    std::vector<audio_stream_control> controls();
 
     int card_id = -1;
     int device_id = -1;

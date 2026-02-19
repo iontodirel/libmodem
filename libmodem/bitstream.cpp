@@ -429,6 +429,31 @@ packet to_packet(const struct frame& frame)
     return p;
 }
 
+frame to_frame(const packet& p)
+{
+    static constexpr uint8_t ui_frame = 0x03;
+    static constexpr uint8_t pid_no_layer3 = 0xF0;
+
+    frame f;
+
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, f.from);
+    LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, f.to);
+
+    for (const auto& path_address_string : p.path)
+    {
+        address path_address;
+        LIBMODEM_NAMESPACE_REFERENCE try_parse_address(path_address_string, path_address);
+        f.path.push_back(path_address);
+    }
+
+    f.data = std::vector<uint8_t>(p.data.begin(), p.data.end());
+
+    f.control = ui_frame;
+    f.pid = pid_no_layer3;
+
+    return f;
+}
+
 LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
@@ -474,6 +499,13 @@ LIBMODEM_AX25_NAMESPACE_END
 //                                                                  //
 // **************************************************************** //
 
+std::vector<uint8_t> ax25_bitstream_converter::encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    return encode_bitstream(f, preamble_flags, postamble_flags);
+}
+
 std::vector<uint8_t> ax25_bitstream_converter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
 LIBMODEM_AX25_USING_NAMESPACE
@@ -507,6 +539,13 @@ void ax25_bitstream_converter::reset()
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+std::vector<uint8_t> fx25_bitstream_converter::encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    return encode_bitstream(f, preamble_flags, postamble_flags);
+}
 
 std::vector<uint8_t> fx25_bitstream_converter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
@@ -551,6 +590,11 @@ bitstream_converter_base::~bitstream_converter_base()
 //                                                                  //
 // **************************************************************** //
 
+std::vector<uint8_t> ax25_bitstream_converter_adapter::encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const
+{
+    return converter.encode(f, preamble_flags, postamble_flags);
+}
+
 std::vector<uint8_t> ax25_bitstream_converter_adapter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {
     return converter.encode(p, preamble_flags, postamble_flags);
@@ -578,6 +622,11 @@ void ax25_bitstream_converter_adapter::reset()
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const
+{
+    return converter.encode(f, preamble_flags, postamble_flags);
+}
 
 std::vector<uint8_t> fx25_bitstream_converter_adapter::encode(const packet& p, int preamble_flags, int postamble_flags) const
 {

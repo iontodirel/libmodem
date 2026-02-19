@@ -50,3 +50,5 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libmodem ${CMAKE_BINARY_DIR}/lib
 add_executable(modem "main.cpp")
 target_link_libraries(modem PRIVATE libmodem cxxopts)
 set_property(TARGET modem PROPERTY CXX_STANDARD 20)
+
+configure_file(${CMAKE_SOURCE_DIR}/settings.json ${CMAKE_BINARY_DIR}/config.json COPYONLY)

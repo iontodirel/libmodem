@@ -33,6 +33,7 @@
 #include <audio_stream.h>
 #include <modem.h>
 #include <modulator.h>
+#include <device_description.h>
 #include <kiss.h>
 #include <config.h>
 #include <pipeline.h>
@@ -5487,6 +5488,80 @@ TEST(audio_stream, wasapi_audio_input_stream)
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
         mute = !mute;
     }
+
+    // NOTE: Some mono microphone streams only have a volume control but the Win32 API still reports two
+
+    std::vector<audio_stream_control> controls = wasapi_stream.controls();
+
+    EXPECT_TRUE(!controls.empty());
+
+    bool can_mute = false;
+    bool can_set_volume = false;
+
+    for (auto& control : controls)
+    {
+        EXPECT_TRUE(!control.id().empty());
+
+        if (control.can_mute())
+        {
+            can_mute = true;
+        }
+
+        if (control.can_set_volume())
+        {
+            can_set_volume = true;
+        }
+    }
+
+    EXPECT_TRUE(can_mute);
+    EXPECT_TRUE(can_set_volume);
+
+    if (controls.size() >= 2)
+    {
+        controls[0].volume(50);
+        controls[1].volume(10);
+        EXPECT_EQ(controls[0].volume(), 50);
+        EXPECT_EQ(controls[1].volume(), 10);
+
+        controls[1].volume(50);
+        controls[0].volume(10);
+        EXPECT_EQ(controls[1].volume(), 50);
+        EXPECT_EQ(controls[0].volume(), 10);
+    }
+
+    for (auto& control : controls)
+    {
+        std::vector<std::pair<int, int>> other_volumes;
+        for (auto& other : controls)
+        {
+            if (&other != &control)
+            {
+                other_volumes.emplace_back(other.channel(), other.volume());
+            }
+        }
+
+        for (int volume = 0; volume <= 100; volume += 20)
+        {
+            control.volume(volume);
+            int current_volume = control.volume();
+            EXPECT_EQ(current_volume, volume);
+
+            for (auto& [ch, saved_volume] : other_volumes)
+            {
+                auto it = std::find_if(controls.begin(), controls.end(), [ch](const audio_stream_control& c) { return c.channel() == ch; });
+                EXPECT_EQ(it->volume(), saved_volume);
+            }
+        }
+    }
+
+    wasapi_stream.volume(30);
+
+    for (auto& control : controls)
+    {
+        control.volume(30);
+        int current_volume = control.volume();
+        EXPECT_EQ(current_volume, 30);
+    }
 }
 
 TEST(audio_stream, wasapi_audio_output_stream)
@@ -5522,6 +5597,78 @@ TEST(audio_stream, wasapi_audio_output_stream)
         // If we don't have add a small delay
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
         mute = !mute;
+    }
+
+    std::vector<audio_stream_control> controls = wasapi_stream.controls();
+
+    EXPECT_TRUE(!controls.empty());
+
+    bool can_mute = false;
+    bool can_set_volume = false;
+
+    for (auto& control : controls)
+    {
+        EXPECT_TRUE(!control.id().empty());
+
+        if (control.can_mute())
+        {
+            can_mute = true;
+        }
+
+        if (control.can_set_volume())
+        {
+            can_set_volume = true;
+        }
+    }
+
+    EXPECT_TRUE(can_mute);
+    EXPECT_TRUE(can_set_volume);
+
+    if (controls.size() >= 2)
+    {
+        controls[0].volume(50);
+        controls[1].volume(10);
+        EXPECT_EQ(controls[0].volume(), 50);
+        EXPECT_EQ(controls[1].volume(), 10);
+
+        controls[1].volume(50);
+        controls[0].volume(10);
+        EXPECT_EQ(controls[1].volume(), 50);
+        EXPECT_EQ(controls[0].volume(), 10);
+    }
+
+    for (auto& control : controls)
+    {
+        std::vector<std::pair<int, int>> other_volumes;
+        for (auto& other : controls)
+        {
+            if (&other != &control)
+            {
+                other_volumes.emplace_back(other.channel(), other.volume());
+            }
+        }
+
+        for (int volume = 0; volume <= 100; volume += 20)
+        {
+            control.volume(volume);
+            int current_volume = control.volume();
+            EXPECT_EQ(current_volume, volume);
+
+            for (auto& [ch, saved_volume] : other_volumes)
+            {
+                auto it = std::find_if(controls.begin(), controls.end(), [ch](const audio_stream_control& c) { return c.channel() == ch; });
+                EXPECT_EQ(it->volume(), saved_volume);
+            }
+        }
+    }
+
+    wasapi_stream.volume(30);
+
+    for (auto& control : controls)
+    {
+        control.volume(30);
+        int current_volume = control.volume();
+        EXPECT_EQ(current_volume, 30);
     }
 }
 
@@ -5564,7 +5711,7 @@ TEST(audio_stream, alsa_audio_output_stream)
         mute = !mute;
     }
 
-    std::vector<alsa_audio_stream_control> controls = alsa_stream.controls();
+    std::vector<audio_stream_control> controls = alsa_stream.controls();
 
     EXPECT_TRUE(!controls.empty());
 
@@ -5590,13 +5737,13 @@ TEST(audio_stream, alsa_audio_output_stream)
     EXPECT_TRUE(can_mute);
     EXPECT_TRUE(can_set_volume);
 
-    auto it = std::find_if(controls.begin(), controls.end(), [](const alsa_audio_stream_control& control) {
+    auto it = std::find_if(controls.begin(), controls.end(), [](const audio_stream_control& control) {
         return control.name() == "Master";
     });
 
     EXPECT_TRUE(it != controls.end());
 
-    alsa_audio_stream_control& master_control = *it;
+    audio_stream_control& master_control = *it;
 
     if (master_control.can_set_volume())
     {
@@ -5644,7 +5791,7 @@ TEST(audio_stream, alsa_audio_input_stream)
         mute = !mute;
     }
 
-    std::vector<alsa_audio_stream_control> controls = alsa_stream.controls();
+    std::vector<audio_stream_control> controls = alsa_stream.controls();
 
     EXPECT_TRUE(!controls.empty());
 
@@ -5670,13 +5817,13 @@ TEST(audio_stream, alsa_audio_input_stream)
     EXPECT_TRUE(can_mute);
     EXPECT_TRUE(can_set_volume);
 
-    auto it = std::find_if(controls.begin(), controls.end(), [](const alsa_audio_stream_control& control) {
+    auto it = std::find_if(controls.begin(), controls.end(), [](const audio_stream_control& control) {
         return control.name() == "Capture";
-        });
+    });
 
     EXPECT_TRUE(it != controls.end());
 
-    alsa_audio_stream_control& master_control = *it;
+    audio_stream_control& master_control = *it;
 
     if (master_control.can_set_volume())
     {
@@ -6328,7 +6475,7 @@ TEST(data_stream, modem_data_stream_with_hardware_audio)
 
     data_stream.transport(transport);
     data_stream.formatter(formatter);
-    data_stream.modem(m);
+    data_stream.add_modem(m);
     transport.start();
 
     data_stream.start();
@@ -6362,7 +6509,8 @@ TEST(data_stream, modem_data_stream_with_wav_output)
 
     data_stream.transport(transport);
     data_stream.formatter(formatter);
-    data_stream.modem(m);
+    data_stream.add_modem(m);
+
     transport.start();
 
     data_stream.start();

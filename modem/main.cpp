@@ -31,6 +31,7 @@
 
 #include <config.h>
 #include <pipeline.h>
+#include <tui.h>
 
 #include <filesystem>
 #include <cstdio>
@@ -43,6 +44,8 @@ struct args
 {
     std::string config;
     bool help = false;
+    bool quiet = false;
+    bool plain = false;
 };
 
 bool try_parse_args(int argc, char* argv[], args& args);
@@ -99,6 +102,8 @@ bool try_parse_args(int argc, char* argv[], args& args)
 
     options.add_options()
         ("c,config", "Path to configuration file", cxxopts::value<std::string>())
+        ("q,quiet", "Suppress all output")
+        ("plain", "Use plain text output")
         ("h,help", "Print usage");
 
     cxxopts::ParseResult result;
@@ -122,6 +127,16 @@ bool try_parse_args(int argc, char* argv[], args& args)
     if (result.count("config"))
     {
         args.config = result["config"].as<std::string>();
+    }
+
+    if (result.count("quiet"))
+    {
+        args.quiet = true;
+    }
+
+    if (result.count("plain"))
+    {
+        args.plain = true;
     }
 
     return true;

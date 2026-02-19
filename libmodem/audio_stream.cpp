@@ -95,6 +95,8 @@ LIBMODEM_NAMESPACE_BEGIN
 
 #ifdef __linux__
 
+LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN
+
 audio_stream_error alsa_error_to_error(int err)
 {
     switch (err)
@@ -130,6 +132,8 @@ void throw_alsa_error(int err, const std::string& function_name)
     throw audio_stream_exception(function_name + ": " + snd_strerror(err), error);
 }
 
+LIBMODEM_ANONYMOUS_NAMESPACE_END
+
 #endif // __linux__
 
 // **************************************************************** //
@@ -142,24 +146,26 @@ void throw_alsa_error(int err, const std::string& function_name)
 
 #if WIN32
 
-std::string utf16_to_utf8(const wchar_t* s)
+LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN
+
+std::string utf16_to_utf8(const wchar_t* wstring)
 {
-    if (s == nullptr || s[0] == '\0')
+    if (wstring == nullptr || wstring[0] == '\0')
     {
         return "";
     }
 
-    int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstring, -1, nullptr, 0, nullptr, nullptr);
     if (len <= 0)
     {
         return "";
     }
 
-    std::string r(len - 1, '\0');
+    std::string string(len - 1, '\0');
 
-    WideCharToMultiByte(CP_UTF8, 0, s, -1, r.data(), len, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, wstring, -1, string.data(), len, nullptr, nullptr);
 
-    return r;
+    return string;
 }
 
 std::string get_string_property(IPropertyStore* props, const PROPERTYKEY& key)
@@ -282,6 +288,8 @@ void throw_hresult_error(HRESULT hr, const char* message)
     throw audio_stream_exception(message, error);
 }
 
+LIBMODEM_ANONYMOUS_NAMESPACE_END
+
 #endif
 
 // **************************************************************** //
@@ -291,6 +299,8 @@ void throw_hresult_error(HRESULT hr, const char* message)
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN
 
 void thread_name(const std::string& name)
 {
@@ -304,6 +314,8 @@ void thread_name(const std::string& name)
     pthread_setname_np(name.c_str());
 #endif // defined(_WIN32)
 }
+
+LIBMODEM_ANONYMOUS_NAMESPACE_END
 
 // **************************************************************** //
 //                                                                  //
@@ -619,6 +631,141 @@ std::unique_ptr<audio_stream_base> audio_stream::release()
 audio_stream::operator bool()
 {
     return stream_ != nullptr && stream_.operator bool();
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_control                                             //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+audio_stream_control::audio_stream_control(std::nullptr_t)
+{
+}
+
+audio_stream_control::audio_stream_control(std::unique_ptr<audio_stream_control_base> s) : stream_control_(std::move(s))
+{
+}
+
+audio_stream_control::~audio_stream_control()
+{
+    stream_control_.reset();
+}
+
+void audio_stream_control::close() noexcept
+{
+    stream_control_.reset();
+}
+
+std::string audio_stream_control::id() const
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->id();
+}
+
+std::string audio_stream_control::name() const
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->name();
+}
+
+int audio_stream_control::index() const
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->index();
+}
+
+void audio_stream_control::volume(int percent)
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    stream_control_->volume(percent);
+}
+
+int audio_stream_control::volume()
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->volume();
+}
+
+void audio_stream_control::mute(bool mute)
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    stream_control_->mute(mute);
+}
+
+bool audio_stream_control::mute()
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->mute();
+}
+
+int audio_stream_control::channel() const
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->channel();
+}
+
+bool audio_stream_control::can_mute()
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->can_mute();
+}
+
+bool audio_stream_control::can_set_volume()
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return stream_control_->can_set_volume();
+}
+
+audio_stream_control_base& audio_stream_control::get()
+{
+    if (!stream_control_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+    return *stream_control_;
+}
+
+std::unique_ptr<audio_stream_control_base> audio_stream_control::release()
+{
+    return std::move(stream_control_);
+}
+
+audio_stream_control::operator bool()
+{
+    return stream_control_ != nullptr;
 }
 
 // **************************************************************** //
@@ -1108,6 +1255,7 @@ std::vector<audio_device> get_audio_devices()
 
         audio_device_impl dev_impl;
         dev_impl.device_ = dev.p;
+
         audio_device device(&dev_impl);
 
         devices.emplace_back(std::move(device));
@@ -1407,6 +1555,175 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type)
 
     return false;
 }
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wasapi_audio_stream_control_impl                                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if WIN32
+
+struct wasapi_audio_stream_control_impl
+{
+    CComPtr<IMMDevice> device_;
+    CComPtr<IAudioEndpointVolume> endpoint_volume_;
+};
+
+#endif // WIN32
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wasapi_audio_stream_control                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+#if WIN32
+
+wasapi_audio_stream_control::wasapi_audio_stream_control(audio_device_impl* device, const std::string& name, int index, int channel, audio_stream_type type) : impl_(std::make_unique<wasapi_audio_stream_control_impl>()), name_(name), index_(index), channel_(channel), type_(type)
+{
+    if (!device || !device->device_)
+    {
+        throw audio_stream_exception("Device not initialized", audio_stream_error::not_initialized);
+    }
+
+    ensure_com_initialized();
+
+    impl_->device_ = device->device_;
+
+    HRESULT hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&impl_->endpoint_volume_);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to activate IAudioEndpointVolume");
+    }
+}
+
+wasapi_audio_stream_control::wasapi_audio_stream_control(wasapi_audio_stream_control&&) noexcept = default;
+wasapi_audio_stream_control& wasapi_audio_stream_control::operator=(wasapi_audio_stream_control&&) noexcept = default;
+wasapi_audio_stream_control::~wasapi_audio_stream_control() = default;
+
+std::string wasapi_audio_stream_control::id() const
+{
+    return name_ + ":" + std::to_string(channel_);
+}
+
+std::string wasapi_audio_stream_control::name() const
+{
+    return name_;
+}
+
+int wasapi_audio_stream_control::index() const
+{
+    return index_;
+}
+
+void wasapi_audio_stream_control::volume(int percent)
+{
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+
+    ensure_com_initialized();
+
+    percent = std::clamp(percent, 0, 100);
+
+    float volume_scalar = percent / 100.0f;
+
+    HRESULT hr = impl_->endpoint_volume_->SetChannelVolumeLevelScalar(static_cast<UINT>(channel_), volume_scalar, nullptr);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to set channel volume");
+    }
+}
+
+int wasapi_audio_stream_control::volume()
+{
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+
+    ensure_com_initialized();
+
+    float volume_scalar;
+    HRESULT hr = impl_->endpoint_volume_->GetChannelVolumeLevelScalar(static_cast<UINT>(channel_), &volume_scalar);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to get channel volume");
+    }
+
+    return static_cast<int>(volume_scalar * 100.0f + 0.5f);
+}
+
+void wasapi_audio_stream_control::mute(bool mute)
+{
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+
+    ensure_com_initialized();
+
+    BOOL mute_state = mute ? TRUE : FALSE;
+    HRESULT hr = impl_->endpoint_volume_->SetMute(mute_state, nullptr);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to set mute state");
+    }
+}
+
+bool wasapi_audio_stream_control::mute()
+{
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        throw audio_stream_exception("Stream control not initialized", audio_stream_error::not_initialized);
+    }
+
+    ensure_com_initialized();
+
+    BOOL muted;
+    HRESULT hr = impl_->endpoint_volume_->GetMute(&muted);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to get mute state");
+    }
+
+    return muted == TRUE;
+}
+
+int wasapi_audio_stream_control::channel() const
+{
+    return channel_;
+}
+
+bool wasapi_audio_stream_control::can_mute()
+{
+    return true;
+}
+
+bool wasapi_audio_stream_control::can_set_volume()
+{
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        return false;
+    }
+
+    UINT channel_count = 0;
+    HRESULT hr = impl_->endpoint_volume_->GetChannelCount(&channel_count);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    return static_cast<UINT>(channel_) < channel_count;
+}
+
+#endif // WIN32
 
 // **************************************************************** //
 //                                                                  //
@@ -2146,6 +2463,35 @@ wasapi_audio_output_stream::operator bool()
     UINT32 padding = 0;
     HRESULT hr = impl_->audio_client_->GetCurrentPadding(&padding);
     return SUCCEEDED(hr);
+}
+
+std::vector<audio_stream_control> wasapi_audio_output_stream::controls()
+{
+    std::vector<audio_stream_control> controls;
+
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        return controls;
+    }
+
+    ensure_com_initialized();
+
+    UINT channel_count = 0;
+    HRESULT hr = impl_->endpoint_volume_->GetChannelCount(&channel_count);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to get channel count");
+    }
+
+    audio_device_impl dev_impl;
+    dev_impl.device_ = impl_->device_;
+
+    for (UINT channel = 0; channel < channel_count; channel++)
+    {
+        controls.emplace_back(std::make_unique<wasapi_audio_stream_control>(&dev_impl, "", 0, static_cast<int>(channel), audio_stream_type::output));
+    }
+
+    return controls;
 }
 
 void wasapi_audio_output_stream::run(std::stop_token stop_token)
@@ -2900,6 +3246,35 @@ wasapi_audio_input_stream::operator bool()
     UINT32 padding = 0;
     HRESULT hr = impl_->audio_client_->GetCurrentPadding(&padding);
     return SUCCEEDED(hr);
+}
+
+std::vector<audio_stream_control> wasapi_audio_input_stream::controls()
+{
+    std::vector<audio_stream_control> controls;
+
+    if (!impl_ || !impl_->endpoint_volume_)
+    {
+        return controls;
+    }
+
+    ensure_com_initialized();
+
+    UINT channel_count = 0;
+    HRESULT hr = impl_->endpoint_volume_->GetChannelCount(&channel_count);
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to get channel count");
+    }
+
+    audio_device_impl dev_impl;
+    dev_impl.device_ = impl_->device_;
+
+    for (UINT channel = 0; channel < channel_count; channel++)
+    {
+        controls.emplace_back(std::make_unique<wasapi_audio_stream_control>(&dev_impl, "", 0, static_cast<int>(channel), audio_stream_type::input));
+    }
+
+    return controls;
 }
 
 void wasapi_audio_input_stream::run(std::stop_token stop_token)
@@ -4061,9 +4436,9 @@ alsa_audio_output_stream::operator bool()
     return state != SND_PCM_STATE_DISCONNECTED;
 }
 
-std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
+std::vector<audio_stream_control> alsa_audio_output_stream::controls()
 {
-    std::vector<alsa_audio_stream_control> controls;
+    std::vector<audio_stream_control> controls;
 
     if (card_id < 0)
     {
@@ -4114,7 +4489,7 @@ std::vector<alsa_audio_stream_control> alsa_audio_output_stream::controls()
             {
                 if (snd_mixer_selem_has_playback_channel(elem, static_cast<snd_mixer_selem_channel_id_t>(channel)))
                 {
-                    controls.emplace_back(card_id, name, index, channel, audio_stream_type::output);
+                    controls.emplace_back(std::make_unique<alsa_audio_stream_control>(card_id, name, index, channel, audio_stream_type::output));
                 }
             }
         }
@@ -4533,9 +4908,9 @@ alsa_audio_input_stream::operator bool()
     return state != SND_PCM_STATE_DISCONNECTED;
 }
 
-std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
+std::vector<audio_stream_control> alsa_audio_input_stream::controls()
 {
-    std::vector<alsa_audio_stream_control> controls;
+    std::vector<audio_stream_control> controls;
 
     if (card_id < 0)
     {
@@ -4586,7 +4961,7 @@ std::vector<alsa_audio_stream_control> alsa_audio_input_stream::controls()
             {
                 if (snd_mixer_selem_has_capture_channel(elem, static_cast<snd_mixer_selem_channel_id_t>(channel)))
                 {
-                    controls.emplace_back(card_id, name, index, channel, audio_stream_type::input);
+                    controls.emplace_back(std::make_unique<alsa_audio_stream_control>(card_id, name, index, channel, audio_stream_type::input));
                 }
             }
         }

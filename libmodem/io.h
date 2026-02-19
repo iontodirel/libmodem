@@ -167,6 +167,16 @@ enum class flow_control
     hardware
 };
 
+struct serial_port_info
+{
+    std::string port_name;
+    unsigned int baud_rate = 9600;
+    unsigned int data_bits = 8;
+    parity parity = parity::none;
+    stop_bits stop_bits = stop_bits::one;
+    flow_control flow_control = flow_control::none;
+};
+
 struct serial_port_impl;
 
 class serial_port : public serial_port_base
@@ -185,6 +195,8 @@ public:
         parity parity = parity::none,
         stop_bits stop_bits = stop_bits::one,
         flow_control flow_control = flow_control::none);
+
+    bool open(const serial_port_info& info);
 
     void close();
 

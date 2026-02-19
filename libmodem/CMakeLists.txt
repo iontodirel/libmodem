@@ -33,13 +33,6 @@ cmake_minimum_required (VERSION 3.28)
 
 project ("libmodem" LANGUAGES C CXX)
 
-if(MSVC)
-  cmake_policy(SET CMP0091 NEW)
-  # Static for Release, Dynamic for Debug (faster iteration)
-  #set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-  #set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Release>:>$<$<CONFIG:Debug>:DebugDLL>")
-endif()
-
 include(FetchContent)
 
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
@@ -161,7 +154,7 @@ set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(ftxui)
 
-add_library(libmodem STATIC  "audio_stream.cpp" "modulator.cpp" "modem.cpp" "bitstream.cpp" "io.cpp" "kiss.cpp" "pipeline.cpp" "config.cpp" "data_stream.cpp")
+add_library(libmodem STATIC  "audio_stream.cpp" "modulator.cpp" "modem.cpp" "bitstream.cpp" "io.cpp" "kiss.cpp" "pipeline.cpp" "config.cpp" "data_stream.cpp" "device_description.cpp" "tui.cpp")
 target_link_libraries(libmodem PRIVATE nlohmann_json::nlohmann_json Boost::asio Boost::thread Boost::beast Boost::process Boost::circular_buffer Boost::interprocess fmt::fmt sndfile correct ftxui::screen ftxui::dom ftxui::component)
 target_include_directories(libmodem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)
@@ -169,7 +162,7 @@ set_target_properties(libmodem PROPERTIES PREFIX "")
 
 if(UNIX AND NOT APPLE)
   find_package(ALSA REQUIRED)
-  target_link_libraries(libmodem PRIVATE asound ALSA::ALSA)
+  target_link_libraries(libmodem PRIVATE asound ALSA::ALSA udev)
 endif()
 
 if(APPLE)

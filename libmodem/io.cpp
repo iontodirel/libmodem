@@ -306,6 +306,11 @@ bool serial_port::open(const std::string& port_name, unsigned int baud_rate, uns
     }
 }
 
+bool serial_port::open(const serial_port_info& info)
+{
+    return open(info.port_name, info.baud_rate, info.data_bits, info.parity, info.stop_bits, info.flow_control);
+}
+
 void serial_port::close()
 {
     if (is_open_ && impl_)

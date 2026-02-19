@@ -217,6 +217,7 @@ struct frame
 };
 
 packet to_packet(const struct frame& frame);
+frame to_frame(const packet& p);
 
 LIBMODEM_AX25_NAMESPACE_END
 
@@ -277,6 +278,7 @@ LIBMODEM_AX25_NAMESPACE_END
 
 struct ax25_bitstream_converter
 {
+    std::vector<uint8_t> encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const;
     std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const;
     bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read);
     bool try_decode(uint8_t bit, packet& p);
@@ -296,6 +298,7 @@ private:
 
 struct fx25_bitstream_converter
 {
+    std::vector<uint8_t> encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const;
     std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const;
     bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read);
     void reset();
@@ -311,6 +314,7 @@ struct fx25_bitstream_converter
 
 struct bitstream_converter_base
 {
+    virtual std::vector<uint8_t> encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const = 0;
     virtual std::vector<uint8_t> encode(const packet& p, int preamble_flags, int postamble_flags) const = 0;
     virtual bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) = 0;
     virtual bool try_decode(uint8_t bit, packet& p) = 0;
@@ -328,6 +332,7 @@ struct bitstream_converter_base
 
 struct ax25_bitstream_converter_adapter : public bitstream_converter_base
 {
+    std::vector<uint8_t> encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const override;
     std::vector<uint8_t> encode(const packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
     bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) override;
     bool try_decode(uint8_t bit, packet& p) override;
@@ -347,6 +352,7 @@ private:
 
 struct fx25_bitstream_converter_adapter : public bitstream_converter_base
 {
+    std::vector<uint8_t> encode(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags) const override;
     std::vector<uint8_t> encode(const packet& p, int preamble_flags = 45, int postamble_flags = 5) const override;
     bool try_decode(const std::vector<uint8_t>& bitstream, size_t offset, packet& p, size_t& read) override;
     bool try_decode(uint8_t bit, packet& p) override;
