@@ -61,6 +61,22 @@
       }
     },
     {
+      "name": "x64-debug-static",
+      "displayName": "x64 Debug (Static CRT)",
+      "inherits": "x64-debug",
+      "cacheVariables": {
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebug"
+      }
+    },
+    {
+      "name": "x64-release-static",
+      "displayName": "x64 Release (Static CRT)",
+      "inherits": "x64-release",
+      "cacheVariables": {
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
+    },
+    {
       "name": "linux-debug",
       "displayName": "Linux Debug",
       "generator": "Ninja",

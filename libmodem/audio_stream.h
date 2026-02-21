@@ -147,6 +147,21 @@ std::string to_string(audio_stream_type type);
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// sample_format                                                    //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+enum class audio_stream_sample_format
+{
+    float32,
+    int32,
+    int16
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // audio_stream_base                                                //
 //                                                                  //
 //                                                                  //
@@ -272,6 +287,20 @@ public:
 private:
     std::unique_ptr<audio_stream_base> stream_;
 };
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_exclusive_mode_tag                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct audio_stream_exclusive_mode_tag
+{
+};
+
+static constexpr audio_stream_exclusive_mode_tag audio_stream_exclusive_mode{};
 
 // **************************************************************** //
 //                                                                  //
@@ -419,6 +448,11 @@ struct audio_device
     virtual ~audio_device();
 
     audio_stream stream();
+    audio_stream stream(audio_stream_exclusive_mode_tag);
+
+    audio_device_impl* implementation();
+
+    operator bool();
 
     std::string id;
     std::string name;
@@ -561,6 +595,9 @@ public:
 
     wasapi_audio_output_stream();
     wasapi_audio_output_stream(audio_device_impl* impl);
+    wasapi_audio_output_stream(audio_device_impl* impl, audio_stream_exclusive_mode_tag, int sample_rate = 48000, int channels = 2, int buffer_period_ms = 10);
+    wasapi_audio_output_stream(audio_device& device);
+    wasapi_audio_output_stream(audio_device& device, audio_stream_exclusive_mode_tag, int sample_rate = 48000, int channels = 2, int buffer_period_ms = 10);
     wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream(wasapi_audio_output_stream&&) noexcept;
@@ -608,6 +645,9 @@ private:
     int buffer_size_ = 0;
     int sample_rate_ = 0;
     int channels_ = 0;
+    bool exclusive_mode_ = false;
+    int exclusive_buffer_period_ms_ = 10;
+    int64_t stream_latency_100ns_ = 0;
     std::atomic<bool> started_ = false;
     std::atomic<bool> render_thread_exited_ = false;
     std::unique_ptr<wasapi_audio_output_stream_impl> impl_;
@@ -618,6 +658,7 @@ private:
     size_t ring_buffer_size_seconds_ = 5;
     std::atomic<uint64_t> total_frames_written_ = 0;
     std::mutex start_stop_mutex_;
+    audio_stream_sample_format sample_format_ = audio_stream_sample_format::float32;
 };
 
 #endif // WIN32

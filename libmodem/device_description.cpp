@@ -306,6 +306,12 @@ device_description get_device_description(DEVINST device)
     return desc;
 }
 
+bool try_find_audio_device(const std::string& id, DEVINST& result)
+{
+    std::wstring device_pnp_id = L"SWD\\MMDEVAPI\\" + utf8_to_utf16(id);
+    return CM_Locate_DevNodeW(&result, const_cast<DEVINSTID_W>(device_pnp_id.c_str()), CM_LOCATE_DEVNODE_NORMAL) == CR_SUCCESS;
+}
+
 bool try_find_serial_port_device(const std::string& port_name, DEVINST& result)
 {
     HDEVINFO serial_port_devices = SetupDiGetClassDevsA(&GUID_DEVINTERFACE_COMPORT, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -509,10 +515,9 @@ device_description get_device_description(audio_device& audio_device)
     device_description desc;
 
 #if WIN32
-    std::wstring device_pnp_id = L"SWD\\MMDEVAPI\\" + utf8_to_utf16(audio_device.id);
 
     DEVINST device = 0;
-    if (CM_Locate_DevNodeW(&device, const_cast<DEVINSTID_W>(device_pnp_id.c_str()), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS)
+    if (!try_find_audio_device(audio_device.id, device))
     {
         return desc;
     }

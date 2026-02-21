@@ -288,9 +288,102 @@ void throw_hresult_error(HRESULT hr, const char* message)
     throw audio_stream_exception(message, error);
 }
 
+WAVEFORMATEXTENSIBLE get_exclusive_sample_format(IAudioClient* audio_client, int sample_rate, int channels, audio_stream_sample_format& out_sample_format)
+{
+    WAVEFORMATEX* format = nullptr;
+
+    HRESULT hr;
+
+    if (FAILED(hr = audio_client->GetMixFormat(&format)))
+    {
+        throw_hresult_error(hr, "Failed to get mix format");
+    }
+
+    std::unique_ptr<WAVEFORMATEX, decltype(&CoTaskMemFree)> format_guard(format, CoTaskMemFree);
+
+    format->nSamplesPerSec = static_cast<DWORD>(sample_rate);
+    format->nChannels = static_cast<WORD>(channels);
+    format->nBlockAlign = (format->wBitsPerSample / 8) * format->nChannels;
+    format->nAvgBytesPerSec = format->nSamplesPerSec * format->nBlockAlign;
+
+    hr = audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, format, nullptr);
+    if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT)
+    {
+        if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT)
+        {
+            format->wFormatTag = WAVE_FORMAT_PCM;
+            format->wBitsPerSample = 16;
+            format->nBlockAlign = (format->wBitsPerSample / 8) * format->nChannels;
+            format->nAvgBytesPerSec = format->nSamplesPerSec * format->nBlockAlign;
+        }
+        else if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+        {
+            WAVEFORMATEXTENSIBLE* extensible = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format);
+            if (IsEqualGUID(extensible->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))
+            {
+                extensible->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+                extensible->Format.wBitsPerSample = 16;
+                extensible->Format.nBlockAlign = (extensible->Format.wBitsPerSample / 8) * extensible->Format.nChannels;
+                extensible->Format.nAvgBytesPerSec = extensible->Format.nSamplesPerSec * extensible->Format.nBlockAlign;
+                extensible->Samples.wValidBitsPerSample = 16;
+            }
+            else
+            {
+                throw audio_stream_exception("Mix format is not float, cannot convert for exclusive mode", audio_stream_error::format_not_supported);
+            }
+        }
+        else
+        {
+            throw audio_stream_exception("Mix format is not float, cannot convert for exclusive mode", audio_stream_error::format_not_supported);
+        }
+
+        hr = audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, format, nullptr);
+        if (FAILED(hr))
+        {
+            throw audio_stream_exception(
+                "Device does not support exclusive mode at " + std::to_string(sample_rate) + "Hz " + std::to_string(channels) + "ch",
+                audio_stream_error::format_not_supported);
+        }
+    }
+    else if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "IsFormatSupported failed");
+    }
+
+    WAVEFORMATEXTENSIBLE result = {};
+    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+    {
+        result = *reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format);
+    }
+    else
+    {
+        result.Format = *format;
+        result.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+        result.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+        result.Samples.wValidBitsPerSample = format->wBitsPerSample;
+        result.dwChannelMask = (channels == 1) ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
+        result.SubFormat = (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+    }
+
+    if (IsEqualGUID(result.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))
+    {
+        out_sample_format = audio_stream_sample_format::float32;
+    }
+    else if (result.Format.wBitsPerSample == 32)
+    {
+        out_sample_format = audio_stream_sample_format::int32;
+    }
+    else
+    {
+        out_sample_format = audio_stream_sample_format::int16;
+    }
+
+    return result;
+}
+
 LIBMODEM_ANONYMOUS_NAMESPACE_END
 
-#endif
+#endif // WIN32
 
 // **************************************************************** //
 //                                                                  //
@@ -1204,8 +1297,50 @@ audio_stream audio_device::stream()
     return audio_stream(nullptr);
 }
 
+audio_stream audio_device::stream(audio_stream_exclusive_mode_tag)
+{
+#if WIN32
+    if (!impl_)
+    {
+        throw audio_stream_exception("Device not initialized", audio_stream_error::internal_error);
+    }
+
+    if (type == audio_device_type::render)
+    {
+        return audio_stream(std::make_unique<wasapi_audio_output_stream>(impl_.get(), audio_stream_exclusive_mode));
+    }
+    else if (type == audio_device_type::capture)
+    {
+        return audio_stream(std::make_unique<wasapi_audio_input_stream>(impl_.get()));
+    }
+#endif // WIN32
+
+#if __linux__
+    if (type == audio_device_type::render)
+    {
+        return audio_stream(std::make_unique<alsa_audio_output_stream>(card_id, device_id));
+    }
+    else if (type == audio_device_type::capture)
+    {
+        return audio_stream(std::make_unique<alsa_audio_input_stream>(card_id, device_id));
+    }
+#endif // __linux__
+
+    return audio_stream(nullptr);
+}
+
 audio_device::~audio_device()
 {
+}
+
+audio_device_impl* audio_device::implementation()
+{
+    return impl_.get();
+}
+
+audio_device::operator bool()
+{
+    return impl_->device_ != nullptr;
 }
 
 // **************************************************************** //
@@ -1850,6 +1985,168 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl)
     impl_->stop_render_event_ = stop_render_event_guard.release();
 }
 
+wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl, audio_stream_exclusive_mode_tag, int sample_rate, int channels, int buffer_period_ms)
+{
+    exclusive_mode_ = true;
+    exclusive_buffer_period_ms_ = buffer_period_ms;
+
+    impl_ = std::make_unique<wasapi_audio_output_stream_impl>();
+    impl_->device_ = impl->device_;
+
+    assert(impl_->audio_client_ == nullptr);
+    assert(impl_->endpoint_volume_ == nullptr);
+    assert(impl_->render_client_ == nullptr);
+
+    ensure_com_initialized();
+
+    HANDLE audio_samples_ready_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (audio_samples_ready_event == nullptr)
+    {
+        throw audio_stream_exception("Failed to create audio samples ready event", audio_stream_error::system_init_failed);
+    }
+
+    std::unique_ptr<void, void(*)(void*)> audio_samples_ready_event_guard(audio_samples_ready_event, [](void* h) { if (h) CloseHandle(h); });
+
+    HANDLE stop_render_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (stop_render_event == nullptr)
+    {
+        throw audio_stream_exception("Failed to create stop render event", audio_stream_error::system_init_failed);
+    }
+
+    std::unique_ptr<void, void(*)(void*)> stop_render_event_guard(stop_render_event, [](void* h) { if (h) CloseHandle(h); });
+
+    HRESULT hr;
+
+    CComPtr<IAudioClient> audio_client;
+    CComPtr<IAudioEndpointVolume> endpoint_volume;
+    CComPtr<IAudioRenderClient> render_client;
+    CComPtr<IAudioClock> audio_clock;
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
+    {
+        throw_hresult_error(hr, "Failed to activate client");
+    }
+
+    if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&endpoint_volume)))
+    {
+        throw_hresult_error(hr, "Failed to get volume control");
+    }
+
+    WAVEFORMATEXTENSIBLE format = get_exclusive_sample_format(audio_client, sample_rate, channels, sample_format_);
+
+    if (FAILED(hr = audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &format.Format, nullptr)))
+    {
+        throw audio_stream_exception(
+            "Device does not support " + std::to_string(sample_rate) + "Hz " + std::to_string(channels),
+            audio_stream_error::format_not_supported);
+    }
+
+    sample_rate_ = sample_rate;
+    channels_ = channels;
+
+    REFERENCE_TIME buffer_duration = static_cast<REFERENCE_TIME>(buffer_period_ms) * 10000LL;
+
+    hr = audio_client->Initialize(
+        AUDCLNT_SHAREMODE_EXCLUSIVE,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+        buffer_duration,
+        buffer_duration,
+        &format.Format,
+        nullptr);
+
+    // Some drivers require an aligned buffer size. If so, GetBufferSize returns the
+    // required frame count and we must re-create the client and retry Initialize.
+    if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED)
+    {
+        UINT32 buffer_size = 0;
+        if (FAILED(audio_client->GetBufferSize(&buffer_size)))
+        {
+            throw_hresult_error(hr, "Failed to get aligned buffer size");
+        }
+
+        buffer_duration = static_cast<REFERENCE_TIME>(10000.0 * 1000.0 * buffer_size / sample_rate + 0.5);
+
+        // Initialize can only be called once per IAudioClient instance
+        audio_client.Release();
+
+        if (FAILED(hr = impl_->device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client)))
+        {
+            throw_hresult_error(hr, "Failed to re-activate client after alignment");
+        }
+
+        hr = audio_client->Initialize(
+            AUDCLNT_SHAREMODE_EXCLUSIVE,
+            AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            buffer_duration,
+            buffer_duration,
+            &format.Format,
+            nullptr);
+    }
+
+    if (hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED)
+    {
+        throw audio_stream_exception(
+            "Exclusive mode is disabled for this device. "
+            "Enable 'Allow applications to take exclusive control' in device properties.",
+            audio_stream_error::device_busy);
+    }
+
+    if (FAILED(hr))
+    {
+        throw_hresult_error(hr, "Failed to initialize audio client (exclusive mode)");
+    }
+
+    // Cache stream latency. In exclusive mode this is accurate and stable for the
+    // lifetime of the stream, used in wait_write_completed for client timing syncronization.
+    REFERENCE_TIME latency = 0;
+    if (FAILED(hr = audio_client->GetStreamLatency(&latency)))
+    {
+        throw_hresult_error(hr, "Failed to get stream latency");
+    }
+
+    stream_latency_100ns_ = static_cast<int64_t>(latency);
+
+    if (FAILED(hr = audio_client->SetEventHandle(audio_samples_ready_event)))
+    {
+        throw_hresult_error(hr, "Failed to set event handle");
+    }
+
+    if (FAILED(hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client)))
+    {
+        throw_hresult_error(hr, "Failed to get render client");
+    }
+
+    if (FAILED(hr = audio_client->GetService(__uuidof(IAudioClock), (void**)&audio_clock)))
+    {
+        throw_hresult_error(hr, "Failed to get audio clock");
+    }
+
+    if (FAILED(hr = audio_client->GetBufferSize(reinterpret_cast<UINT32*>(&buffer_size_))))
+    {
+        throw_hresult_error(hr, "Failed to get buffer size");
+    }
+
+    size_t ring_buffer_size = sample_rate_ * channels_ * ring_buffer_size_seconds_;
+
+    impl_->ring_buffer_.set_capacity(ring_buffer_size);
+
+    impl_->audio_client_.Attach(audio_client.Detach());
+    impl_->endpoint_volume_.Attach(endpoint_volume.Detach());
+    impl_->render_client_.Attach(render_client.Detach());
+    impl_->audio_clock_.Attach(audio_clock.Detach());
+
+    impl_->audio_samples_ready_event_ = audio_samples_ready_event_guard.release();
+    impl_->stop_render_event_ = stop_render_event_guard.release();
+}
+
+wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device& device) : wasapi_audio_output_stream(device.implementation())
+{
+}
+
+wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device& device, audio_stream_exclusive_mode_tag, int sample_rate, int channels, int buffer_period_ms) : wasapi_audio_output_stream(device.implementation(), audio_stream_exclusive_mode, sample_rate, channels, buffer_period_ms)
+{
+}
+
 wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_stream&& other) noexcept : impl_(std::make_unique<wasapi_audio_output_stream_impl>())
 {
     impl_->device_.Attach(other.impl_->device_.Detach());
@@ -1874,6 +2171,11 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(wasapi_audio_output_strea
     buffer_size_ = other.buffer_size_;
     sample_rate_ = other.sample_rate_;
     channels_ = other.channels_;
+
+    exclusive_mode_ = other.exclusive_mode_;
+    exclusive_buffer_period_ms_ = other.exclusive_buffer_period_ms_;
+    stream_latency_100ns_ = other.stream_latency_100ns_;
+    sample_format_ = other.sample_format_;
 }
 
 wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_output_stream&& other) noexcept
@@ -1917,6 +2219,11 @@ wasapi_audio_output_stream& wasapi_audio_output_stream::operator=(wasapi_audio_o
         buffer_size_ = other.buffer_size_;
         sample_rate_ = other.sample_rate_;
         channels_ = other.channels_;
+
+        exclusive_mode_ = other.exclusive_mode_;
+        exclusive_buffer_period_ms_ = other.exclusive_buffer_period_ms_;
+        stream_latency_100ns_ = other.stream_latency_100ns_;
+        sample_format_ = other.sample_format_;
     }
     return *this;
 }
@@ -2243,7 +2550,27 @@ bool wasapi_audio_output_stream::wait_write_completed(int timeout_ms)
         return false;
     }
 
-    UINT64 target_position = (target_frames * clock_frequency) / sample_rate_;
+    // Account for hardware latency so clients can accurately syncronize render completion
+    // to know when the last sample has physically left the device.
+    // In exclusive mode we use the latency cached at init time.
+    // In shared mode we call GetStreamLatency here as it can vary with the audio graph.
+    UINT64 latency_100ns = 0;
+    if (exclusive_mode_)
+    {
+        latency_100ns = static_cast<UINT64>(stream_latency_100ns_);
+    }
+    else
+    {
+        REFERENCE_TIME shared_latency = 0;
+        if (FAILED(impl_->audio_client_->GetStreamLatency(&shared_latency)))
+        {
+            return false;
+        }
+        latency_100ns = static_cast<UINT64>(shared_latency);
+    }
+
+    UINT64 latency_frames = (latency_100ns * sample_rate_) / 10000000ULL;
+    UINT64 target_position = ((target_frames + latency_frames) * clock_frequency) / sample_rate_;
 
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
@@ -2312,16 +2639,22 @@ void wasapi_audio_output_stream::start()
     // Some WASAPI drivers won't signal the audio_samples_ready_event until there's
     // data in the buffer. Without this, the render thread may block forever on
     // WaitForMultipleObjects waiting for an event that never comes.
+    // In exclusive mode the device owns the entire buffer with no padding, always fill all frames.
 
     HRESULT hr;
 
-    UINT32 padding;
-    if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
+    UINT32 frames_available_to_fill = static_cast<UINT32>(buffer_size_);
+
+    if (!exclusive_mode_)
     {
-        throw_hresult_error(hr, "Failed to get current padding");
+        UINT32 padding;
+        if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
+        {
+            throw_hresult_error(hr, "Failed to get current padding");
+        }
+        frames_available_to_fill = static_cast<UINT32>(buffer_size_) - padding;
     }
 
-    UINT32 frames_available_to_fill = static_cast<UINT32>(buffer_size_) - padding;
     if (frames_available_to_fill > 0)
     {
         BYTE* buffer;
@@ -2573,13 +2906,19 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
                 throw audio_stream_exception("WaitForMultipleObjects failed", audio_stream_error::timeout);
         }
 
-        UINT32 padding;
-        if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
-        {
-            throw_hresult_error(hr, "Failed to get current padding");
-        }
+        // In exclusive mode the event fires once per period and the full buffer
+        // is always available. In shared mode subtract the unplayed padding.
+        UINT32 frames_available_to_write = static_cast<UINT32>(buffer_size_);
 
-        UINT32 frames_available_to_write = static_cast<UINT32>(buffer_size_) - padding;
+        if (!exclusive_mode_)
+        {
+            UINT32 padding;
+            if (FAILED(hr = impl_->audio_client_->GetCurrentPadding(&padding)))
+            {
+                throw_hresult_error(hr, "Failed to get current padding");
+            }
+            frames_available_to_write = static_cast<UINT32>(buffer_size_) - padding;
+        }
 
         if (frames_available_to_write == 0)
         {
@@ -2592,8 +2931,6 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
         {
             throw_hresult_error(hr, "Failed to get buffer");
         }
-
-        float* float_buffer = reinterpret_cast<float*>(buffer);
 
         size_t samples_available_to_write = frames_available_to_write * channels_;
         size_t samples_written = 0;
@@ -2614,16 +2951,50 @@ void wasapi_audio_output_stream::run_internal(std::stop_token stop_token)
                 // Write as much as we can from the ring buffer
                 samples_written = (std::min)(samples_available_to_read, samples_available_to_write);
 
-                for (size_t i = 0; i < samples_written; i++)
+                switch (sample_format_)
                 {
-                    float_buffer[i] = impl_->ring_buffer_.front();
-                    impl_->ring_buffer_.pop_front();
-                }
-
-                // Fill remaining with silence if we don't have enough data
-                for (size_t i = samples_written; i < samples_available_to_write; i++)
-                {
-                    float_buffer[i] = 0.0f;
+                    case audio_stream_sample_format::float32:
+                    {
+                        float* float_buffer = reinterpret_cast<float*>(buffer);
+                        for (size_t i = 0; i < samples_written; i++)
+                        {
+                            float_buffer[i] = impl_->ring_buffer_.front();
+                            impl_->ring_buffer_.pop_front();
+                        }
+                        for (size_t i = samples_written; i < samples_available_to_write; i++)
+                        {
+                            float_buffer[i] = 0.0f;
+                        }
+                        break;
+                    }
+                    case audio_stream_sample_format::int32:
+                    {
+                        int32_t* int32_buffer = reinterpret_cast<int32_t*>(buffer);
+                        for (size_t i = 0; i < samples_written; i++)
+                        {
+                            int32_buffer[i] = static_cast<int32_t>(std::clamp(impl_->ring_buffer_.front(), -1.0f, 1.0f) * 2147483647.0f);
+                            impl_->ring_buffer_.pop_front();
+                        }
+                        for (size_t i = samples_written; i < samples_available_to_write; i++)
+                        {
+                            int32_buffer[i] = 0;
+                        }
+                        break;
+                    }
+                    case audio_stream_sample_format::int16:
+                    {
+                        int16_t* int16_buffer = reinterpret_cast<int16_t*>(buffer);
+                        for (size_t i = 0; i < samples_written; i++)
+                        {
+                            int16_buffer[i] = static_cast<int16_t>(std::clamp(impl_->ring_buffer_.front(), -1.0f, 1.0f) * 32767.0f);
+                            impl_->ring_buffer_.pop_front();
+                        }
+                        for (size_t i = samples_written; i < samples_available_to_write; i++)
+                        {
+                            int16_buffer[i] = 0;
+                        }
+                        break;
+                    }
                 }
             }
         }
