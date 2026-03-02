@@ -81,7 +81,7 @@ FetchContent_MakeAvailable(sndfile)
 FetchContent_Declare(
   libcorrect
   GIT_REPOSITORY https://github.com/quiet/libcorrect.git
-  GIT_TAG        f5a28c7
+  GIT_TAG        master
   GIT_SHALLOW    TRUE
 )
 
@@ -166,6 +166,9 @@ target_link_libraries(libmodem PRIVATE nlohmann_json::nlohmann_json Boost::asio 
 target_include_directories(libmodem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)
 set_target_properties(libmodem PROPERTIES PREFIX "")
+
+# Precompiled header for build performance optimization
+target_precompile_headers(libmodem PRIVATE pch.h)
 
 if(UNIX AND NOT APPLE)
   find_package(ALSA REQUIRED)
