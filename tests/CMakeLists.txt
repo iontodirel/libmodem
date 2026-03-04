@@ -89,6 +89,9 @@ target_link_libraries(tests PRIVATE libmodem GTest::gtest_main fmt::fmt Boost::p
 target_compile_definitions(tests PRIVATE ATEST_EXE_PATH="${ATEST_EXE_PATH}" PYTHON_EXE_PATH="${Python3_EXECUTABLE}")
 set_property(TARGET tests PROPERTY CXX_STANDARD 20)
 
+# Precompiled header for build performance optimization
+target_precompile_headers(tests PRIVATE tests_pch.h)
+
 add_library(ptt_library_example SHARED ptt_library_example.c)
 
 if(NOT WIN32)
