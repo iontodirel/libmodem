@@ -156,7 +156,8 @@ enum class audio_stream_sample_format
 {
     float32,
     int32,
-    int16
+    int16,
+    unknown
 };
 
 // **************************************************************** //
@@ -301,6 +302,20 @@ struct audio_stream_exclusive_mode_tag
 };
 
 static constexpr audio_stream_exclusive_mode_tag audio_stream_exclusive_mode{};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// audio_stream_shared_mode_tag                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct audio_stream_shared_mode_tag
+{
+};
+
+static constexpr audio_stream_shared_mode_tag audio_stream_shared_mode{};
 
 // **************************************************************** //
 //                                                                  //
@@ -492,6 +507,8 @@ std::vector<audio_device> get_audio_devices(audio_device_type type, audio_device
 //                                                                  //
 // **************************************************************** //
 
+bool try_get_audio_device_by_name(const std::string& name, audio_device& device);
+bool try_get_audio_device_by_name(const std::string& name, audio_device& device, audio_device_type type);
 bool try_get_audio_device_by_name(const std::string& name, audio_device& device, audio_device_type type, audio_device_state state);
 
 // **************************************************************** //
@@ -594,9 +611,9 @@ public:
     using audio_stream_base::wait_write_completed;
 
     wasapi_audio_output_stream();
-    wasapi_audio_output_stream(audio_device_impl* impl);
+    wasapi_audio_output_stream(audio_device_impl* impl, int buffer_duration_ms = 200);
     wasapi_audio_output_stream(audio_device_impl* impl, audio_stream_exclusive_mode_tag, int sample_rate = 48000, int channels = 2, int buffer_period_ms = 10);
-    wasapi_audio_output_stream(audio_device& device);
+    wasapi_audio_output_stream(audio_device& device, int buffer_duration_ms = 200);
     wasapi_audio_output_stream(audio_device& device, audio_stream_exclusive_mode_tag, int sample_rate = 48000, int channels = 2, int buffer_period_ms = 10);
     wasapi_audio_output_stream(const wasapi_audio_output_stream&) = delete;
     wasapi_audio_output_stream& operator=(const wasapi_audio_output_stream&) = delete;
@@ -612,6 +629,9 @@ public:
 
     void mute(bool);
     bool mute();
+
+    void ducking(bool enable);
+    bool ducking();
 
     void volume(int percent) override;
     int volume() override;
@@ -659,6 +679,8 @@ private:
     std::atomic<uint64_t> total_frames_written_ = 0;
     std::mutex start_stop_mutex_;
     audio_stream_sample_format sample_format_ = audio_stream_sample_format::float32;
+    bool ducking_disabled_ = false;
+    std::vector<float> buffer_;
 };
 
 #endif // WIN32
@@ -682,7 +704,8 @@ public:
     using audio_stream_base::wait_write_completed;
 
     wasapi_audio_input_stream();
-    wasapi_audio_input_stream(audio_device_impl* impl);
+    wasapi_audio_input_stream(audio_device_impl* impl, int buffer_duration_ms = 200);
+    wasapi_audio_input_stream(audio_device& device, int buffer_duration_ms = 200);
     wasapi_audio_input_stream(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream& operator=(const wasapi_audio_input_stream&) = delete;
     wasapi_audio_input_stream(wasapi_audio_input_stream&&) noexcept;
@@ -696,6 +719,9 @@ public:
 
     void mute(bool);
     bool mute();
+
+    void ducking(bool enable);
+    bool ducking();
 
     void volume(int percent) override;
     int volume() override;
@@ -736,9 +762,11 @@ private:
     std::condition_variable buffer_cv_;
     std::exception_ptr capture_exception_;
     std::atomic<bool> capture_thread_exited_ = false;
-    size_t discontinuity_count_ = 0;
+    std::atomic<size_t> discontinuity_count_ = 0;
     size_t ring_buffer_size_seconds_ = 5;
     std::mutex start_stop_mutex_;
+    bool ducking_disabled_ = false;
+    audio_stream_sample_format sample_format_ = audio_stream_sample_format::float32;
 };
 
 #endif // WIN32
