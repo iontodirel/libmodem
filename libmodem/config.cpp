@@ -120,7 +120,7 @@ audio_stream_config parse_audio_stream(const nlohmann::json& j)
     c.type = parse_audio_stream_type(j.value("type", ""));
     c.device_name = j.value("device_name", "");
     c.device_id = j.value("device_id", "");
-    c.volume = j.value("volume", 100);
+    c.volume = j.value("volume", -1);
     c.sample_rate = j.value("sample_rate", 48000);
     c.host = j.value("host", "");
     c.audio_port = j.value("audio_port", 0);
@@ -296,6 +296,7 @@ bitstream_convertor_config_type parse_convertor_type(const std::string& type_str
 data_stream_format_type parse_format_type(const std::string& type_str)
 {
     if (type_str == "ax25_kiss") return data_stream_format_type::ax25_kiss_formatter;
+    if (type_str == "agwpe") return data_stream_format_type::agwpe_formatter;
 
     return data_stream_format_type::unknown;
 }

@@ -73,7 +73,7 @@ struct audio_stream_config
     audio_stream_config_type type;
     std::string device_name;
     std::string device_id;
-    int volume = 100;
+    int volume = -1;
     int sample_rate = 48000;
     std::string host;
     int audio_port = 0;
@@ -166,7 +166,8 @@ struct logger_config
 enum class data_stream_format_type
 {
     unknown,
-    ax25_kiss_formatter
+    ax25_kiss_formatter,
+    agwpe_formatter,
 };
 
 enum class data_stream_transport_type
