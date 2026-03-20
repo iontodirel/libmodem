@@ -110,7 +110,7 @@ private:
 
 struct sine_fsk_modulator_double
 {
-    sine_fsk_modulator_double(int bitrate = 9600, int sample_rate = 192000, double amplitude = 1.0);
+    sine_fsk_modulator_double(int bitrate = 9600, int sample_rate = 192000);
 
     double modulate(uint8_t bit) noexcept;
     void reset() noexcept;
@@ -120,8 +120,8 @@ private:
     std::vector<double> transition_table_;
     double level_ = 1.0;
     int sample_index_ = 0;
+    int current_bit_samples_ = 0;
     bool transitioning_ = false;
-    double amplitude_;
     double samples_per_bit_;
     double samples_per_bit_error_ = 0.0;
 };
@@ -194,7 +194,7 @@ private:
 
 struct sine_fsk_modulator_double_adapter : public modulator_base
 {
-    sine_fsk_modulator_double_adapter(int bitrate = 9600, int sample_rate = 192000, double amplitude = 1.0);
+    sine_fsk_modulator_double_adapter(int bitrate = 9600, int sample_rate = 192000);
 
     double modulate_double(uint8_t bit) noexcept override;
     void reset() noexcept override;

@@ -110,6 +110,7 @@ void dds_afsk_modulator_double::reset() noexcept
 
     freq_smooth = f_mark;
     phase = 0.0;
+    samples_per_bit_error_ = 0.0;
 }
 
 int dds_afsk_modulator_double::next_samples_per_bit() noexcept
@@ -244,6 +245,7 @@ void gfsk_modulator_double::reset() noexcept
 {
     std::fill(delay_line_.begin(), delay_line_.end(), 0.0);
     delay_pos_ = 0;
+    samples_per_bit_error_ = 0.0;
 }
 
 int gfsk_modulator_double::next_samples_per_bit() noexcept
@@ -270,7 +272,7 @@ int gfsk_modulator_double::next_samples_per_bit() noexcept
 //                                                                  //
 // **************************************************************** //
 
-sine_fsk_modulator_double::sine_fsk_modulator_double(int bitrate, int sample_rate, double amplitude) : amplitude_(amplitude)
+sine_fsk_modulator_double::sine_fsk_modulator_double(int bitrate, int sample_rate)
 {
     samples_per_bit_ = static_cast<double>(sample_rate) / bitrate;
     samples_per_bit_error_ = 0.0;
@@ -291,6 +293,8 @@ sine_fsk_modulator_double::sine_fsk_modulator_double(int bitrate, int sample_rat
     }
 
     level_ = 1.0;
+
+    current_bit_samples_ = n;
 }
 
 double sine_fsk_modulator_double::modulate(uint8_t bit) noexcept
@@ -317,16 +321,28 @@ double sine_fsk_modulator_double::modulate(uint8_t bit) noexcept
 
     if (transitioning_)
     {
-        // Walk through the half-cosine curve.
-        // Table goes +1->-1; negate if we are going -1->+1.
-        double t = transition_table_[sample_index_];
+        // Linearly interpolate the half-cosine table to the current
+        // bit period length, which may differ from the table size
+        // due to fractional sample accumulation in next_samples_per_bit().
+        int table_size = static_cast<int>(transition_table_.size());
+        double fractional_index = static_cast<double>(sample_index_) * (table_size - 1) / (current_bit_samples_ - 1);
+        int lower = static_cast<int>(fractional_index);
+        double blend = fractional_index - lower;
 
-        output = (level_ > 0.0) ? t : -t;
+        double curve;
+        if (lower >= table_size - 1)
+        {
+            curve = transition_table_[table_size - 1];
+        }
+        else
+        {
+            curve = transition_table_[lower] * (1.0 - blend) + transition_table_[lower + 1] * blend;
+        }
+
+        output = (level_ > 0.0) ? curve : -curve;
 
         // On the last sample, commit the new level
-        int n = static_cast<int>(transition_table_.size());
-
-        if (sample_index_ == n - 1)
+        if (sample_index_ == current_bit_samples_ - 1)
         {
             level_ = -level_;
         }
@@ -336,18 +352,19 @@ double sine_fsk_modulator_double::modulate(uint8_t bit) noexcept
         output = level_;
     }
 
-    if (++sample_index_ >= static_cast<int>(transition_table_.size()))
+    if (++sample_index_ >= current_bit_samples_)
     {
         sample_index_ = 0;
     }
 
-    return output * amplitude_;
+    return output;
 }
 
 void sine_fsk_modulator_double::reset() noexcept
 {
     level_ = 1.0;
     sample_index_ = 0;
+    current_bit_samples_ = static_cast<int>(transition_table_.size());
     transitioning_ = false;
     samples_per_bit_error_ = 0.0;
 }
@@ -359,6 +376,8 @@ int sine_fsk_modulator_double::next_samples_per_bit() noexcept
     int n = static_cast<int>(std::round(v));
 
     samples_per_bit_error_ = v - static_cast<double>(n);
+
+    current_bit_samples_ = n;
 
     return n;
 }
@@ -451,7 +470,7 @@ int gfsk_modulator_double_adapter::next_samples_per_bit() noexcept
 //                                                                  //
 // **************************************************************** //
 
-sine_fsk_modulator_double_adapter::sine_fsk_modulator_double_adapter(int bitrate, int sample_rate, double amplitude) : modulator(bitrate, sample_rate, amplitude)
+sine_fsk_modulator_double_adapter::sine_fsk_modulator_double_adapter(int bitrate, int sample_rate) : modulator(bitrate, sample_rate)
 {
 }
 
