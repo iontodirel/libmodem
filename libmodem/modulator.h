@@ -32,6 +32,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -78,6 +79,56 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// gfsk_modulator                                                   //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct gfsk_modulator_double
+{
+    gfsk_modulator_double(int bitrate = 9600, int sample_rate = 48000, double bt = 0.8);
+
+    double modulate(uint8_t bit) noexcept;
+    void reset() noexcept;
+    int next_samples_per_bit() noexcept;
+
+private:
+    std::vector<double> fir_coeffs_;  // Gaussian FIR pulse-shaping coefficients
+    std::vector<double> delay_line_;  // Circular buffer for FIR filter
+    int delay_pos_ = 0;               // Current write position in circular buffer
+    double samples_per_bit_;
+    double samples_per_bit_error_ = 0.0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// sine_fsk_modulator                                               //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct sine_fsk_modulator_double
+{
+    sine_fsk_modulator_double(int bitrate = 9600, int sample_rate = 192000, double amplitude = 1.0);
+
+    double modulate(uint8_t bit) noexcept;
+    void reset() noexcept;
+    int next_samples_per_bit() noexcept;
+
+private:
+    std::vector<double> transition_table_;
+    double level_ = 1.0;
+    int sample_index_ = 0;
+    bool transitioning_ = false;
+    double amplitude_;
+    double samples_per_bit_;
+    double samples_per_bit_error_ = 0.0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // modulator_base                                                   //
 //                                                                  //
 //                                                                  //
@@ -111,6 +162,46 @@ struct dds_afsk_modulator_double_adapter : public modulator_base
 
 private:
     dds_afsk_modulator_double modulator;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// gfsk_modulator_adapter                                           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct gfsk_modulator_double_adapter : public modulator_base
+{
+    gfsk_modulator_double_adapter(int bitrate = 9600, int sample_rate = 48000, double bt = 0.8);
+
+    double modulate_double(uint8_t bit) noexcept override;
+    void reset() noexcept override;
+    int next_samples_per_bit() noexcept override;
+
+private:
+    gfsk_modulator_double modulator;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// sine_fsk_modulator_adapter                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct sine_fsk_modulator_double_adapter : public modulator_base
+{
+    sine_fsk_modulator_double_adapter(int bitrate = 9600, int sample_rate = 192000, double amplitude = 1.0);
+
+    double modulate_double(uint8_t bit) noexcept override;
+    void reset() noexcept override;
+    int next_samples_per_bit() noexcept override;
+
+private:
+    sine_fsk_modulator_double modulator;
 };
 
 LIBMODEM_NAMESPACE_END
