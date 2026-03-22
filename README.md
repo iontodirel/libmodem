@@ -22,7 +22,7 @@ On the data side, the modem can expose multiple interfaces concurrently, includi
 
 Transmit control is equally flexible. PTT can be driven over serial using RTS or DTR with configurable polarity, via GPIO on platforms like Raspberry Pi with optional pre and post delays, or through a plugin library so you can integrate with custom keying hardware. Modulator parameters such as mark and space frequencies, TX delay and tail, gain, preemphasis, and leading and trailing silence are all configurable, and the same base modulator can be cloned and specialized via inheritance for variants like a WAV only renderer or a multi output transmitter.
 
-### Features
+## Features
 - Modulator
   - Support for AFSK and FSK modulation
   - Supported baud rates: 300, 1200, 2400, and 9600
@@ -43,7 +43,7 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
     - Enables hamlib or PTT control over CAT
   - TCP PTT control
 - Formatting
-  - Supports AX.25 and FX.25 encoding and decoding
+  - Supports AX.25, FX.25 and IL2P encoding and decoding
 - Pipeline
   - Pluggable pipeline design where bitstream encoders, audio interfaces, modulators, and demodulators can be swapped independently
   - Data stream support for multiple concurrent interfaces
@@ -55,11 +55,14 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
   - Multiple selectable data formats per stream
     - KISS, TNC2 text, APRS text, APRS JSON, AX.25 hex, AX.25 binary, raw bitstream, telemetry streams
     - Telemetry augmented variants for supported formats
+  - Rich async event system that can be used to render UI or used by loggers
+- Loggers
+  - Log the sound bitstream, frames and packets to log files with configurable rotation and flush policies 
 - Configurable from a single JSON configuration file
   - JSON file support comments, and inheritance of configurations
 - Cross platform support with native Windows, Linux, and macOS builds
 
-### Goals
+## Goals
 - Modular library-first design for experimenting with AFSK and FSK modulation and demodulation and for building and evaluating new demodulators
 - Readability, reuse and simplicity even at the cost of some code duplication
 - Core building blocks for a complete software modem, including AX.25 and FX.25 bitstream encode and decode
@@ -67,7 +70,67 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
 - Complete end to end reference modem implementation with support for 300, 1200, 2400, and 9600 bps operation and AX.25 plus FX.25 framing
 - State of the art demulator for 1200 bps AFSK based on the WA8LMF TNC Test CD benchmark
 
-### Project Structure
+## Development
+
+### Building
+The project uses CMake as the build system, and supports native builds on Windows, Linux, and macOS. The code is written in modern C++
+
+Run the install_dependencies script on your host platform.
+
+Open the root directory in VSCode or Visual Studio and set the `modem` directory as the configure directory.
+
+### Dependencies
+Most depedencies are installed and managed automatically by CMake, using FetchContent.
+
+Only the following dependencies are managed externally and have to be installed by a script or manually by the developer. Use install_dependencies.sh, install_dependencies.zsh, or install_dependencies.ps1 to install these dependencies on Linux, OSX and Windows.
+
+- **libudev**, on Linux only.
+- **libasound2**, on Linux only.
+- **Direwolf**, on Linux/OSX only. *It's automatically acquired by CMake on Windows.* Used only by the tests.
+- **Python3**. Used only by the tests.
+  - **numpy**
+  - **scipy**
+
+**Complete list of dependencies**:
+
+- libmodem
+  - **libcorrect** for Reed-Solomon coding
+  - **libudev** on Linux for audio device mapping and enumeration
+  - **libasound2** on Linux for ALSA audio support
+  - **nlohmann JSON** for configuration file parsing
+  - **Boost** for Networking and asynchronous IO
+  - **fmt** for string formatting
+  - **sndfile** for WAV file input and output
+  - **ftxui** for textual UI
+- modem
+  - **cxxopts** for command line parsing
+- tests
+  - **Google Test** for unit testing
+  - **Direwolf** for modulator validation
+  - **Python3** for test scripts and FFT validation
+    - **numpy** for FFT validation
+    - **scipy** for FFT validation
+
+#### Development Dependencies
+Install a C++ toolchain with C++20 support, CMake, Ninja for the development dependencies.
+
+On Windows, install the Visual Studio or the Build Tools with the *Desktop development with C++* workload, and select the latest MSVC v143 or v145 toolset.
+
+On Linux, use the install_dependencies.sh script to install the dependencies and development tools.
+
+#### Runtime Dependencies
+
+- Windows
+  - The modem executable has no runtime dependencies
+- Linux
+  - The modem executable depends on **libudev** and **libasound2**
+
+#### Project Structure
+- <u>**libmodem**</u> - The library code, builds a static library with all the core modem functionality
+- <u>**modem**</u> - A reference modem application built on top of the library
+- <u>**tests**</u> - Test code for the project, builds an executable that runs the test suite
+
+#### Source Structure
 - <u>**bitstream.h**</u>/<u>**bitstream.cpp**</u> - Bitstream encoding and decoding including AX.25 and FX.25. Contains all the routines needed to encode an APRS packet or a AX.25 frame into a bistream, or decode a bitstream into a AX.25 frame or APRS packet.
   - Contains all bitstream manipulation routines including NRZI encoding/decoding, bit stuffing/unstuffing, CRC calculation and verification, and AX.25 address field encoding/decoding, FX.25 Reed-Solomon encoding/decoding.
   - Supports bit by bit processing for streaming operation.
@@ -92,3 +155,11 @@ Transmit control is equally flexible. PTT can be driven over serial using RTS or
 - <u>**io.h**</u>/<u>**io.cpp**</u> - I/O routines for PTT control
   - Serial port support with configurable baud rate, data bits, stop bits, parity, and flow control
   - Serial port over TCP with server and client support
+- <u>**device_description.h**</u>/<u>**device_description.cpp**</u> - Device identification for mapping logical endpoints (audio devices / serial ports) to the underlying physical hardware.
+  - Properties: VID/PID/REV, manufacturer/product strings, USB serial number, OS identifiers (instance/container IDs or sysfs paths), bus/address, major/minor numbers, topology depth describing where the device sits in the USB tree.
+  - Mapping capabilities:
+    - Find "sibling" audio endpoints that share a common upstream hub at a configurable depth
+    - Resolve a device_description back to matching audio_device instances for round-tripping between physical identity and enumerated endpoints.
+- <u>**kiss.h**</u>/<u>**kiss.cpp**</u> - KISS framing utilities for transporting AX.25 frames over a byte stream (serial/TCP/etc.).
+  - KISS frame encode/decode state machine with FEND, FESC, TFEND, TFESC for escaping/unescaping.
+  - Byte by byte embedded friendly encoding and decoding support.

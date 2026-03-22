@@ -903,14 +903,19 @@ LIBMODEM_INLINE void nrzi_encode(InputIt first, InputIt last, uint8_t initial_le
 template<typename It>
 LIBMODEM_INLINE uint8_t nrzi_decode(It first, It last, uint8_t initial_value)
 {
-    if (first == last) return initial_value;
+    if (first == last)
+    {
+        return initial_value;
+    }
 
     uint8_t prev = *first;
     uint8_t curr = 0;
 
     *first = initial_value;  // First bit ambiguous, often set to initial_value
 
-    for (auto it = first + 1; it != last; ++it)
+    ++first;
+
+    for (auto it = first; it != last; ++it)
     {
         curr = *it;
         *it = (curr == prev) ? 1 : 0;  // No transition=1, transition=0

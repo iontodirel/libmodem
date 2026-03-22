@@ -1276,7 +1276,7 @@ std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool c
 
     // Typical reserved bits for AX.25 address encoding is 0b01100000 (0x60)
     // We provide a setter for testing purposes
-    data[6] = (reserved_bits[0] << 6) | (reserved_bits[1] << 5);
+    data[6] = (reserved_bits[0] << 5) | (reserved_bits[1] << 6);
 
     data[6] |= (ssid << 1);
 
