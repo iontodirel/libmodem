@@ -1181,7 +1181,6 @@ bool tcp_server_base::start(const std::string& host, int port)
         impl_->acceptor = std::make_unique<boost::asio::ip::tcp::acceptor>(impl_->io_context);
 
         impl_->acceptor->open(endpoint.protocol());
-        impl_->acceptor->set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         impl_->acceptor->bind(endpoint);
         impl_->acceptor->listen(boost::asio::socket_base::max_listen_connections);
 
@@ -1584,12 +1583,16 @@ void tcp_server_base::on_client_connected(std::shared_ptr<tcp_client_connection_
 
 void tcp_server_base::on_client_disconnected(std::shared_ptr<tcp_client_connection_impl> connection)
 {
-    auto endpoint = connection->socket.remote_endpoint();
-
     tcp_client_connection client_connection;
     client_connection.id = connection->id;
-    client_connection.remote_address = endpoint.address().to_string();
-    client_connection.remote_port = endpoint.port();
+
+    boost::system::error_code ec;
+    auto endpoint = connection->socket.remote_endpoint(ec);
+    if (!ec)
+    {
+        client_connection.remote_address = endpoint.address().to_string();
+        client_connection.remote_port = endpoint.port();
+    }
 
     on_client_disconnected(client_connection);
 }

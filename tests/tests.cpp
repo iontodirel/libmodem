@@ -34,7 +34,6 @@
 #include <modem.h>
 #include <modulator.h>
 #include <device_description.h>
-#include <kiss.h>
 #include <config.h>
 #include <pipeline.h>
 #include <data_stream.h>
@@ -122,6 +121,24 @@ struct fft_bin
     double magnitude;
 };
 
+struct eye_diagram_metrics
+{
+    double eye_opening = 0.0;         // 0.0 to 2.0, min distance between rails
+    double eye_opening_pct = 0.0;     // 0-100%, eye opening as % of full scale
+    double pos_rail_mean = 0.0;       // mean amplitude of positive rail
+    double pos_rail_std = 0.0;        // std deviation of positive rail
+    double neg_rail_mean = 0.0;       // mean amplitude of negative rail
+    double neg_rail_std = 0.0;        // std deviation of negative rail
+    double rise_time = 0.0;           // 10-90% rise time in bit periods
+    double peak_amplitude = 0.0;      // max absolute amplitude (>1.0 = overshoot)
+    double overshoot_pct = 0.0;       // overshoot percentage above 1.0
+    int traces = 0;                   // number of eye diagram traces analyzed
+    double timing_margin = 0.0;       // bit periods where eye opening > 50% of peak
+    int center_crossing_count = 0;    // traces at center that fall inside the eye opening
+    double center_crossing_pct = 0.0; // percentage of center traces inside the eye (0 = clean)
+    double inner_area_crossing_pct = 0.0; // percentage of all trace points inside the eye opening
+};
+
 std::vector<uint8_t> generate_random_bits(size_t count);
 size_t random_size(size_t max_size);
 void print_hex(const std::vector<uint8_t>& data, std::size_t per_line = 16);
@@ -129,10 +146,10 @@ void print_bits(const std::vector<uint8_t>& bits, std::size_t per_line = 8);
 std::string replace_non_printable(const std::string& s);
 template<typename... Args>
 int run_process(const std::string& exe_path, std::string& output, std::string& error, Args&&... args);
-struct fft_bin;
 std::vector<fft_bin> compute_fft(const std::string& wav_file);
 fft_bin dominant_frequency(const std::vector<fft_bin>& bins);
 std::vector<fft_bin> frequencies_above_threshold(const std::vector<fft_bin>& bins, double threshold);
+eye_diagram_metrics compute_eye_diagram(const std::string& wav_file, int baud_rate = 9600);
 std::string to_string(const std::vector<address>& path);
 std::string to_hex_string(const std::vector<uint8_t>& data, size_t columns = 25);
 static std::string replace_crlf(std::string_view s);
@@ -259,20 +276,16 @@ namespace bp = boost::process;
 
 std::vector<fft_bin> compute_fft(const std::string& wav_file)
 {
-    std::string output;
-
     // Python executable path is set by CMake at build time using find_package(Python3 COMPONENTS Interpreter)
     // The python script fft.py is located in the source directory
 
     std::filesystem::path script_path = std::filesystem::current_path() / "fft.py";
-
     if (!std::filesystem::exists(script_path))
     {
         throw std::runtime_error("FFT script not found: " + script_path.string());
     }
 
     std::string python_exe_path = PYTHON_EXE_PATH;
-
     if (python_exe_path.empty())
     {
         throw std::runtime_error("Python executable path is not set. Please set PYTHON_EXE_PATH macro.");
@@ -283,8 +296,8 @@ std::vector<fft_bin> compute_fft(const std::string& wav_file)
         throw std::runtime_error("Python executable not found: " + python_exe_path);
     }
 
+    std::string output;
     std::string error;
-
     run_process(python_exe_path, output, error, script_path.string(), wav_file);
 
     if (!error.empty())
@@ -342,6 +355,120 @@ std::vector<fft_bin> frequencies_above_threshold(const std::vector<fft_bin>& bin
         }
     }
     return frequencies;
+}
+
+eye_diagram_metrics compute_eye_diagram(const std::string& wav_file, int baud_rate)
+{
+    std::filesystem::path script_path = std::filesystem::current_path() / "eye.py";
+    if (!std::filesystem::exists(script_path))
+    {
+        throw std::runtime_error("Eye diagram script not found: " + script_path.string());
+    }
+
+    std::string python_exe_path = PYTHON_EXE_PATH;
+    if (python_exe_path.empty())
+    {
+        throw std::runtime_error("Python executable path is not set. Please set PYTHON_EXE_PATH macro.");
+    }
+
+    if (!std::filesystem::exists(python_exe_path))
+    {
+        throw std::runtime_error("Python executable not found: " + python_exe_path);
+    }
+
+    std::string output;
+    std::string error;
+    run_process(python_exe_path, output, error, script_path.string(), wav_file, std::to_string(baud_rate), "eye.png");
+
+    if (!error.empty())
+    {
+        printf("Eye diagram error: %s\n", error.c_str());
+    }
+
+    if (output.empty())
+    {
+        throw std::runtime_error("Eye diagram computation failed or produced no output");
+    }
+
+    eye_diagram_metrics metrics;
+
+    std::istringstream stream(output);
+
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        size_t comma_pos = line.find(',');
+        if (comma_pos == std::string::npos)
+        {
+            continue;
+        }
+
+        std::string key = line.substr(0, comma_pos);
+        std::string value = line.substr(comma_pos + 1);
+
+        if (key == "error")
+        {
+            throw std::runtime_error("Eye diagram analysis error: " + value);
+        }
+        else if (key == "eye_opening")
+        {
+            metrics.eye_opening = std::stod(value);
+        }
+        else if (key == "eye_opening_pct")
+        {
+            metrics.eye_opening_pct = std::stod(value);
+        }
+        else if (key == "pos_rail_mean")
+        {
+            metrics.pos_rail_mean = std::stod(value);
+        }
+        else if (key == "pos_rail_std")
+        {
+            metrics.pos_rail_std = std::stod(value);
+        }
+        else if (key == "neg_rail_mean")
+        {
+            metrics.neg_rail_mean = std::stod(value);
+        }
+        else if (key == "neg_rail_std")
+        {
+            metrics.neg_rail_std = std::stod(value);
+        }
+        else if (key == "rise_time")
+        {
+            metrics.rise_time = std::stod(value);
+        }
+        else if (key == "peak_amplitude")
+        {
+            metrics.peak_amplitude = std::stod(value);
+        }
+        else if (key == "overshoot_pct")
+        {
+            metrics.overshoot_pct = std::stod(value);
+        }
+        else if (key == "traces")
+        {
+            metrics.traces = std::stoi(value);
+        }
+        else if (key == "timing_margin")
+        {
+            metrics.timing_margin = std::stod(value);
+        }
+        else if (key == "center_crossing_count")
+        {
+            metrics.center_crossing_count = std::stoi(value);
+        }
+        else if (key == "center_crossing_pct")
+        {
+            metrics.center_crossing_pct = std::stod(value);
+        }
+        else if (key == "inner_area_crossing_pct")
+        {
+            metrics.inner_area_crossing_pct = std::stod(value);
+        }
+    }
+
+    return metrics;
 }
 
 std::string to_string(const std::vector<address>& path)
@@ -974,53 +1101,53 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         std::string address;
         int ssid;
-        bool mark;
-        try_parse_address(std::string_view("\x9C\x60\x86\x82\x98\x98\x74", 7), address, ssid, mark);
+        bool cr_or_h_bit;
+        try_parse_address(std::string_view("\x9C\x60\x86\x82\x98\x98\x74", 7), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "N0CALL");
         EXPECT_EQ(ssid, 10);
-        EXPECT_FALSE(mark);
+        EXPECT_FALSE(cr_or_h_bit);
     }
 
     {
         std::string address;
         int ssid;
-        bool mark;
-        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x40\xE4", 7), address, ssid, mark);
+        bool cr_or_h_bit;
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x40\xE4", 7), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "WIDE2");
         EXPECT_EQ(ssid, 2);
-        EXPECT_TRUE(mark);
+        EXPECT_TRUE(cr_or_h_bit);
     }
 
     {
         std::string address;
         int ssid;
-        bool mark;
-        try_parse_address(std::string_view("\x82\xA0\xB4\x60\x60\x62\x61", 7), address, ssid, mark);
+        bool cr_or_h_bit;
+        try_parse_address(std::string_view("\x82\xA0\xB4\x60\x60\x62\x61", 7), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "APZ001");
         EXPECT_EQ(ssid, 0);
-        EXPECT_FALSE(mark);
+        EXPECT_FALSE(cr_or_h_bit);
     }
 
     {
         std::string address;
         int ssid;
-        bool mark;
-        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x62\x40\x63", 7), address, ssid, mark);
+        bool cr_or_h_bit;
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x62\x40\x63", 7), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "WIDE1");
         EXPECT_EQ(ssid, 1);
-        EXPECT_FALSE(mark);
+        EXPECT_FALSE(cr_or_h_bit);
     }
 
     {
         std::string address;
         int ssid;
-        bool mark;
+        bool cr_or_h_bit;
         // Intentially using an invalid byte 6 to represent non alphanumeric character
         // This address is not valid
-        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x5A\xE5", 7), address, ssid, mark);
+        try_parse_address(std::string_view("\xAE\x92\x88\x8A\x64\x5A\xE5", 7), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "WIDE2-");
         EXPECT_EQ(ssid, 2);
-        EXPECT_TRUE(mark);
+        EXPECT_TRUE(cr_or_h_bit);
     }
 }
 
@@ -1031,23 +1158,23 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         std::string address;
         int ssid;
-        bool mark;
+        bool cr_or_h_bit;
         std::vector<uint8_t> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74 };
-        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, mark);
+        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "N0CALL");
         EXPECT_EQ(ssid, 10);
-        EXPECT_FALSE(mark);
+        EXPECT_FALSE(cr_or_h_bit);
     }
 
     {
         std::string address;
         int ssid;
-        bool mark;
+        bool cr_or_h_bit;
         std::array<uint8_t, 7> address_bytes = { 0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x76 };
-        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, mark);
+        try_parse_address(address_bytes.begin(), address_bytes.end(), address, ssid, cr_or_h_bit);
         EXPECT_EQ(address, "N0CALL");
         EXPECT_EQ(ssid, 11);
-        EXPECT_FALSE(mark);
+        EXPECT_FALSE(cr_or_h_bit);
     }
 }
 
@@ -1313,10 +1440,10 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
-        // try_decode_frame will preserve the address mark in from and to addresses
-        // to_string will append the address set marker "*"" to the address string representation
+        // try_decode_frame will separate the C/H bit: C-bit goes to command, H-bit goes to mark
+        // The C-bit on from/to addresses does not produce a "*" in string representation
 
-        EXPECT_TRUE(to_string(p) == "N6XQY-12*>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73\r");
+        EXPECT_TRUE(to_string(p) == "N6XQY-12>GPSLJ,RELAY,WIDE2-2:$GPRMC,013641.06,A,3348.1607,N,11807.4631,W,34.0,090.5,231105,13.,E*73\r");
     }
 
     {
@@ -1362,35 +1489,10 @@ LIBMODEM_AX25_USING_NAMESPACE
 
         EXPECT_TRUE(try_decode_frame(frame, p));
 
-        // try_decode_frame will preserve the address mark in from and to addresses
-        // to_string will append the address set marker "*"" to the address string representation
+        // try_decode_frame will separate the C/H bit: C-bit goes to command, H-bit goes to mark
+        // The C-bit on from/to addresses does not produce a "*" in string representation
 
-        EXPECT_TRUE(to_string(p) == "KD7FNO-5*>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
-    }
-
-    {
-        // N0CALL-10>APZ001:Hello, APRS!
-        // The Source address does not have the last address bit set
-        // And there are no path addresses
-
-        std::vector<uint8_t> frame = {
-            // Destination: APZ001
-            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
-            // Source: N0CALL-10 (last addr, end bit set NOT SET)
-            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
-            // Control, PID
-            0x03, 0xF0,
-            // Payload: "Hello, APRS!"
-            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
-            // CRC (FCS), little-endian
-            0x84, 0xAE
-        };
-
-        packet p;
-
-        EXPECT_TRUE(try_decode_frame(frame, p));
-
-        EXPECT_TRUE(to_string(p) == "N0CALL-10>APZ001:Hello, APRS!");
+        EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
     }
 }
 
@@ -1435,38 +1537,6 @@ LIBMODEM_AX25_USING_NAMESPACE
         EXPECT_TRUE(std::vector<uint8_t>(data.begin(), data_it) == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
         EXPECT_TRUE(crc[0] == 0x50);
         EXPECT_TRUE(crc[1] == 0x7B);
-    }
-
-    {
-        std::vector<uint8_t> frame = {
-            // Destination: APZ001
-            0x82, 0xA0, 0xB4, 0x60, 0x60, 0x62, 0x60,
-            // Source: N0CALL-10 (last addr, end bit set NOT SET)
-            0x9C, 0x60, 0x86, 0x82, 0x98, 0x98, 0x74,
-            // Control, PID
-            0x03, 0xF0,
-            // Payload: "Hello, APRS!"
-            0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21,
-            // CRC (FCS), little-endian
-            0x84, 0xAE
-        };
-
-        address from;
-        address to;
-        std::array<address, 9> path;
-        std::array<uint8_t, 255> data;
-        std::array<uint8_t, 2> crc;
-        auto [path_it, data_it, success] = try_decode_frame(frame.begin(), frame.end(), from, to, path.begin(), data.begin(), crc);
-        size_t path_size = std::distance(path.begin(), path_it);
-        size_t data_size = std::distance(data.begin(), data_it);
-        EXPECT_TRUE(success);
-        EXPECT_TRUE(to_string(from) == "N0CALL-10");
-        EXPECT_TRUE(to_string(to) == "APZ001");
-        EXPECT_TRUE(path_size == 0);
-        EXPECT_TRUE(data_size == 12);
-        EXPECT_TRUE(std::vector<uint8_t>(data.begin(), data_it) == std::vector<uint8_t>({ 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }));
-        EXPECT_TRUE(crc[0] == 0x84);
-        EXPECT_TRUE(crc[1] == 0xAE);
     }
 
     {
@@ -4173,10 +4243,13 @@ LIBMODEM_FX25_USING_NAMESPACE
 
         // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
         EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+
         // Expect FX.25  0 (indicating successful FX.25 decoding)
         EXPECT_TRUE(output.find("FX.25  0") != std::string::npos);
+
         // Expect "Expecting 239 data & 16 check bytes"
         std::string expected_string = fmt::format("Expecting {} data & {} check bytes", data_lengths[i], check_lengths[i]);
+
         EXPECT_TRUE(output.find(expected_string) != std::string::npos);
 
         i++;
@@ -5569,9 +5642,7 @@ TEST(audio_stream, wasapi_audio_output_stream)
     audio_device device;
     EXPECT_TRUE(try_get_default_audio_device(device));
 
-    audio_stream stream = device.stream();
-
-    wasapi_audio_output_stream& wasapi_stream = dynamic_cast<wasapi_audio_output_stream&>(stream.get());
+    wasapi_audio_output_stream wasapi_stream(device);
 
     EXPECT_TRUE(&wasapi_stream != nullptr);
 
@@ -5852,6 +5923,64 @@ TEST(audio_stream, render_10s_stream)
     EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
 
     audio_stream stream = device.stream();
+
+    stream.start();
+
+    // My Linux systems are quieter than my Windows systems
+    // So set different volume levels for each OS
+
+#if WIN32
+    stream.volume(30);
+#endif // WIN32
+#if __linux__
+    stream.volume(100);
+#endif // __linux__
+
+    // Write a tone for 10 seconds, in chunks
+    // For audio testing purposes, we render the samples to a WAV file as well
+
+    wav_audio_output_stream wav_stream("test.wav", stream.sample_rate());
+
+#if WIN32
+    std::vector<double> audio_buffer = generate_audio_samples(10.0, 440.0, 0.01, static_cast<double>(stream.sample_rate()));
+#endif // WIN32
+#if __linux__
+    std::vector<double> audio_buffer = generate_audio_samples(10.0, 440.0, 0.5, static_cast<double>(stream.sample_rate()));
+#endif // __linux__
+
+    // After 5-8 seconds on playback, you might hear small increments in volume on Windows on some devices
+    // This is likely due to the audio device's internal volume leveling or AGC kicking in
+    // There is no control over this behavior in WASAPI, or on in Windows
+
+    size_t chunk_size = stream.sample_rate() / 500;  // 2ms
+
+    size_t samples_written = 0;
+
+    while (samples_written < audio_buffer.size())
+    {
+        size_t samples_to_write = (std::min)(chunk_size, audio_buffer.size() - samples_written);
+        size_t written = stream.write(audio_buffer.data() + samples_written, samples_to_write);
+        wav_stream.write(audio_buffer.data() + samples_written, written);
+        samples_written += written;
+    }
+
+    stream.wait_write_completed();
+
+    stream.close();
+
+    wav_stream.close();
+}
+
+TEST(audio_stream, render_10s_stream_exclusive)
+{
+    // Windows audio hardware render test
+    // As you are running this test you could use a sound capture app on your phone to test the render
+    // We will write a tone to the default render device for 10 seconds
+
+    audio_device device;
+    EXPECT_TRUE(try_get_default_audio_device(device, audio_device_type::render));
+
+    audio_stream stream = device.stream(audio_stream_exclusive_mode);
 
     stream.start();
 

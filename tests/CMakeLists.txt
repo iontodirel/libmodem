@@ -117,5 +117,7 @@ gtest_discover_tests(tests)
 
 configure_file(${CMAKE_SOURCE_DIR}/test_assets/bitstream_1.txt ${CMAKE_BINARY_DIR}/bitstream_1.txt COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/test_assets/packets_1d.txt ${CMAKE_BINARY_DIR}/packets_1d.txt COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/test_assets/bad_eye.wav ${CMAKE_BINARY_DIR}/bad_eye.wav COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/fft.py ${CMAKE_BINARY_DIR}/fft.py COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/eye.py ${CMAKE_BINARY_DIR}/eye.py COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/settings.json ${CMAKE_BINARY_DIR}/settings.json COPYONLY)
