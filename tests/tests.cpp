@@ -2218,6 +2218,169 @@ LIBMODEM_FX25_USING_NAMESPACE
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// IL2P tests                                                       //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+TEST(il2p, encode_frame)
+{
+    // s-frame
+    {
+        LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
+        f.to = { "KA2DEW", 2 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x81, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> il2p_bytes = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_frame(f);
+
+        EXPECT_EQ(il2p_bytes, std::vector<uint8_t>({
+            // Scrambled + Reed-Solomon encoded header
+            0x26, 0x57, 0x4D, 0x57, 0xF1, 0xD2, 0xA8, 0xF0, 0x6A, 0xF2, 0x7B, 0xAD, 0x23,
+            // Reed-Solomon parity bytes
+            0xBD, 0xC0,
+            // CRC
+            0x7F, 0x00, 0x1D, 0x2B
+        }));
+    }
+
+    // u-frame
+    {
+        LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
+        f.to = { "CQ" };
+        f.from = { "KK4HEJ", 15 };
+        f.from.command_response = true;
+        f.control = { 0x03, 0x00 };
+        f.pid = 0xF0;
+
+        std::vector<uint8_t> il2p_bytes = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_frame(f);
+
+        EXPECT_EQ(il2p_bytes, std::vector<uint8_t>({
+            // Scrambled + Reed-Solomon encoded header
+            0x6A, 0xEA, 0x9C, 0xC2, 0x01, 0x11, 0xFC, 0x14, 0x1F, 0xDA, 0x6E, 0xF2, 0x53,
+            // Reed-Solomon parity bytes
+            0x91, 0xBD,
+            // CRC
+            0x47, 0x6C, 0x54, 0x54
+        }));
+    }
+
+    // i-frame
+    {
+        LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
+        f.to = { "KA2DEW", 2 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 2 };
+        f.from.command_response = false;
+        f.control = { 0xB8, 0x00 };
+        f.pid = 0xCF;
+        f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+
+        std::vector<uint8_t> il2p_bytes = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_frame(f);
+
+        EXPECT_EQ(il2p_bytes, std::vector<uint8_t>({
+            // Scrambled + Reed-Solomon encoded header
+            0x26, 0x13, 0x6D, 0x02, 0x8C, 0xFE, 0xFB, 0xE8, 0xAA, 0x94, 0x2D, 0x6A, 0x34,
+            // Reed-Solomon parity bytes
+            0x43, 0x35,
+            // Scrambled + Reed-Solomon encoded payload ("012345678")
+            0x3C, 0x69, 0x9F, 0x0C, 0x75, 0x5A, 0x38, 0xA1, 0x7F, 0xA5, 0xDA, 0xD8, 0xF6, 0xEA,
+            0x57, 0x37, 0x3D, 0xB1, 0x2A, 0xB0, 0xDE, 0x44, 0xA8, 0x20, 0xD0,
+            // CRC
+            0x1D, 0x5A, 0x2B, 0x38
+        }));
+    }
+}
+
+TEST(bitstream, encode_il2p_bitstream)
+{
+LIBMODEM_IL2P_USING_NAMESPACE
+
+    // i-frame: KA2DEW-2 / KK4HEJ-2, control 0xB8, PID 0xCF, data "012345678"
+    // Uses the same frame as the il2p.encode_frame i-frame test
+    // which has exact byte-level verification
+
+    LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
+    f.to = { "KA2DEW", 2 };
+    f.to.command_response = true;
+    f.from = { "KK4HEJ", 2 };
+    f.from.command_response = false;
+    f.control = { 0xB8, 0x00 };
+    f.pid = 0xCF;
+    f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+
+    std::vector<uint8_t> bitstream = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_bitstream(f, 1, 1);
+
+    EXPECT_TRUE(bitstream.size() == 392);
+
+    EXPECT_TRUE(bitstream == (std::vector<uint8_t>{
+        // Preamble (0x55)
+        0, 1, 0, 1, 0, 1, 0, 1,
+        // IL2P Sync Word (MSB first)
+        1, 1, 1, 1, 0, 0, 0, 1, // 0xF1
+        0, 1, 0, 1, 1, 1, 1, 0, // 0x5E
+        0, 1, 0, 0, 1, 0, 0, 0, // 0x48
+        // Begin IL2P Frame (44 bytes, MSB first)
+        // Scrambled + Reed-Solomon encoded header (13 bytes)
+        0, 0, 1, 0, 0, 1, 1, 0, // 0x26
+        0, 0, 0, 1, 0, 0, 1, 1, // 0x13
+        0, 1, 1, 0, 1, 1, 0, 1, // 0x6D
+        0, 0, 0, 0, 0, 0, 1, 0, // 0x02
+        1, 0, 0, 0, 1, 1, 0, 0, // 0x8C
+        1, 1, 1, 1, 1, 1, 1, 0, // 0xFE
+        1, 1, 1, 1, 1, 0, 1, 1, // 0xFB
+        1, 1, 1, 0, 1, 0, 0, 0, // 0xE8
+        1, 0, 1, 0, 1, 0, 1, 0, // 0xAA
+        1, 0, 0, 1, 0, 1, 0, 0, // 0x94
+        0, 0, 1, 0, 1, 1, 0, 1, // 0x2D
+        0, 1, 1, 0, 1, 0, 1, 0, // 0x6A
+        0, 0, 1, 1, 0, 1, 0, 0, // 0x34
+        // Reed-Solomon header parity bytes (2 bytes)
+        0, 1, 0, 0, 0, 0, 1, 1, // 0x43
+        0, 0, 1, 1, 0, 1, 0, 1, // 0x35
+        // Scrambled + Reed-Solomon encoded payload: "012345678" (25 bytes)
+        0, 0, 1, 1, 1, 1, 0, 0, // 0x3C
+        0, 1, 1, 0, 1, 0, 0, 1, // 0x69
+        1, 0, 0, 1, 1, 1, 1, 1, // 0x9F
+        0, 0, 0, 0, 1, 1, 0, 0, // 0x0C
+        0, 1, 1, 1, 0, 1, 0, 1, // 0x75
+        0, 1, 0, 1, 1, 0, 1, 0, // 0x5A
+        0, 0, 1, 1, 1, 0, 0, 0, // 0x38
+        1, 0, 1, 0, 0, 0, 0, 1, // 0xA1
+        0, 1, 1, 1, 1, 1, 1, 1, // 0x7F
+        1, 0, 1, 0, 0, 1, 0, 1, // 0xA5
+        1, 1, 0, 1, 1, 0, 1, 0, // 0xDA
+        1, 1, 0, 1, 1, 0, 0, 0, // 0xD8
+        1, 1, 1, 1, 0, 1, 1, 0, // 0xF6
+        1, 1, 1, 0, 1, 0, 1, 0, // 0xEA
+        0, 1, 0, 1, 0, 1, 1, 1, // 0x57
+        0, 0, 1, 1, 0, 1, 1, 1, // 0x37
+        0, 0, 1, 1, 1, 1, 0, 1, // 0x3D
+        1, 0, 1, 1, 0, 0, 0, 1, // 0xB1
+        0, 0, 1, 0, 1, 0, 1, 0, // 0x2A
+        1, 0, 1, 1, 0, 0, 0, 0, // 0xB0
+        1, 1, 0, 1, 1, 1, 1, 0, // 0xDE
+        0, 1, 0, 0, 0, 1, 0, 0, // 0x44
+        1, 0, 1, 0, 1, 0, 0, 0, // 0xA8
+        0, 0, 1, 0, 0, 0, 0, 0, // 0x20
+        1, 1, 0, 1, 0, 0, 0, 0, // 0xD0
+        // End IL2P Frame
+        // CRC (4 bytes)
+        0, 0, 0, 1, 1, 1, 0, 1, // 0x1D
+        0, 1, 0, 1, 1, 0, 1, 0, // 0x5A
+        0, 0, 1, 0, 1, 0, 1, 1, // 0x2B
+        0, 0, 1, 1, 1, 0, 0, 0, // 0x38
+        // Postamble (0x55)
+        0, 1, 0, 1, 0, 1, 0, 1,
+    }));
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // kiss tests                                                       //
 //                                                                  //
 //                                                                  //
@@ -4634,6 +4797,216 @@ TEST(modem, modulate_afsk_1200_ax25_packet)
 
     // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
     EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+}
+
+TEST(modem, modulate_gfsk_9600_ax25_packet)
+{
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        sine_fsk_modulator_double_adapter modulator(9600, 192000);
+        ax25_scrambled_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 192000);
+
+        modem m;
+        m.baud_rate(9600);
+        m.start_silence(2);
+        m.end_silence(2);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.26);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 9600
+    run_process(ATEST_EXE_PATH, output, error, "-B 9600", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+}
+
+TEST(modem, modulate_gfsk_9600_il2p_packet)
+{
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        sine_fsk_modulator_double_adapter modulator(9600, 192000);
+        il2p_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 192000);
+
+        modem m;
+        m.baud_rate(9600);
+        m.start_silence(2);
+        m.end_silence(2);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.26);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 9600
+    run_process(ATEST_EXE_PATH, output, error, "-B 9600", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+}
+
+TEST(modem, modulate_sine_fsk_9600_ax25_packet)
+{
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        sine_fsk_modulator_double_adapter modulator(9600, 192000);
+        ax25_scrambled_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 192000);
+
+        modem m;
+        m.baud_rate(9600);
+        m.start_silence(2);
+        m.end_silence(2);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.26);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 9600
+    run_process(ATEST_EXE_PATH, output, error, "-B 9600", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+}
+
+TEST(modem, modulate_sine_fsk_9600_fx25_packet)
+{
+LIBMODEM_FX25_USING_NAMESPACE
+
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        sine_fsk_modulator_double_adapter modulator(9600, 192000);
+        fx25_scrambled_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 192000);
+
+        modem m;
+        m.baud_rate(9600);
+        m.start_silence(2);
+        m.end_silence(2);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.gain(0.26);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 9600 -d x
+    run_process(ATEST_EXE_PATH, output, error, "-B 9600", "-d x", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+
+    // Expect FX.25 decoding
+    EXPECT_TRUE(output.find("FX.25  0") != std::string::npos);
+}
+
+TEST(modem, modulate_gfsk_9600_ax25_packet_sample_rates)
+{
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    std::vector<int> sample_rates = { 44100, 48000, 96000, 192000 };
+
+    for (const auto& rate : sample_rates)
+    {
+        {
+            gfsk_modulator_double_adapter modulator(9600, rate, 0.8);
+            ax25_scrambled_bitstream_converter_adapter bitstream_converter;
+            wav_audio_output_stream wav_stream("test.wav", rate);
+
+            modem m;
+            m.baud_rate(9600);
+            m.start_silence(2);
+            m.end_silence(2);
+            m.tx_delay(300);
+            m.tx_tail(45);
+            m.gain(0.3);
+            m.initialize(wav_stream, modulator, bitstream_converter);
+
+            m.transmit(p);
+
+            wav_stream.close();
+        }
+
+        std::string output;
+        std::string error;
+
+        // Run Direwolf's ATEST with -B 9600
+        run_process(ATEST_EXE_PATH, output, error, "-B 9600", "test.wav");
+
+        // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+        EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+    }
+}
+TEST(modem, modulate_afsk_1200_il2p_packet)
+{
+LIBMODEM_IL2P_USING_NAMESPACE
+
+    packet p = { "N0CALL-10", "APZ001", { "WIDE1-1", "WIDE2-2" }, "Hello, APRS!" };
+
+    {
+        dds_afsk_modulator_double_adapter modulator(1200.0, 2200.0, 1200, 48000);
+        il2p_bitstream_converter_adapter bitstream_converter;
+        wav_audio_output_stream wav_stream("test.wav", 48000);
+
+        modem m;
+        m.baud_rate(1200);
+        m.gain(0.8);
+        m.tx_delay(300);
+        m.tx_tail(45);
+        m.initialize(wav_stream, modulator, bitstream_converter);
+
+        m.transmit(p);
+
+        wav_stream.close();
+    }
+
+    std::string output;
+    std::string error;
+
+    // Run Direwolf's ATEST with -B 1200
+    run_process(ATEST_EXE_PATH, output, error, "-B 1200", "test.wav");
+
+    // Expect [0] N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
+    EXPECT_TRUE(output.find("[0] " + to_string(p)) != std::string::npos);
+
+    // Verify it was decoded as IL2P (not AX.25)
+    EXPECT_TRUE(output.find("IL2P") != std::string::npos);
 }
 
 TEST(modem, modulate_afsk_1200_ax25_packet_sample_rates)
