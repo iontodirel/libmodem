@@ -36,7 +36,6 @@
 #include <cassert>
 #include <tuple>
 #include <charconv>
-#include <unordered_map>
 #include <memory>
 
 extern "C" {
@@ -1113,7 +1112,18 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p)
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
 {
-    return try_decode_frame(frame_bytes, frame.from, frame.to, frame.path, frame.data, frame.crc);
+    frame.path.clear();
+    frame.data.clear();
+
+    uint8_t control = 0;
+    uint8_t pid = 0;
+    auto [path_out, data_out, result] = try_decode_frame(frame_bytes.begin(), frame_bytes.end(), frame.from, frame.to, std::back_inserter(frame.path), std::back_inserter(frame.data), control, pid, frame.crc);
+    if (result)
+    {
+        frame.control[0] = control;
+        frame.pid = pid;
+    }
+    return result;
 }
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
@@ -1598,7 +1608,8 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
     //   | Correlation Tag   | AX.25 packet + 0x7E pad   | RS check bytes   |
     //   | (8 bytes)         | (data_size bytes)         | (parity)         |
     //   +-------------------+---------------------------+------------------+
-    //   |<-- not encoded -->|<------------ RS-encoded -------------------->|
+    //   |    not encoded    |              RS-encoded                      |
+    //   +-------------------+----------------------------------------------+
     //
     // References:
     //
@@ -1647,6 +1658,9 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
         }
     }
 
+    (void)mode_index; // reserved for diagnostics and future use
+    (void)total;      // reserved for future use
+
     if (tag == 0)
     {
         // Packet too large for any FX.25 format
@@ -1673,12 +1687,14 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
     // 
     // Block layout before encoding (full_data_size = 255 - check_size):
     //
-    //   |<------------------ full_data_size ------------------->|
+    //   +-------------------------------------------------------+
+    //   |                    full_data_size                     |
     //   +----------------+----------------+---------------------+
     //   |  frame         |  0x7E padding  |  0x00 (shortening)  |
     //   |  (original)    |  (idle flags)  |  (not transmitted)  |
-    //   +----------------+----------------+---------------------+
-    //   |<------- data_size ------->|
+    //   +----------------+----------+-----+---------------------+
+    //   |         data_size         |                           |
+    //   +---------------------------+---------------------------+
     //
     // The 0x7E padding serves double duty: it fills the data block for RS
     // encoding and appears as AX.25 idle flags to legacy receivers.
@@ -1711,9 +1727,12 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
     // The encoder leaves the data bytes unchanged and appends check_size
     // parity bytes.
 
-    correct_reed_solomon* rs = correct_reed_solomon_create(correct_rs_primitive_polynomial_8_4_3_2_0, 1, 1, check_size);
+    std::unique_ptr<correct_reed_solomon, decltype(&correct_reed_solomon_destroy)> rs(
+        correct_reed_solomon_create(correct_rs_primitive_polynomial_8_4_3_2_0, 1, 1, check_size),
+        correct_reed_solomon_destroy
+    );
 
-    if (rs == nullptr)
+    if (!rs)
     {
         // Failed to create RS encoder
         return {};
@@ -1721,9 +1740,7 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
 
     std::vector<uint8_t> encoded_data(block_size);
 
-    ssize_t result = correct_reed_solomon_encode(rs, pre_encoded_data.data(), full_data_size, encoded_data.data());
-
-    correct_reed_solomon_destroy(rs);
+    ssize_t result = correct_reed_solomon_encode(rs.get(), pre_encoded_data.data(), full_data_size, encoded_data.data());
 
     if (result != block_size)
     {
@@ -1739,13 +1756,16 @@ std::vector<uint8_t> encode_frame(std::span<const uint8_t> frame_bytes, size_t m
     //
     // Encoded data layout (full RS block = 255 bytes):
     //
-    // |<------------- full_data_size ------------->|<--- check_size --->|
+    // +--------------------------------------------+--------------------+
+    // |               full_data_size               |     check_size     |
     // +-------------+-------------+----------------+--------------------+
     // | frame_bytes | 0x7E        | 0x00           | RS check bytes     |
     // | (original)  | (idle flags)| (RS shortening)| (parity)           |
-    // +-------------+-------------+----------------+--------------------+
-    // |<---- data_size ---->|      skipped         |<--- check_size --->|
-    //        transmitted ^^^                        ^^^ transmitted
+    // +-------------+-------+-----+----------------+--------------------+
+    // |      data_size      |      skipped         |     check_size     |
+    // +---------------------+----------------------+--------------------+
+    // |       transmitted   |                      |     transmitted    |
+    // +---------------------+----------------------+--------------------+
     //
     // For shortened codes (data_size < full_data_size), the zero-padding
     // region is not transmitted.
@@ -1953,26 +1973,19 @@ pid_abbreviation encode_pid(uint8_t ax25_pid)
         return pid_abbreviation::layer3;
     }
 
-    static const std::unordered_map<uint8_t, pid_abbreviation> table =
+    switch (ax25_pid)
     {
-        { 0x01, pid_abbreviation::iso8208          },
-        { 0x06, pid_abbreviation::compressed_tcp   },
-        { 0x07, pid_abbreviation::uncompressed_tcp },
-        { 0x08, pid_abbreviation::segmentation     },
-        { 0xCC, pid_abbreviation::ip               },
-        { 0xCD, pid_abbreviation::arp              },
-        { 0xCE, pid_abbreviation::flexnet          },
-        { 0xCF, pid_abbreviation::thenet           },
-        { 0xF0, pid_abbreviation::no_layer3        }
-    };
-
-    auto it = table.find(ax25_pid);
-    if (it != table.end())
-    {
-        return it->second;
+        case 0x01: return pid_abbreviation::iso8208;
+        case 0x06: return pid_abbreviation::compressed_tcp;
+        case 0x07: return pid_abbreviation::uncompressed_tcp;
+        case 0x08: return pid_abbreviation::segmentation;
+        case 0xCC: return pid_abbreviation::ip;
+        case 0xCD: return pid_abbreviation::arp;
+        case 0xCE: return pid_abbreviation::flexnet;
+        case 0xCF: return pid_abbreviation::thenet;
+        case 0xF0: return pid_abbreviation::no_layer3;
+        default:   return pid_abbreviation::unknown;
     }
-
-    return pid_abbreviation::unknown;
 }
 
 template<typename InputIt, typename OutputIt>
@@ -2612,6 +2625,7 @@ std::vector<uint8_t> encode_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame&
         correct_reed_solomon_create(rs_polynomial, rs_fcr, rs_prim, header_parity),
         correct_reed_solomon_destroy
     );
+
     if (!rs_header)
     {
         return {};
@@ -2621,6 +2635,7 @@ std::vector<uint8_t> encode_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame&
         correct_reed_solomon_create(rs_polynomial, rs_fcr, rs_prim, payload_parity),
         correct_reed_solomon_destroy
     );
+
     if (!rs_payload)
     {
         return {};

@@ -1010,6 +1010,459 @@ LIBMODEM_AX25_USING_NAMESPACE
     }));
 }
 
+
+TEST(ax25, encode_various_frame_types)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // s-frame
+    {
+        frame f;
+        f.to = { "KA2DEW", 2 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x81, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KA2DEW-2 (C/R=1)
+            0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control
+            0x81,
+            // FCS
+            0xDB, 0xF0
+        }));
+    }
+
+    // u-frame
+    {
+        frame f;
+        f.to = { "CQ" };
+        f.from = { "KK4HEJ", 15 };
+        f.from.command_response = true;
+        f.control = { 0x03, 0x00 };
+        f.pid = 0xF0;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: CQ
+            0x86, 0xA2, 0x40, 0x40, 0x40, 0x40, 0x60,
+            // Source: KK4HEJ-15 (C/R=1)
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0xFF,
+            // Control, PID
+            0x03, 0xF0,
+            // FCS
+            0x44, 0x7C
+        }));
+    }
+
+    // i-frame
+    {
+        frame f;
+        f.to = { "KA2DEW", 2 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 2 };
+        f.from.command_response = false;
+        f.control = { 0xB8, 0x00 };
+        f.pid = 0xCF;
+        f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KA2DEW-2 (C/R=1)
+            0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4,
+            // Source: KK4HEJ-2
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x65,
+            // Control, PID
+            0xB8, 0xCF,
+            // Payload: "012345678"
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+            // FCS
+            0xB8, 0xDA
+        }));
+    }
+
+    // winlink: SABM, client connects to RMS gateway (command, P=1)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x3F, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control: SABM P=1
+            0x3F,
+            // FCS
+            0x2C, 0x82
+        }));
+    }
+
+    // winlink: UA, gateway accepts connection (response, F=1)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x73, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: UA F=1
+            0x73,
+            // FCS
+            0xB1, 0xE1
+        }));
+    }
+
+    // winlink: I-frame, client sends B2F login (N(S)=0, N(R)=0, P=0)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x00, 0x00 };
+        f.pid = 0xF0;
+        f.data = { 0x3B, 0x50, 0x51, 0x3A, 0x20, 0x37, 0x36, 0x73, 0x74, 0x72, 0x41, 0x54, 0x55, 0x0D }; // ";PQ: 76strATU\r"
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control, PID
+            0x00, 0xF0,
+            // Payload: ";PQ: 76strATU\r"
+            0x3B, 0x50, 0x51, 0x3A, 0x20, 0x37, 0x36,
+            0x73, 0x74, 0x72, 0x41, 0x54, 0x55, 0x0D,
+            // FCS
+            0x6C, 0x1B
+        }));
+    }
+
+    // winlink: RR, gateway acknowledges I-frame (response, N(R)=1, F=0)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x21, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: RR N(R)=1
+            0x21,
+            // FCS
+            0x26, 0x90
+        }));
+    }
+
+    // winlink: I-frame, gateway sends B2F response (N(S)=0, N(R)=1, P=0)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x20, 0x00 };
+        f.pid = 0xF0;
+        f.data = { 0x3B, 0x50, 0x51, 0x3A, 0x20, 0x39, 0x41, 0x33, 0x32, 0x76, 0x52, 0x31, 0x71, 0x0D }; // ";PQ: 9A32vR1q\r"
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control, PID
+            0x20, 0xF0,
+            // Payload: ";PQ: 9A32vR1q\r"
+            0x3B, 0x50, 0x51, 0x3A, 0x20, 0x39, 0x41,
+            0x33, 0x32, 0x76, 0x52, 0x31, 0x71, 0x0D,
+            // FCS
+            0x07, 0xD6
+        }));
+    }
+
+    // winlink: RR, client acknowledges (command, N(R)=1, P=0)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x21, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control: RR N(R)=1
+            0x21,
+            // FCS
+            0xD3, 0x7B
+        }));
+    }
+
+    // winlink: I-frame, client sends message proposal (N(S)=1, N(R)=1, P=0)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x22, 0x00 };
+        f.pid = 0xF0;
+        f.data = { 0x46, 0x43, 0x20, 0x45, 0x4D, 0x20, 0x41, 0x42, 0x43, 0x44, 0x45, 0x31, 0x32, 0x33, 0x34, 0x35, 0x20, 0x31, 0x32, 0x33, 0x20, 0x34, 0x35, 0x20, 0x30, 0x0D }; // "FC EM ABCDE12345 123 45 0\r"
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control, PID
+            0x22, 0xF0,
+            // Payload: "FC EM ABCDE12345 123 45 0\r"
+            0x46, 0x43, 0x20, 0x45, 0x4D, 0x20, 0x41, 0x42, 0x43,
+            0x44, 0x45, 0x31, 0x32, 0x33, 0x34, 0x35, 0x20, 0x31,
+            0x32, 0x33, 0x20, 0x34, 0x35, 0x20, 0x30, 0x0D,
+            // FCS
+            0xFE, 0x6B
+        }));
+    }
+
+    // winlink: REJ, gateway requests retransmit (response, N(R)=1, F=0)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x29, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: REJ N(R)=1
+            0x29,
+            // FCS
+            0x6E, 0x1C
+        }));
+    }
+
+    // winlink: RNR, gateway flow control busy (response, N(R)=1, F=0)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x25, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: RNR N(R)=1
+            0x25,
+            // FCS
+            0x02, 0xD6
+        }));
+    }
+
+    // winlink: RR P=1, client polls gateway (command, N(R)=2, P=1)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x51, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control: RR N(R)=2 P=1
+            0x51,
+            // FCS
+            0x54, 0x08
+        }));
+    }
+
+    // winlink: RR F=1, gateway responds to poll (response, N(R)=2, F=1)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x51, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: RR N(R)=2 F=1
+            0x51,
+            // FCS
+            0xA1, 0xE3
+        }));
+    }
+
+    // winlink: DISC, client disconnects (command, P=1)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x53, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control: DISC P=1
+            0x53,
+            // FCS
+            0x46, 0x2B
+        }));
+    }
+
+    // winlink: UA, gateway confirms disconnect (response, F=1)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x73, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: UA F=1
+            0x73,
+            // FCS
+            0xB1, 0xE1
+        }));
+    }
+
+    // winlink: DM, gateway rejects connection (response, F=1)
+    {
+        frame f;
+        f.to = { "KK4HEJ", 7 };
+        f.to.command_response = false;
+        f.from = { "W3ADO", 10 };
+        f.from.command_response = true;
+        f.control = { 0x1F, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6E,
+            // Source: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF5,
+            // Control: DM F=1
+            0x1F,
+            // FCS
+            0xDB, 0x48
+        }));
+    }
+
+    // winlink: SABME, client connects in extended mode (command, P=1)
+    {
+        frame f;
+        f.to = { "W3ADO", 10 };
+        f.to.command_response = true;
+        f.from = { "KK4HEJ", 7 };
+        f.from.command_response = false;
+        f.control = { 0x7F, 0x00 };
+        f.pid = 0x00;
+
+        std::vector<uint8_t> ax25_bytes = encode_frame(f);
+
+        EXPECT_TRUE(ax25_bytes == std::vector<uint8_t>({
+            // Destination: W3ADO-10 (C/R=1)
+            0xAE, 0x66, 0x82, 0x88, 0x9E, 0x40, 0xF4,
+            // Source: KK4HEJ-7
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F,
+            // Control: SABME P=1
+            0x7F,
+            // FCS
+            0x28, 0xC0
+        }));
+    }
+}
+
 TEST(ax25, to_packet)
 {
 LIBMODEM_AX25_USING_NAMESPACE
@@ -1493,6 +1946,31 @@ LIBMODEM_AX25_USING_NAMESPACE
         // The C-bit on from/to addresses does not produce a "*" in string representation
 
         EXPECT_TRUE(to_string(p) == "KD7FNO-5>S5RTQP,W6PVG-3*,WB6JAR-10*,WIDE2*:'/3hl\"Ku/]\"4t}\r");
+    }
+
+    {
+        std::vector<uint8_t> frame_bytes = {
+            // Destination: KA2DEW-2 (C/R=1)
+            0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4,
+            // Source: KK4HEJ-2
+            0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x65,
+            // Control, PID
+            0xB8, 0xCF,
+            // Payload: "012345678"
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+            // FCS
+            0xB8, 0xDA
+        };
+
+        struct frame f;
+
+        EXPECT_TRUE(try_decode_frame(frame_bytes, f));
+
+        EXPECT_EQ(f.control[0], 0xB8);
+        EXPECT_EQ(f.pid, 0xCF);
+        EXPECT_EQ(to_string(f.from), "KK4HEJ-2");
+        EXPECT_EQ(to_string(f.to), "KA2DEW-2");
+        EXPECT_EQ(f.data, (std::vector<uint8_t>{ 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }));
     }
 }
 
