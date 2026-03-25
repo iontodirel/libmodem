@@ -33,8 +33,8 @@
 
 #include "io.h"
 #include "bitstream.h"
-#include "kiss.h"
 #include "modem.h"
+#include "formatter.h"
 
 #include <string>
 #include <memory>
@@ -79,6 +79,7 @@ public:
     virtual void stop() = 0;
 
     virtual void write(const std::vector<uint8_t>& data) = 0;
+    virtual void write(std::size_t client_id, const std::vector<uint8_t>& data);
     virtual size_t read(std::size_t client_id, std::vector<uint8_t>& data, size_t size) = 0;
 
     virtual std::vector<std::size_t> clients() = 0;
@@ -119,19 +120,15 @@ LIBMODEM_INLINE bool transport::wait_data_received(const std::chrono::duration<R
 struct tcp_transport : public transport, private tcp_server_base
 {
 public:
-    tcp_transport() {}
-    tcp_transport(const std::string& hostname, int port) : hostname_(hostname), port_(port)
-    {
-    }
-    ~tcp_transport()
-    {
-        stop();
-    }
+    tcp_transport();
+    tcp_transport(const std::string& hostname, int port);
+    ~tcp_transport();
 
     void start() override;
     void stop() override;
 
     void write(const std::vector<uint8_t>& data) override;
+    void write(std::size_t client_id, const std::vector<uint8_t>& data) override;
     size_t read(std::size_t client_id, std::vector<uint8_t>& data, size_t size) override;
     std::vector<std::size_t> clients() override;
     void flush() override;
@@ -148,6 +145,8 @@ public:
 
     void enabled(bool enable) override;
     bool enabled() override;
+
+    tcp_server_base& server();
 
 private:
     void on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data) override;
@@ -257,119 +256,16 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// formatter                                                        //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-struct formatter
-{
-    formatter();
-    formatter(const formatter& other);
-    virtual ~formatter();
-
-    virtual std::unique_ptr<formatter> clone() const = 0;
-    virtual std::vector<uint8_t> encode(packet p) = 0;
-    virtual bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p) = 0;
-
-    template<typename Func, typename... Args>
-        requires std::invocable<std::decay_t<Func>, const kiss::frame&, std::decay_t<Args>...>
-    void add_on_command(Func&& f, Args&&... args);
-
-protected:
-    struct command_callable_base
-    {
-        virtual void invoke(const kiss::frame& frame) = 0;
-        virtual std::unique_ptr<command_callable_base> clone() const = 0;
-        virtual ~command_callable_base() = default;
-    };
-
-    template<typename Func, typename... Args>
-    struct command_callable : public command_callable_base
-    {
-        template<typename F, typename... A>
-        command_callable(F&& f, A&&... a);
-
-        void invoke(const kiss::frame& frame) override;
-        std::unique_ptr<command_callable_base> clone() const override;
-
-    private:
-        Func func_;
-        std::tuple<Args...> args_;
-    };
-
-    void invoke_on_command(const kiss::frame& frame);
-
-    std::unique_ptr<command_callable_base> on_command_callable_;
-};
-
-template<typename Func, typename... Args>
-    requires std::invocable<std::decay_t<Func>, const kiss::frame&, std::decay_t<Args>...>
-LIBMODEM_INLINE void formatter::add_on_command(Func&& f, Args&&... args)
-{
-    if constexpr (std::is_lvalue_reference_v<Func>)
-    {
-        on_command_callable_ = std::make_unique<command_callable<std::decay_t<Func>*, std::decay_t<Args>...>>(&f, std::forward<Args>(args)...);
-    }
-    else
-    {
-        on_command_callable_ = std::make_unique<command_callable<std::decay_t<Func>, std::decay_t<Args>...>>(std::forward<Func>(f), std::forward<Args>(args)...);
-    }
-}
-
-template<typename Func, typename... Args>
-template<typename F, typename... A>
-LIBMODEM_INLINE formatter::command_callable<Func, Args...>::command_callable(F&& f, A&&... a) : func_(std::forward<F>(f)), args_(std::forward<A>(a)...)
-{
-}
-
-template<typename Func, typename... Args>
-LIBMODEM_INLINE void formatter::command_callable<Func, Args...>::invoke(const kiss::frame& frame)
-{
-    if constexpr (std::is_pointer_v<Func>)
-    {
-        std::apply(*func_, std::tuple_cat(std::make_tuple(std::cref(frame)), args_));
-    }
-    else
-    {
-        std::apply(func_, std::tuple_cat(std::make_tuple(std::cref(frame)), args_));
-    }
-}
-
-template<typename Func, typename... Args>
-LIBMODEM_INLINE std::unique_ptr<formatter::command_callable_base> formatter::command_callable<Func, Args...>::clone() const
-{
-    return std::make_unique<command_callable<Func, Args...>>(func_, std::make_from_tuple<std::tuple<Args...>>(args_));
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// ax25_kiss_formatter                                              //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-struct ax25_kiss_formatter : public formatter
-{
-public:
-    std::unique_ptr<formatter> clone() const override;
-    std::vector<uint8_t> encode(packet p) override;
-    bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p) override;
-    bool try_decode(const std::vector<uint8_t>& data, size_t count, kiss::frame& f);
-
-private:
-    kiss::decoder kiss_decoder_;
-    std::queue<kiss::frame> pending_frames_;
-};
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
 // data_stream                                                      //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+struct received_data
+{
+    uint8_t port = 0;
+    packet p;
+};
 
 class data_stream
 {
@@ -385,6 +281,7 @@ public:
 
     void send(packet p);
     bool try_receive(packet& p);
+    bool try_receive(received_data& data);
 
     bool wait_data_received(int timeout_ms = -1);
 

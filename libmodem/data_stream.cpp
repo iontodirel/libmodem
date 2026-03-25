@@ -38,10 +38,37 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// transport                                                        //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+void transport::write(std::size_t client_id, const std::vector<uint8_t>& data)
+{
+    (void)client_id;
+    write(data);
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // tcp_transport                                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+tcp_transport::tcp_transport()
+{
+}
+
+tcp_transport::tcp_transport(const std::string& hostname, int port) : hostname_(hostname), port_(port)
+{
+}
+
+tcp_transport::~tcp_transport()
+{
+    stop();
+}
 
 void tcp_transport::on_data_received(const tcp_client_connection& connection, const std::vector<uint8_t>& data)
 {
@@ -88,6 +115,13 @@ void tcp_transport::stop()
 void tcp_transport::write(const std::vector<uint8_t>& data)
 {
     tcp_server_base::broadcast(data);
+}
+
+void tcp_transport::write(std::size_t client_id, const std::vector<uint8_t>& data)
+{
+    tcp_client_connection conn;
+    conn.id = client_id;
+    tcp_server_base::send(conn, std::vector<uint8_t>(data));
 }
 
 size_t tcp_transport::read(std::size_t client_id, std::vector<uint8_t>& data, size_t size)
@@ -146,6 +180,11 @@ void tcp_transport::enabled(bool enable)
 bool tcp_transport::enabled()
 {
     return enabled_;
+}
+
+tcp_server_base& tcp_transport::server()
+{
+    return *this;
 }
 
 // **************************************************************** //
@@ -214,96 +253,6 @@ bool serial_transport::enabled()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// formatter                                                        //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-formatter::formatter() = default;
-
-formatter::formatter(const formatter& other)
-{
-    if (other.on_command_callable_)
-    {
-        on_command_callable_ = other.on_command_callable_->clone();
-    }
-}
-
-formatter::~formatter() = default;
-
-void formatter::invoke_on_command(const kiss::frame& frame)
-{
-    if (on_command_callable_)
-    {
-        on_command_callable_->invoke(frame);
-    }
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// ax25_kiss_formatter                                              //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-std::vector<uint8_t> ax25_kiss_formatter::encode(packet p)
-{
-    std::vector<uint8_t> kiss_bytes;
-    std::vector<uint8_t> ax25_frame_bytes = ax25::encode_frame(p);
-    kiss::encode(0, ax25_frame_bytes.begin(), ax25_frame_bytes.end() - 2, std::back_inserter(kiss_bytes));
-    return kiss_bytes;
-}
-
-bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, packet& p)
-{
-    kiss::frame frame;
-    if (try_decode(data, count, frame))
-    {
-        if (frame.command_byte == 0)
-        {
-            return ax25::try_decode_frame_no_fcs(frame.data, p);
-        }
-        else
-        {
-            invoke_on_command(frame);
-            return false;
-        }
-    }
-    return false;
-}
-
-bool ax25_kiss_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, kiss::frame& p)
-{
-    if (count > 0)
-    {
-        kiss_decoder_.decode(data.begin(), data.begin() + count);
-        for (const auto& frame : kiss_decoder_.frames())
-        {
-            pending_frames_.push(frame);
-        }
-        kiss_decoder_.clear();
-    }
-
-    if (pending_frames_.empty())
-    {
-        return false;
-    }
-
-    p = std::move(pending_frames_.front());
-    pending_frames_.pop();
-
-    return true;
-}
-
-std::unique_ptr<formatter> ax25_kiss_formatter::clone() const
-{
-    return std::make_unique<ax25_kiss_formatter>(*this);
-}
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
 // data_stream                                                      //
 //                                                                  //
 //                                                                  //
@@ -344,11 +293,28 @@ void data_stream::send(packet p)
     {
         return;
     }
-    std::vector<uint8_t> data = formatter_.value().get().encode(p);
-    transport_.value().get().write(data);
+    for (auto& [client_id, client_formatter] : client_formatters_)
+    {
+        auto bytes = client_formatter->encode(p);
+        if (!bytes.empty())
+        {
+            transport_->get().write(client_id, bytes);
+        }
+    }
 }
 
 bool data_stream::try_receive(packet& p)
+{
+    received_data d;
+    if (!try_receive(d))
+    {
+        return false;
+    }
+    p = std::move(d.p);
+    return true;
+}
+
+bool data_stream::try_receive(received_data& d)
 {
     if (!transport_->get().enabled())
     {
@@ -371,9 +337,20 @@ bool data_stream::try_receive(packet& p)
             continue;
         }
 
-        if (client_formatter->try_decode(read_buffer_, bytes_read, p))
+        decode_result result;
+        if (client_formatter->try_decode(read_buffer_, bytes_read, result))
         {
-            return true;
+            if (!result.response_bytes.empty())
+            {
+                transport_->get().write(client_id, result.response_bytes);
+            }
+
+            if (result.decoded_packet)
+            {
+                d.p = std::move(*result.decoded_packet);
+                d.port = result.port;
+                return true;
+            }
         }
     }
 
@@ -383,9 +360,20 @@ bool data_stream::try_receive(packet& p)
     {
         if (std::find(current_clients.begin(), current_clients.end(), it->first) == current_clients.end())
         {
-            if (it->second->try_decode({}, 0, p))
+            decode_result result;
+            if (it->second->try_decode({}, 0, result))
             {
-                return true;  // Cleanup continues next call
+                if (!result.response_bytes.empty())
+                {
+                    transport_->get().write(it->first, result.response_bytes);
+                }
+
+                if (result.decoded_packet)
+                {
+                    d.p = std::move(*result.decoded_packet);
+                    d.port = result.port;
+                    return true;
+                }
             }
             it = client_formatters_.erase(it);
         }
@@ -481,7 +469,7 @@ void modem_data_stream::start()
 
     receive_thread_ = std::jthread([this](std::stop_token stop_token) {
         receive_callback(stop_token);
-        });
+    });
 }
 
 void modem_data_stream::stop()
@@ -544,17 +532,17 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
 {
     while (!stop_token.stop_requested())
     {
-        packet received_packet;
-        if (try_receive(received_packet))
+        received_data d;
+        if (try_receive(d))
         {
             uint64_t packet_id = next_packet_id_.fetch_add(1);
             uint64_t receive_id = next_receive_id_.fetch_add(1);
 
-            impl_->packets.push_back({ received_packet, packet_id, receive_id });
+            impl_->packets.push_back({ d.p, packet_id, receive_id });
 
             if (on_packet_received_)
             {
-                on_packet_received_(received_packet, packet_id, receive_id);
+                on_packet_received_(d.p, packet_id, receive_id);
             }
         }
 
