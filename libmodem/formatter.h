@@ -39,6 +39,7 @@
 #include <cstring>
 #include <memory>
 #include <queue>
+#include <optional>
 
 #include "bitstream.h"
 
@@ -403,78 +404,6 @@ frame encode_heard_stations_response_frame(uint8_t port);
 
 bool try_encode_ax25_response_frames(const std::vector<uint8_t>& ax25_bytes, uint8_t port, frame& raw, frame& monitor);
 
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// decoder                                                          //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-struct decoder
-{
-    template <std::input_iterator InputIterator>
-    bool decode(InputIterator input_it_begin, InputIterator input_it_end);
-
-    const std::vector<frame>& frames() const;
-    size_t count() const;
-
-    void reset();
-    void clear();
-
-private:
-    std::vector<frame> data_;
-    std::vector<uint8_t> buffer_;
-    bool reading_header_ = true;
-    header current_header_ = {};
-};
-
-template <std::input_iterator InputIterator>
-LIBMODEM_INLINE bool decoder::decode(InputIterator input_it_begin, InputIterator input_it_end)
-{
-    size_t current_data_count = data_.size();
-
-    for (auto it = input_it_begin; it != input_it_end; ++it)
-    {
-        buffer_.push_back(static_cast<uint8_t>(*it));
-
-        if (reading_header_ && buffer_.size() >= sizeof(header))
-        {
-            std::memcpy(&current_header_, buffer_.data(), sizeof(header));
-
-            if (current_header_.data_length == 0)
-            {
-                frame f;
-                f.header = current_header_;
-                data_.emplace_back(std::move(f));
-
-                buffer_.clear();
-                reading_header_ = true;
-                current_header_ = {};
-            }
-            else
-            {
-                reading_header_ = false;
-                buffer_.erase(buffer_.begin(), buffer_.begin() + sizeof(header));
-            }
-        }
-        else if (!reading_header_ && buffer_.size() >= current_header_.data_length)
-        {
-            frame f;
-            f.header = current_header_;
-            f.data.assign(buffer_.begin(), buffer_.begin() + current_header_.data_length);
-            data_.emplace_back(std::move(f));
-
-            std::vector<uint8_t> overflow(buffer_.begin() + current_header_.data_length, buffer_.end());
-            buffer_ = std::move(overflow);
-            reading_header_ = true;
-            current_header_ = {};
-        }
-    }
-
-    return (current_data_count < data_.size());
-}
-
 bool decode_via_frame(const frame& f, v_frame& result);
 
 bool try_decode(const frame& f, packet& p);
@@ -497,17 +426,7 @@ struct session
     uint32_t version_minor = 0;
 };
 
-struct processed_frame
-{
-    std::vector<uint8_t> data;
-    std::vector<frame> responses;
-    bool has_data = false;
-    bool has_responses = false;
-};
-
 std::vector<frame> handle_frame(const frame& f, session& s);
-
-processed_frame process_frame(const frame& f, session& s);
 
 LIBMODEM_AGWPE_NAMESPACE_END
 
@@ -523,6 +442,13 @@ LIBMODEM_NAMESPACE_END
 
 LIBMODEM_NAMESPACE_BEGIN
 
+struct decode_result
+{
+    std::optional<packet> decoded_packet;
+    uint8_t port = 0;
+    std::vector<uint8_t> response_bytes;
+};
+
 struct formatter
 {
     formatter();
@@ -532,6 +458,7 @@ struct formatter
     virtual std::unique_ptr<formatter> clone() const = 0;
     virtual std::vector<uint8_t> encode(packet p) = 0;
     virtual bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p, uint8_t& port) = 0;
+    virtual bool try_decode(const std::vector<uint8_t>& data, size_t count, decode_result& result);
 
     virtual void context(std::size_t client_id) = 0;
 
@@ -641,11 +568,19 @@ public:
     std::unique_ptr<formatter> clone() const override;
     std::vector<uint8_t> encode(packet p) override;
     bool try_decode(const std::vector<uint8_t>& data, size_t count, packet& p, uint8_t& port) override;
+    bool try_decode(const std::vector<uint8_t>& data, size_t count, decode_result& result) override;
     void context(std::size_t client_id) override;
 
+    void port_descriptions(const std::vector<std::string>& descriptions);
+    void version(uint32_t major, uint32_t minor);
+
 private:
-    agwpe::decoder agwpe_decoder_;
+    void decode(const std::vector<uint8_t>& data, size_t count);
+
+    std::vector<uint8_t> buffer_;
     std::queue<std::pair<packet, uint8_t>> pending_packets_;
+    std::queue<std::vector<uint8_t>> pending_responses_;
+    agwpe::session session_;
     size_t client_id_ = 0;
 };
 

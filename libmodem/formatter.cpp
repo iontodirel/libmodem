@@ -257,14 +257,14 @@ LIBMODEM_AGWPE_NAMESPACE_BEGIN
 
 LIBMODEM_ANONYMOUS_NAMESPACE_BEGIN
 
-void write_address(char(&field)[sizeof(header::from)], const std::string& address)
+void pack_address(char(&field)[sizeof(header::from)], const std::string& address)
 {
     std::memset(field, 0, sizeof(header::from));
     std::size_t len = std::min(address.size(), sizeof(header::from) - 1);
     std::memcpy(field, address.c_str(), len);
 }
 
-std::string read_address(const char(&field)[sizeof(header::from)])
+std::string unpack_address(const char(&field)[sizeof(header::from)])
 {
     return std::string(field, strnlen(field, sizeof(header::from)));
 }
@@ -294,12 +294,11 @@ std::vector<uint8_t> to_bytes(const frame& f)
 
 bool is_data_frame(const frame& f)
 {
-    char kind = static_cast<char>(f.header.datakind);
-    switch (kind)
+    switch (static_cast<data_kind>(f.header.datakind))
     {
-        case 'V': // UI frame via digipeaters
-        case 'M': // UI frame
-        case 'K': // raw AX.25 frame
+        case data_kind::send_ui_via:
+        case data_kind::send_ui:
+        case data_kind::transmit_raw:
             return true;
         default:
             return false;
@@ -375,7 +374,7 @@ frame encode_register_response_frame(const std::string& address, bool success)
 
     f.header.datakind = static_cast<uint8_t>(data_kind::register_call);
 
-    write_address(f.header.from, address);
+    pack_address(f.header.from, address);
 
     f.header.data_length = 1;
 
@@ -405,8 +404,8 @@ frame encode_ax25_response_frame(uint8_t port, const std::string& from_address, 
     f.header.datakind = static_cast<uint8_t>(data_kind::transmit_raw);
     f.header.port = port;
 
-    write_address(f.header.from, from_address);
-    write_address(f.header.to, to_address);
+    pack_address(f.header.from, from_address);
+    pack_address(f.header.to, to_address);
 
     f.header.pid = pid;
     f.header.data_length = static_cast<uint32_t>(ax25_bytes.size());
@@ -434,8 +433,8 @@ frame encode_monitor_ui_response_frame(uint8_t port, const std::string& from_add
     f.header.datakind = static_cast<uint8_t>(data_kind::monitor_ui);
     f.header.port = port;
 
-    write_address(f.header.from, from_address);
-    write_address(f.header.to, to_address);
+    pack_address(f.header.from, from_address);
+    pack_address(f.header.to, to_address);
 
     f.header.pid = pid;
 
@@ -458,8 +457,8 @@ frame encode_connection_frames_response_frame(uint8_t port, const std::string& f
     f.header.datakind = static_cast<uint8_t>(data_kind::query_frames_conn);
     f.header.port = port;
 
-    write_address(f.header.from, from_address);
-    write_address(f.header.to, to_address);
+    pack_address(f.header.from, from_address);
+    pack_address(f.header.to, to_address);
 
     f.header.data_length = 4;
 
@@ -507,37 +506,6 @@ bool try_encode_ax25_response_frames(const std::vector<uint8_t>& ax25_bytes, uin
 }
 
 
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// decoder                                                          //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-const std::vector<frame>& decoder::frames() const
-{
-    return data_;
-}
-
-size_t decoder::count() const
-{
-    return data_.size();
-}
-
-void decoder::reset()
-{
-    data_.clear();
-    buffer_.clear();
-    reading_header_ = true;
-    current_header_ = {};
-}
-
-void decoder::clear()
-{
-    data_.clear();
-}
-
 bool decode_via_frame(const frame& f, v_frame& result)
 {
     if (f.data.empty())
@@ -579,43 +547,47 @@ bool decode_via_frame(const frame& f, v_frame& result)
 
 bool try_decode(const frame& f, packet& p)
 {
-    char kind = static_cast<char>(f.header.datakind);
-
-    if (kind == 'K')
+    switch (static_cast<data_kind>(f.header.datakind))
     {
-        if (f.data.size() < 2)
+        case data_kind::transmit_raw:
         {
-            return false;
-        }
-        std::vector<uint8_t> ax25_data(f.data.begin() + 1, f.data.end());
-        return ax25::try_decode_frame_no_fcs(ax25_data, p);
-    }
-    else if (kind == 'V')
-    {
-        struct v_frame via_frame;
-
-        if (!decode_via_frame(f, via_frame))
-        {
-            return false;
+            if (f.data.size() < 2)
+            {
+                return false;
+            }
+            std::vector<uint8_t> ax25_data(f.data.begin() + 1, f.data.end());
+            return ax25::try_decode_frame_no_fcs(ax25_data, p);
         }
 
-        p.from = std::string(f.header.from, strnlen(f.header.from, sizeof(header::from)));
-        p.to = std::string(f.header.to, strnlen(f.header.to, sizeof(header::to)));
-        p.path = via_frame.addresses;
-        p.data = std::string(via_frame.info.begin(), via_frame.info.end());
+        case data_kind::send_ui_via:
+        {
+            struct v_frame via_frame;
 
-        return true;
+            if (!decode_via_frame(f, via_frame))
+            {
+                return false;
+            }
+
+            p.from = unpack_address(f.header.from);
+            p.to = unpack_address(f.header.to);
+            p.path = via_frame.addresses;
+            p.data = std::string(via_frame.info.begin(), via_frame.info.end());
+
+            return true;
+        }
+
+        case data_kind::send_ui:
+        {
+            p.from = unpack_address(f.header.from);
+            p.to = unpack_address(f.header.to);
+            p.data = std::string(f.data.begin(), f.data.end());
+
+            return true;
+        }
+
+        default:
+            return false;
     }
-    else if (kind == 'M')
-    {
-        p.from = std::string(f.header.from, strnlen(f.header.from, sizeof(header::from)));
-        p.to = std::string(f.header.to, strnlen(f.header.to, sizeof(header::to)));
-        p.data = std::string(f.data.begin(), f.data.end());
-
-        return true;
-    }
-
-    return false;
 }
 
 // **************************************************************** //
@@ -630,71 +602,71 @@ std::vector<frame> handle_frame(const frame& f, session& s)
 {
     std::vector<frame> responses;
 
-    switch (static_cast<char>(f.header.datakind))
+    switch (static_cast<data_kind>(f.header.datakind))
     {
-        case 'P':
+        case data_kind::login:
         {
             break;
         }
 
-        case 'R':
+        case data_kind::version_request:
         {
             responses.push_back(encode_version_response_frame(s.version_major, s.version_minor));
             break;
         }
 
-        case 'G':
+        case data_kind::port_info_request:
         {
             responses.push_back(encode_port_info_response_frame(s.port_descriptions));
             break;
         }
 
-        case 'g':
+        case data_kind::port_cap_request:
         {
             responses.push_back(encode_port_capabilities_response_frame(f.header.port, 0, 0xff, 50, 0, 63, 10, 7, 0, 0));
             break;
         }
 
-        case 'X':
+        case data_kind::register_call:
         {
-            s.callsign = std::string(f.header.from, strnlen(f.header.from, sizeof(header::from)));
+            s.callsign = unpack_address(f.header.from);
             responses.push_back(encode_register_response_frame(s.callsign, true));
             break;
         }
 
-        case 'x':
+        case data_kind::unregister_call:
         {
             s.callsign.clear();
             break;
         }
 
-        case 'm':
+        case data_kind::toggle_monitor:
         {
             s.monitoring_enabled = !s.monitoring_enabled;
             break;
         }
 
-        case 'k':
+        case data_kind::toggle_raw:
         {
             s.raw_enabled = !s.raw_enabled;
             break;
         }
 
-        case 'y':
+        case data_kind::query_frames_port:
         {
             responses.push_back(encode_outstanding_frames_response_frame(f.header.port, 0));
             break;
         }
 
-        case 'Y':
+        case data_kind::query_frames_conn:
         {
-            std::string from = std::string(f.header.from, strnlen(f.header.from, sizeof(header::from)));
-            std::string to = std::string(f.header.to, strnlen(f.header.to, sizeof(header::to)));
+            std::string from = unpack_address(f.header.from);
+            std::string to = unpack_address(f.header.to);
             responses.push_back(encode_connection_frames_response_frame(f.header.port, from, to, 0));
             break;
         }
 
-        case 'H':
+        case data_kind::heard_stations:
         {
             responses.push_back(encode_heard_stations_response_frame(f.header.port));
             break;
@@ -707,29 +679,6 @@ std::vector<frame> handle_frame(const frame& f, session& s)
     }
 
     return responses;
-}
-
-processed_frame process_frame(const frame& f, session& s)
-{
-    processed_frame result;
-
-    if (is_data_frame(f))
-    {
-        std::vector<uint8_t> bytes = to_bytes(f);
-        result.data.insert(result.data.end(), bytes.begin(), bytes.end());
-        result.has_data = true;
-    }
-    else
-    {
-        for (auto& response : handle_frame(f, s))
-        {
-            result.responses.push_back(std::move(response));
-            result.has_responses = true;
-        }
-
-    }
-
-    return result;
 }
 
 LIBMODEM_AGWPE_NAMESPACE_END
@@ -764,6 +713,19 @@ void formatter::invoke_on_command(const kiss::frame& frame)
     {
         on_command_callable_->invoke(frame);
     }
+}
+
+bool formatter::try_decode(const std::vector<uint8_t>& data, size_t count, decode_result& result)
+{
+    packet p;
+    uint8_t port = 0;
+    if (try_decode(data, count, p, port))
+    {
+        result.decoded_packet = std::move(p);
+        result.port = port;
+        return true;
+    }
+    return false;
 }
 
 // **************************************************************** //
@@ -845,24 +807,43 @@ std::unique_ptr<formatter> ax25_kiss_formatter::clone() const
 //                                                                  //
 // **************************************************************** //
 
-std::vector<uint8_t> agwpe_formatter::encode(packet p)
+void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
 {
-    std::vector<uint8_t> ax25_frame_bytes = ax25::encode_frame(p);
-    if (ax25_frame_bytes.size() >= 2)
+    if (count == 0)
     {
-        // Remove FCS as AGWPE expects raw AX.25 frames without FCS
-        ax25_frame_bytes.resize(ax25_frame_bytes.size() - 2);
+        return;
     }
-    return ax25_frame_bytes;
-}
 
-bool agwpe_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, packet& p, uint8_t& port)
-{
-    if (count > 0)
+    buffer_.insert(buffer_.end(), data.begin(), data.begin() + count);
+
+    while (buffer_.size() >= sizeof(agwpe::header))
     {
-        agwpe_decoder_.decode(data.begin(), data.begin() + count);
+        agwpe::header h;
+        std::memcpy(&h, buffer_.data(), sizeof(agwpe::header));
 
-        for (const auto& f : agwpe_decoder_.frames())
+        if (h.data_length > 65535)
+        {
+            buffer_.clear();
+            break;
+        }
+
+        size_t frame_size = sizeof(agwpe::header) + h.data_length;
+
+        if (buffer_.size() < frame_size)
+        {
+            break;
+        }
+
+        agwpe::frame f;
+        f.header = h;
+        if (h.data_length > 0)
+        {
+            f.data.assign(buffer_.begin() + sizeof(agwpe::header), buffer_.begin() + frame_size);
+        }
+
+        buffer_.erase(buffer_.begin(), buffer_.begin() + frame_size);
+
+        if (agwpe::is_data_frame(f))
         {
             packet decoded_packet;
             if (agwpe::try_decode(f, decoded_packet))
@@ -870,9 +851,57 @@ bool agwpe_formatter::try_decode(const std::vector<uint8_t>& data, size_t count,
                 pending_packets_.push({ std::move(decoded_packet), f.header.port });
             }
         }
-
-        agwpe_decoder_.clear();
+        else
+        {
+            for (auto& response : agwpe::handle_frame(f, session_))
+            {
+                std::vector<uint8_t> bytes = agwpe::to_bytes(response);
+                pending_responses_.push(std::move(bytes));
+            }
+        }
     }
+}
+
+std::vector<uint8_t> agwpe_formatter::encode(packet p)
+{
+    if (!session_.raw_enabled && !session_.monitoring_enabled)
+    {
+        return {};
+    }
+
+    std::vector<uint8_t> ax25_frame_bytes = ax25::encode_frame(p);
+    if (ax25_frame_bytes.size() >= 2)
+    {
+        // Remove FCS as AGWPE expects raw AX.25 frames without FCS
+        ax25_frame_bytes.resize(ax25_frame_bytes.size() - 2);
+    }
+
+    agwpe::frame raw_frame, monitor_frame;
+    if (!agwpe::try_encode_ax25_response_frames(ax25_frame_bytes, 0, raw_frame, monitor_frame))
+    {
+        return {};
+    }
+
+    std::vector<uint8_t> result;
+
+    if (session_.raw_enabled)
+    {
+        std::vector<uint8_t> bytes = agwpe::to_bytes(raw_frame);
+        result.insert(result.end(), bytes.begin(), bytes.end());
+    }
+
+    if (session_.monitoring_enabled)
+    {
+        std::vector<uint8_t> bytes = agwpe::to_bytes(monitor_frame);
+        result.insert(result.end(), bytes.begin(), bytes.end());
+    }
+
+    return result;
+}
+
+bool agwpe_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, packet& p, uint8_t& port)
+{
+    decode(data, count);
 
     if (pending_packets_.empty())
     {
@@ -886,9 +915,44 @@ bool agwpe_formatter::try_decode(const std::vector<uint8_t>& data, size_t count,
     return true;
 }
 
+bool agwpe_formatter::try_decode(const std::vector<uint8_t>& data, size_t count, decode_result& result)
+{
+    decode(data, count);
+
+    // Drain all pending protocol responses into result
+    while (!pending_responses_.empty())
+    {
+        auto& resp = pending_responses_.front();
+        result.response_bytes.insert(result.response_bytes.end(), resp.begin(), resp.end());
+        pending_responses_.pop();
+    }
+
+    // Return the next decoded packet if available
+    if (!pending_packets_.empty())
+    {
+        result.decoded_packet = std::move(pending_packets_.front().first);
+        result.port = pending_packets_.front().second;
+        pending_packets_.pop();
+        return true;
+    }
+
+    return !result.response_bytes.empty();
+}
+
 void agwpe_formatter::context(std::size_t client_id)
 {
     client_id_ = client_id;
+}
+
+void agwpe_formatter::port_descriptions(const std::vector<std::string>& descriptions)
+{
+    session_.port_descriptions = descriptions;
+}
+
+void agwpe_formatter::version(uint32_t major, uint32_t minor)
+{
+    session_.version_major = major;
+    session_.version_minor = minor;
 }
 
 std::unique_ptr<formatter> agwpe_formatter::clone() const
