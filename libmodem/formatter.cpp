@@ -408,8 +408,11 @@ frame encode_ax25_response_frame(uint8_t port, const std::string& from_address, 
     pack_address(f.header.to, to_address);
 
     f.header.pid = pid;
-    f.header.data_length = static_cast<uint32_t>(ax25_bytes.size());
-    f.data = ax25_bytes;
+    f.header.data_length = static_cast<uint32_t>(ax25_bytes.size() + 1);
+
+    f.data.reserve(ax25_bytes.size() + 1);
+    f.data.push_back(port);
+    f.data.insert(f.data.end(), ax25_bytes.begin(), ax25_bytes.end());
 
     return f;
 }
