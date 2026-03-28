@@ -470,6 +470,10 @@ void modem_data_stream::start()
     receive_thread_ = std::jthread([this](std::stop_token stop_token) {
         receive_callback(stop_token);
     });
+
+    transmit_thread_ = std::jthread([this](std::stop_token stop_token) {
+        transmit_callback(stop_token);
+    });
 }
 
 void modem_data_stream::stop()
@@ -484,6 +488,12 @@ void modem_data_stream::stop()
         receive_thread_.request_stop();
         enabled_cv_.notify_all();
         receive_thread_.join();
+    }
+
+    if (transmit_thread_.joinable())
+    {
+        transmit_thread_.request_stop();
+        transmit_thread_.join();
     }
 
     stop_cv_.notify_all();
@@ -608,6 +618,14 @@ void modem_data_stream::receive_callback(std::stop_token stop_token)
         }
 
         wait_data_received(10);
+    }
+}
+
+void modem_data_stream::transmit_callback(std::stop_token stop_token)
+{
+    while (!stop_token.stop_requested())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }
 }
 

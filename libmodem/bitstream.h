@@ -2179,8 +2179,8 @@ LIBMODEM_IL2P_NAMESPACE_BEGIN
 std::vector<uint8_t> encode_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f);
 std::vector<uint8_t> encode_frame(const packet& p);
 
-std::vector<uint8_t> encode_bitstream(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags, int postamble_flags);
-std::vector<uint8_t> encode_bitstream(const packet& p, int preamble_flags, int postamble_flags);
+std::vector<uint8_t> encode_bitstream(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, int preamble_flags = 1, int postamble_flags = 1);
+std::vector<uint8_t> encode_bitstream(const packet& p, int preamble_flags = 1, int postamble_flags = 1);
 
 LIBMODEM_IL2P_NAMESPACE_END
 

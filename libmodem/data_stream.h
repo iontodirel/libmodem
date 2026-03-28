@@ -370,6 +370,7 @@ public:
 
 private:
     void receive_callback(std::stop_token stop_token);
+    void transmit_callback(std::stop_token stop_token);
 
     void transmit(const packet& p, uint64_t id);
     void receive(const packet& p, uint64_t id) override;
@@ -454,6 +455,7 @@ private:
 
     std::vector<std::reference_wrapper<struct modem>> modems_;
     std::jthread receive_thread_;
+    std::jthread transmit_thread_;
     std::atomic<bool> running_{ false };
     std::mutex enabled_mutex_;
     std::condition_variable_any enabled_cv_;

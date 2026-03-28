@@ -1861,7 +1861,7 @@ pid_abbreviation encode_pid(uint8_t ax25_pid);
 pid_abbreviation encode_pid(LIBMODEM_AX25_NAMESPACE_REFERENCE frame_type type, uint8_t ax25_pid);
 
 template<typename InputIt, typename OutputIt>
-OutputIt rs_encode(correct_reed_solomon* rs, InputIt data_first, InputIt data_last, size_t parity_count, OutputIt out);
+OutputIt reed_solomon_encode(correct_reed_solomon* encoder, InputIt data_first, InputIt data_last, size_t parity_count, OutputIt out);
 
 template<typename OutputIt>
 void serialize_bit(int bit, uint8_t& byte, int& mask, OutputIt& out);
@@ -1872,13 +1872,13 @@ template<typename InputIt, typename OutputIt>
 OutputIt scramble_block(InputIt first, InputIt last, OutputIt out);
 
 std::array<uint8_t, 13> encode_header(const header& h);
-void scramble_and_rs_encode_header(correct_reed_solomon* rs, std::array<uint8_t, 13>& header, std::vector<uint8_t>& output);
-void scramble_and_rs_encode_payload(correct_reed_solomon* rs, std::span<const uint8_t> data, std::vector<uint8_t>& output);
+void scramble_and_reed_solomon_encode_header(correct_reed_solomon* encoder, std::array<uint8_t, 13>& header, std::vector<uint8_t>& output);
+void scramble_and_reed_solomon_encode_payload(correct_reed_solomon* encoder, std::span<const uint8_t> data, std::vector<uint8_t>& output);
 uint8_t encode_control(LIBMODEM_AX25_NAMESPACE_REFERENCE frame_type type, uint8_t control, uint8_t command_response);
 header encode_structured_header(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f);
 std::array<uint8_t, 13> encode_transparent_header(uint16_t payload_length);
-bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* rs_header, correct_reed_solomon* rs_payload, std::vector<uint8_t>& output);
-bool try_encode_transparent_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* rs_header, correct_reed_solomon* rs_payload, std::vector<uint8_t>& out);
+bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* header_encoder, correct_reed_solomon* payload_encoder, std::vector<uint8_t>& out);
+bool try_encode_transparent_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* header_encoder, correct_reed_solomon* payload_encoder, std::vector<uint8_t>& out);
 
 template<typename InputIt, typename OutputIt>
 OutputIt bytes_to_bits_msb(InputIt first, InputIt last, OutputIt out)
@@ -1989,7 +1989,7 @@ pid_abbreviation encode_pid(uint8_t ax25_pid)
 }
 
 template<typename InputIt, typename OutputIt>
-OutputIt rs_encode(correct_reed_solomon* rs, InputIt data_first, InputIt data_last, size_t parity_count, OutputIt out)
+OutputIt reed_solomon_encode(correct_reed_solomon* encoder, InputIt data_first, InputIt data_last, size_t parity_count, OutputIt out)
 {
     // Reed-Solomon encoding over GF(2^8) with a block size of 255 bytes.
     //
@@ -1998,7 +1998,7 @@ OutputIt rs_encode(correct_reed_solomon* rs, InputIt data_first, InputIt data_la
     //   Header:  RS(255, 253) → 2 parity bytes, corrects 1 symbol error
     //   Payload: RS(255, 239) → 16 parity bytes, corrects 8 symbol errors
 
-    if (rs == nullptr || parity_count >= 255)
+    if (encoder == nullptr || parity_count >= 255)
     {
         return out;
     }
@@ -2034,7 +2034,7 @@ OutputIt rs_encode(correct_reed_solomon* rs, InputIt data_first, InputIt data_la
 
     std::vector<uint8_t> encoded_data(full_block_size);
 
-    correct_reed_solomon_encode(rs, pre_encoded_data.data(), full_data_size, encoded_data.data());
+    correct_reed_solomon_encode(encoder, pre_encoded_data.data(), full_data_size, encoded_data.data());
 
     // RS-encoded: data + parity bytes
     //
@@ -2248,15 +2248,15 @@ std::array<uint8_t, 13> encode_header(const header& h)
     return header_bytes;
 }
 
-void scramble_and_rs_encode_header(correct_reed_solomon* rs, std::array<uint8_t, 13>& header, std::vector<uint8_t>& output)
+void scramble_and_reed_solomon_encode_header(correct_reed_solomon* encoder, std::array<uint8_t, 13>& header, std::vector<uint8_t>& output)
 {
     constexpr size_t header_parity = 2;
     std::array<uint8_t, 13> scrambled;
     scramble_block(header.begin(), header.end(), scrambled.begin());
-    rs_encode(rs, scrambled.begin(), scrambled.end(), header_parity, std::back_inserter(output));
+    reed_solomon_encode(encoder, scrambled.begin(), scrambled.end(), header_parity, std::back_inserter(output));
 }
 
-void scramble_and_rs_encode_payload(correct_reed_solomon* rs, std::span<const uint8_t> data, std::vector<uint8_t>& output)
+void scramble_and_reed_solomon_encode_payload(correct_reed_solomon* encoder, std::span<const uint8_t> data, std::vector<uint8_t>& output)
 {
     constexpr size_t payload_data_max = 239;
     constexpr size_t payload_parity = 16;
@@ -2282,7 +2282,7 @@ void scramble_and_rs_encode_payload(correct_reed_solomon* rs, std::span<const ui
         auto chunk = data.subspan(offset, large_block_size);
         std::vector<uint8_t> scrambled(large_block_size);
         scramble_block(chunk.begin(), chunk.end(), scrambled.begin());
-        rs_encode(rs, scrambled.begin(), scrambled.end(), payload_parity, std::back_inserter(output));
+        reed_solomon_encode(encoder, scrambled.begin(), scrambled.end(), payload_parity, std::back_inserter(output));
         offset += large_block_size;
     }
 
@@ -2292,7 +2292,7 @@ void scramble_and_rs_encode_payload(correct_reed_solomon* rs, std::span<const ui
         auto chunk = data.subspan(offset, small_block_size);
         std::vector<uint8_t> scrambled(small_block_size);
         scramble_block(chunk.begin(), chunk.end(), scrambled.begin());
-        rs_encode(rs, scrambled.begin(), scrambled.end(), payload_parity, std::back_inserter(output));
+        reed_solomon_encode(encoder, scrambled.begin(), scrambled.end(), payload_parity, std::back_inserter(output));
         offset += small_block_size;
     }
 }
@@ -2433,7 +2433,7 @@ header encode_structured_header(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f
     h.ui_frame = (type == LIBMODEM_AX25_NAMESPACE_REFERENCE frame_type::ui);
 
     const uint8_t control = f.control[0];
-    const uint8_t command_response = f.to.command_response ? 1u : 0u;
+    const uint8_t command_response = f.to.command_response ? 1u : 0u; // CR flag set?
 
     h.control = encode_control(type, control, command_response);
 
@@ -2462,6 +2462,7 @@ std::array<uint8_t, 13> encode_transparent_header(uint16_t payload_length)
     //  | header byte | [ 2]  | [ 3]  | [ 4]  | [ 5]  | [ 6]  | [ 7]  | [ 8]  | [ 9]  | [10]  | [11]  |
     //  +-------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+-------+
     //  | length bit  |  b9   |  b8   |  b7   |  b6   |  b5   |  b4   |  b3   |  b2   |  b1   |  b0   |
+    //  +-------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+-------+
     //  |             | (MSB) |       |       |       |       |       |       |       |       | (LSB) |
     //  +-------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+-------+
     //
@@ -2486,7 +2487,7 @@ std::array<uint8_t, 13> encode_transparent_header(uint16_t payload_length)
     return header;
 }
 
-bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* rs_header, correct_reed_solomon* rs_payload, std::vector<uint8_t>& output)
+bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f, correct_reed_solomon* header_encoder, correct_reed_solomon* payload_encoder, std::vector<uint8_t>& output)
 {
     // Encodes a two-address AX.25 frame (no digipeater path) in IL2P
     // "structured" mode, where callsigns, SSIDs, PID, and control fields
@@ -2512,7 +2513,7 @@ bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& 
         return false;
     }
 
-    if (rs_header == nullptr || rs_payload == nullptr)
+    if (header_encoder == nullptr || payload_encoder == nullptr)
     {
         return false;
     }
@@ -2546,8 +2547,8 @@ bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& 
 
     std::array<uint8_t, 13> header_bytes = encode_header(header);
 
-    scramble_and_rs_encode_header(rs_header, header_bytes, output);
-    scramble_and_rs_encode_payload(rs_payload, f.data, output);
+    scramble_and_reed_solomon_encode_header(header_encoder, header_bytes, output);
+    scramble_and_reed_solomon_encode_payload(payload_encoder, f.data, output);
 
     std::array<uint8_t, 4> encoded_crc = encode_crc_hamming(crc);
     output.insert(output.end(), encoded_crc.begin(), encoded_crc.end());
@@ -2566,31 +2567,39 @@ bool try_encode_transparent_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame&
     //   +-------------------+----------------------+-------------------------+
     //   | RS-encoded header | RS-encoded payload   | Hamming-encoded CRC     |
     //   +-------------------+----------------------+-------------------------+
+    //   | 13 data + 2 RS    | Variable length,     | 2-byte AX.25 FCS        |
+    //   | parity = 15 bytes | split into blocks    | → 4 bytes via (16,11)   |
+    //   |                   | of 239 or 205 bytes  | Hamming coding          |
+    //   | Scrambled, then   | (FEC-level dependent)|                         |
+    //   | RS-encoded        | Each block scrambled | Single-bit correction   |
+    //   |                   | + RS-encoded with    | per 11-bit chunk        |
+    //   |                   | parity appended      |                         |
+    //   +-------------------+----------------------+-------------------------+
 
     constexpr size_t max_payload = 1023;
+    constexpr size_t min_ax25_frame_size = 17;
 
+    // Encode the full AX.25 frame to extract the FCS and payload bytes.
     std::vector<uint8_t> ax25_bytes = LIBMODEM_AX25_NAMESPACE_REFERENCE encode_frame(f);
 
-    // Save the FCS before stripping it.
-    uint16_t crc = 0;
-
-    if (ax25_bytes.size() >= 2)
-    {
-        crc = ax25_bytes[ax25_bytes.size() - 2] | (static_cast<uint16_t>(ax25_bytes[ax25_bytes.size() - 1]) << 8);
-
-        // IL2P type 0 payload is the AX.25 frame without the trailing FCS (2 bytes).
-        ax25_bytes.resize(ax25_bytes.size() - 2);
-    }
-
-    if (ax25_bytes.size() > max_payload)
+    if (ax25_bytes.size() < min_ax25_frame_size)
     {
         return false;
     }
 
-    std::array<uint8_t, 13> header_bytes = encode_transparent_header(static_cast<uint16_t>(ax25_bytes.size()));
+    // Extract the AX.25 FCS (CRC) from the last two bytes of the encoded frame.
+    uint16_t crc = ax25_bytes[ax25_bytes.size() - 2] | (static_cast<uint16_t>(ax25_bytes[ax25_bytes.size() - 1]) << 8);
 
-    scramble_and_rs_encode_header(rs_header, header_bytes, out);
-    scramble_and_rs_encode_payload(rs_payload, ax25_bytes, out);
+    std::span<const uint8_t> payload(ax25_bytes.data(), ax25_bytes.size() - 2);
+    if (payload.size() > max_payload)
+    {
+        return false;
+    }
+
+    std::array<uint8_t, 13> header_bytes = encode_transparent_header(static_cast<uint16_t>(payload.size()));
+
+    scramble_and_reed_solomon_encode_header(rs_header, header_bytes, out);
+    scramble_and_reed_solomon_encode_payload(rs_payload, payload, out);
 
     std::array<uint8_t, 4> encoded_crc = encode_crc_hamming(crc);
     out.insert(out.end(), encoded_crc.begin(), encoded_crc.end());
@@ -2677,16 +2686,12 @@ std::vector<uint8_t> encode_bitstream(const LIBMODEM_AX25_NAMESPACE_REFERENCE fr
     //   | payload   | IL2P-encoded frame bytes                         |
     //   | postamble | N × 0x55 (defaults to 1 if postamble_flags < 1)  |
     //   +-----------+--------------------------------------------------+
-    //
 
     constexpr uint8_t sync_bytes[] = { 0xF1, 0x5E, 0x48 };
 
     std::vector<uint8_t> bits;
 
-    const int preamble_bytes = (preamble_flags > 0) ? preamble_flags : 1;
-    const int postamble_bytes = (postamble_flags > 0) ? postamble_flags : 1;
-
-    for (int i = 0; i < preamble_bytes; i++)
+    for (int i = 0; i < preamble_flags; i++)
     {
         bits.insert(bits.end(), { 0, 1, 0, 1, 0, 1, 0, 1 });
     }
@@ -2697,7 +2702,7 @@ std::vector<uint8_t> encode_bitstream(const LIBMODEM_AX25_NAMESPACE_REFERENCE fr
 
     bytes_to_bits_msb(frame_bytes.begin(), frame_bytes.end(), std::back_inserter(bits));
 
-    for (int i = 0; i < postamble_bytes; i++)
+    for (int i = 0; i < postamble_flags; i++)
     {
         bits.insert(bits.end(), { 0, 1, 0, 1, 0, 1, 0, 1 });
     }
