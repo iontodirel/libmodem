@@ -1097,6 +1097,9 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, address& from, ad
 bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, packet& p);
 bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, struct frame& frame);
 bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
+bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, packet& p);
+bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, struct frame& frame);
+bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data);
 
 template<class InputIt>
 bool try_decode_packet(InputIt frame_it_first, InputIt frame_it_last, packet& p);

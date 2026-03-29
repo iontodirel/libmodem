@@ -397,7 +397,7 @@ frame encode_outstanding_frames_response_frame(uint8_t port, uint32_t count)
     return f;
 }
 
-frame encode_ax25_response_frame(uint8_t port, const address& from_address, const address& to_address, uint8_t pid, const std::vector<uint8_t>& ax25_bytes)
+frame encode_ax25_response_frame(uint8_t port, const address& from_address, const address& to_address, uint8_t pid, std::span<const uint8_t> ax25_bytes)
 {
     frame f;
 
@@ -493,7 +493,7 @@ frame encode_heard_stations_response_frame(uint8_t port)
     return f;
 }
 
-bool try_encode_ax25_response_frames(const std::vector<uint8_t>& ax25_bytes, uint8_t port, frame& ax25_response_frame, frame& monitor_response_frame)
+bool try_encode_ax25_response_frames(std::span<const uint8_t> ax25_bytes, uint8_t port, frame& ax25_response_frame, frame& monitor_response_frame)
 {
     ax25::frame ax25_frame;
     if (!ax25::try_decode_frame_no_fcs(ax25_bytes, ax25_frame))
@@ -890,14 +890,16 @@ std::vector<uint8_t> agwpe_formatter::encode(packet p)
     }
 
     std::vector<uint8_t> ax25_frame_bytes = ax25::encode_frame(p);
-    if (ax25_frame_bytes.size() >= 2)
+    if (ax25_frame_bytes.size() < 2)
     {
-        // Remove FCS as AGWPE expects raw AX.25 frames without FCS
-        ax25_frame_bytes.resize(ax25_frame_bytes.size() - 2);
+        return {};
     }
 
+    // Pass a span excluding the FCS as AGWPE expects raw AX.25 frames without FCS
+    std::span<const uint8_t> ax25_frame_bytes_no_fcs(ax25_frame_bytes.data(), ax25_frame_bytes.size() - 2);
+
     agwpe::frame raw_frame, monitor_frame;
-    if (!agwpe::try_encode_ax25_response_frames(ax25_frame_bytes, 0, raw_frame, monitor_frame))
+    if (!agwpe::try_encode_ax25_response_frames(ax25_frame_bytes_no_fcs, 0, raw_frame, monitor_frame))
     {
         return {};
     }
