@@ -397,8 +397,8 @@ frame encode_port_info_response_frame(const std::vector<std::string>& port_descr
 frame encode_port_capabilities_response_frame(uint8_t port, uint8_t on_air_baud_rate, uint8_t traffic_level, uint8_t tx_delay, uint8_t tx_tail, uint8_t persist, uint8_t slottime, uint8_t maxframe, uint8_t active_connections, uint32_t bytes_received);
 frame encode_register_response_frame(const std::string& address, bool success);
 frame encode_outstanding_frames_response_frame(uint8_t port, uint32_t count);
-frame encode_ax25_response_frame(uint8_t port, const std::string& from_address, const std::string& to_address, uint8_t pid, const std::vector<uint8_t>& ax25_bytes);
-frame encode_monitor_ui_response_frame(uint8_t port, const std::string& from_address, const std::string& to_address, const std::string& addresses, uint8_t pid, const std::vector<uint8_t>& info_field);
+frame encode_ax25_response_frame(uint8_t port, const address& from_address, const address& to_address, uint8_t pid, const std::vector<uint8_t>& ax25_bytes);
+frame encode_monitor_ui_response_frame(uint8_t port, const address& from_address, const address& to_address, const std::vector<address>& path, uint8_t pid, const std::vector<uint8_t>& info_field);
 frame encode_connection_frames_response_frame(uint8_t port, const std::string& from_address, const std::string& to_address, uint32_t count);
 frame encode_heard_stations_response_frame(uint8_t port);
 

@@ -397,15 +397,15 @@ frame encode_outstanding_frames_response_frame(uint8_t port, uint32_t count)
     return f;
 }
 
-frame encode_ax25_response_frame(uint8_t port, const std::string& from_address, const std::string& to_address, uint8_t pid, const std::vector<uint8_t>& ax25_bytes)
+frame encode_ax25_response_frame(uint8_t port, const address& from_address, const address& to_address, uint8_t pid, const std::vector<uint8_t>& ax25_bytes)
 {
     frame f;
 
     f.header.datakind = static_cast<uint8_t>(data_kind::transmit_raw);
     f.header.port = port;
 
-    pack_address(f.header.from, from_address);
-    pack_address(f.header.to, to_address);
+    pack_address(f.header.from, to_string(from_address, true));
+    pack_address(f.header.to, to_string(to_address, true));
 
     f.header.pid = pid;
     f.header.data_length = static_cast<uint32_t>(ax25_bytes.size() + 1);
@@ -417,13 +417,25 @@ frame encode_ax25_response_frame(uint8_t port, const std::string& from_address, 
     return f;
 }
 
-frame encode_monitor_ui_response_frame(uint8_t port, const std::string& from_address, const std::string& to_address, const std::string& addresses, uint8_t pid, const std::vector<uint8_t>& info_field)
+frame encode_monitor_ui_response_frame(uint8_t port, const address& from_address, const address& to_address, const std::vector<address>& path, uint8_t pid, const std::vector<uint8_t>& info_field)
 {
     frame f;
 
-    std::string text_header = " " + std::to_string(port + 1) + ":Fm " + from_address + " To " + to_address;
-    if (!addresses.empty())
+    std::string from_str = to_string(from_address, true);
+    std::string to_str = to_string(to_address, true);
+
+    std::string text_header = " " + std::to_string(port + 1) + ":Fm " + from_str + " To " + to_str;
+    if (!path.empty())
     {
+        std::string addresses;
+        for (size_t i = 0; i < path.size(); i++)
+        {
+            if (i > 0)
+            {
+                addresses += ",";
+            }
+            addresses += to_string(path[i]);
+        }
         text_header += " Via " + addresses;
     }
 
@@ -436,8 +448,8 @@ frame encode_monitor_ui_response_frame(uint8_t port, const std::string& from_add
     f.header.datakind = static_cast<uint8_t>(data_kind::monitor_ui);
     f.header.port = port;
 
-    pack_address(f.header.from, from_address);
-    pack_address(f.header.to, to_address);
+    pack_address(f.header.from, from_str);
+    pack_address(f.header.to, to_str);
 
     f.header.pid = pid;
 
@@ -489,25 +501,11 @@ bool try_encode_ax25_response_frames(const std::vector<uint8_t>& ax25_bytes, uin
         return false;
     }
 
-    std::string from_address = to_string(ax25_frame.from, true);
-    std::string to_address = to_string(ax25_frame.to, true);
-
-    std::string addresses;
-    for (size_t i = 0; i < ax25_frame.path.size(); i++)
-    {
-        if (i > 0)
-        {
-            addresses += ",";
-        }
-        addresses += to_string(ax25_frame.path[i]);
-    }
-
-    ax25_response_frame = encode_ax25_response_frame(port, from_address, to_address, ax25_frame.pid, ax25_bytes);
-    monitor_response_frame = encode_monitor_ui_response_frame(port, from_address, to_address, addresses, ax25_frame.pid, ax25_frame.data);
+    ax25_response_frame = encode_ax25_response_frame(port, ax25_frame.from, ax25_frame.to, ax25_frame.pid, ax25_bytes);
+    monitor_response_frame = encode_monitor_ui_response_frame(port, ax25_frame.from, ax25_frame.to, ax25_frame.path, ax25_frame.pid, ax25_frame.data);
 
     return true;
 }
-
 
 bool decode_via_frame(const frame& f, v_frame& result)
 {
