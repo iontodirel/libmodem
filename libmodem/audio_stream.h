@@ -557,6 +557,8 @@ bool try_get_default_audio_device(audio_device& device, audio_device_type type);
 //                                                                  //
 // **************************************************************** //
 
+#if WIN32
+
 struct wasapi_audio_stream_control_impl;
 
 class wasapi_audio_stream_control : public audio_stream_control_base
@@ -591,6 +593,8 @@ private:
     int channel_ = 0;
     audio_stream_type type_ = audio_stream_type::output;
 };
+
+#endif // WIN32
 
 // **************************************************************** //
 //                                                                  //

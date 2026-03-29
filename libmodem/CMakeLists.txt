@@ -160,6 +160,9 @@ target_include_directories(libmodem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_property(TARGET libmodem PROPERTY CXX_STANDARD 20)
 set_target_properties(libmodem PROPERTIES PREFIX "")
 
+# Precompiled header for build performance optimization
+target_precompile_headers(libmodem PRIVATE pch.h)
+
 if(UNIX AND NOT APPLE)
   find_package(ALSA REQUIRED)
   target_link_libraries(libmodem PRIVATE asound ALSA::ALSA udev)
