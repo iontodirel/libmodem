@@ -31,6 +31,8 @@
 
 #include "pipeline.h"
 
+#include "device_description.h"
+
 #include <cstdio>
 #include <mutex>
 #include <iostream>
@@ -39,7 +41,6 @@
 #include <thread>
 #include <cstdlib>
 #include <string>
-#include <mutex>
 #include <filesystem>
 #include <cstddef>
 #include <fstream>
@@ -60,30 +61,8 @@
 #include <boost/asio/thread_pool.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <ftxui/dom/elements.hpp>
-#include <ftxui/screen/screen.hpp>
-#include <ftxui/screen/terminal.hpp>
 
 LIBMODEM_NAMESPACE_BEGIN
-
-// **************************************************************** //
-//                                                                  //
-// Cross-platform URL opener                                        //
-//                                                                  //
-// **************************************************************** //
-
-void open_url(const std::string& url)
-{
-#ifdef _WIN32
-    ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#elif defined(__APPLE__)
-    std::string cmd = "open \"" + url + "\"";
-    std::system(cmd.c_str());
-#else
-    std::string cmd = "xdg-open \"" + url + "\" &";
-    std::system(cmd.c_str());
-#endif
-}
 
 // **************************************************************** //
 //                                                                  //
@@ -93,18 +72,9 @@ void open_url(const std::string& url)
 //                                                                  //
 // **************************************************************** //
 
-bool try_create_audio_entry(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
 bool try_find_audio_device(const audio_stream_config& audio_config, audio_device& device);
-std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
-bool try_create_transport(data_stream_entry& entry, const data_stream_config& config, error_events& events, boost::asio::thread_pool& pool);
-std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(std::vector<std::unique_ptr<audio_entry>>& entries, const std::string& name);
-std::optional<std::reference_wrapper<audio_entry>> get_output_stream(const modulator_config& config, std::vector<std::unique_ptr<audio_entry>>& audio_entries);
 std::unique_ptr<modem_entry> create_modem_entry(const modulator_config& config);
 std::unique_ptr<modulator_base> create_modulator(const modulator_config& config, int sample_rate);
-std::optional<std::reference_wrapper<ptt_entry>> find_ptt_entry(std::vector<std::unique_ptr<ptt_entry>>& entries, const std::string& name);
-std::optional<std::reference_wrapper<data_stream_entry>> find_data_stream_entry(std::vector<std::unique_ptr<data_stream_entry>>& entries, const std::string& name);
-bool is_audio_stream_referenced(const config& c, const std::string& name);
-bool is_ptt_control_referenced(const config& c, const std::string& name);
 bool is_output_stream(audio_stream_config_type type);
 bool is_input_stream(audio_stream_config_type type);
 bool requires_audio_hardware(audio_stream_config_type type);
@@ -142,7 +112,7 @@ R wrap(Component& component, Entry& entry, std::atomic<bool>& faulted, std::opti
             error.exception = std::current_exception();
             boost::asio::post(pool, [&component, &entry, &events, error]() {
                 events->get().on_error(component, entry, error);
-                });
+            });
         }
         return fallback;
     }
@@ -170,7 +140,7 @@ void wrap(Component& component, Entry& entry, std::atomic<bool>& faulted, std::o
             error.exception = std::current_exception();
             boost::asio::post(pool, [&component, &entry, &events, error]() {
                 events->get().on_error(component, entry, error);
-                });
+            });
         }
     }
 }
@@ -442,6 +412,7 @@ public:
     void start() override;
     void stop() override;
     void write(const std::vector<uint8_t>& data) override;
+    void write(std::size_t client_id, const std::vector<uint8_t>& data) override;
     size_t read(std::size_t client_id, std::vector<uint8_t>& data, size_t size) override;
     std::vector<std::size_t> clients() override;
     void flush() override;
@@ -470,7 +441,7 @@ bool transport_no_throw::faulted() const
 
 void transport_no_throw::start()
 {
-    inner_->start();
+    wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { inner_->start(); });
 }
 
 void transport_no_throw::stop()
@@ -481,6 +452,11 @@ void transport_no_throw::stop()
 void transport_no_throw::write(const std::vector<uint8_t>& data)
 {
     wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { inner_->write(data); });
+}
+
+void transport_no_throw::write(std::size_t client_id, const std::vector<uint8_t>& data)
+{
+    wrap(*this, entry_->get(), faulted_, events_, pool_.get(), [&]() { inner_->write(client_id, data); });
 }
 
 size_t transport_no_throw::read(std::size_t client_id, std::vector<uint8_t>& data, size_t size)
@@ -569,7 +545,7 @@ void serial_port_no_throw::entry(ptt_entry& entry)
 
 bool serial_port_no_throw::faulted() const
 {
-    return faulted_;
+    return faulted_.load();
 }
 
 bool serial_port_no_throw::open(const std::string& port_name, unsigned int baud_rate, unsigned int data_bits, parity parity, stop_bits stop_bits, flow_control flow_control)
@@ -696,6 +672,7 @@ struct pipeline_impl
     std::unordered_map<ptt_entry*, recovery_context> ptt_recovery_contexts;
     std::unordered_map<ptt_entry*, recovery_context> serial_port_recovery_contexts;
     std::unordered_map<data_stream_entry*, recovery_context> transport_recovery_contexts;
+    std::unordered_map<uint64_t, size_t> receive_completed_counts;
 };
 
 // **************************************************************** //
@@ -719,6 +696,7 @@ void pipeline::init()
     ptt_controls_.clear();
     audio_entries_.clear();
     data_streams_.clear();
+    audio_devices_.clear();
 
     used_audio_names_.clear();
     used_audio_devices_.clear();
@@ -731,6 +709,41 @@ void pipeline::init()
     used_tcp_ports_.clear();
     used_logger_names_.clear();
     used_logger_tcp_ports_.clear();
+
+    uint64_t seq = next_seq();
+    if (events_)
+    {
+        invoke_async([this, seq]() { events_->get().on_config_load(seq, config.filename); });
+    }
+    invoke_loggers_async([seq, this](logger_base& l) { l.on_config_load(seq, config.filename); });
+
+    seq = next_seq();
+    if (events_)
+    {
+        events_->get().on_audio_devices_enumeration_started(seq);
+    }
+    invoke_loggers_async([seq](logger_base& l) { l.on_audio_devices_enumeration_started(seq); });
+
+    std::vector<audio_device> devices = get_audio_devices();
+    for (auto& device : devices)
+    {
+        audio_devices_.push_back(std::make_unique<audio_device>(std::move(device)));
+        auto* device_ptr = audio_devices_.back().get();
+
+        seq = next_seq();
+        if (events_)
+        {
+            events_->get().on_audio_device_detected(seq, *device_ptr);
+        }
+        invoke_loggers_async([seq, device_ptr](logger_base& l) { l.on_audio_device_detected(seq, *device_ptr); });
+    }
+
+    seq = next_seq();
+    if (events_)
+    {
+        events_->get().on_audio_devices_enumeration_completed(seq);
+    }
+    invoke_loggers_async([seq](logger_base& l) { l.on_audio_devices_enumeration_completed(seq); });
 
     populate_loggers();
     populate_audio_entries();
@@ -747,6 +760,39 @@ void pipeline::init()
     validate_entries();
 }
 
+void pipeline::update()
+{
+    uint64_t seq = next_seq();
+    if (events_)
+    {
+        events_->get().on_audio_devices_enumeration_started(seq);
+    }
+    invoke_loggers_async([seq](logger_base& l) { l.on_audio_devices_enumeration_started(seq); });
+
+    audio_devices_.clear();
+
+    std::vector<audio_device> devices = get_audio_devices();
+    for (auto& device : devices)
+    {
+        audio_devices_.push_back(std::make_unique<audio_device>(std::move(device)));
+        auto* device_ptr = audio_devices_.back().get();
+
+        seq = next_seq();
+        if (events_)
+        {
+            events_->get().on_audio_device_detected(seq, *device_ptr);
+        }
+        invoke_loggers_async([seq, device_ptr](logger_base& l) { l.on_audio_device_detected(seq, *device_ptr); });
+    }
+
+    seq = next_seq();
+    if (events_)
+    {
+        events_->get().on_audio_devices_enumeration_completed(seq);
+    }
+    invoke_loggers_async([seq](logger_base& l) { l.on_audio_devices_enumeration_completed(seq); });
+}
+
 void pipeline::on_events(pipeline_events& e)
 {
     events_ = e;
@@ -754,6 +800,10 @@ void pipeline::on_events(pipeline_events& e)
 
 pipeline_events& pipeline::on_events()
 {
+    if (!events_)
+    {
+        throw std::runtime_error("Events interface not set");
+    }
     return events_.value();
 }
 
@@ -771,17 +821,13 @@ void pipeline::invoke_loggers_async(Func&& fn)
 {
     for (auto& logger : loggers_)
     {
-        boost::asio::post(*impl_->pool, [&logger, fn]() {
-            fn(logger.get());
-        });
+        boost::asio::post(*impl_->pool, [&logger, fn]() { fn(logger.get()); });
     }
     for (auto& entry : owned_loggers_)
     {
         if (entry->logger)
         {
-            boost::asio::post(*impl_->pool, [&entry, fn]() {
-                fn(*entry->logger);
-            });
+            boost::asio::post(*impl_->pool, [&entry, fn]() { fn(*entry->logger); });
         }
     }
 }
@@ -794,9 +840,7 @@ void pipeline::invoke_modem_loggers_async(modem_entry& modem, Func&& fn)
         logger_entry& entry = logger_ref.get();
         if (entry.logger)
         {
-            boost::asio::post(*impl_->pool, [&entry, fn]() {
-                fn(*entry.logger);
-            });
+            boost::asio::post(*impl_->pool, [&entry, fn]() { fn(*entry.logger); });
         }
     }
 }
@@ -871,7 +915,6 @@ void pipeline::invoke_ptt_event_async(bool enabled, ptt_entry& entry)
 
 void pipeline::start()
 {
-    // Open serial ports for PTT controls
     for (auto& ptt : ptt_controls_)
     {
         if (ptt->enabled && ptt->type == ptt_control_type::serial_port && ptt->serial_port)
@@ -879,7 +922,13 @@ void pipeline::start()
             auto* serial_port = dynamic_cast<serial_port_no_throw*>(ptt->serial_port.get());
             if (serial_port)
             {
-                serial_port->open(ptt->port_name, ptt->baud_rate, ptt->data_bits, ptt->parity, ptt->stop_bits, ptt->flow_control);
+                // Open serial ports for PTT controls
+                if (serial_port->open(ptt->port_name, ptt->baud_rate, ptt->data_bits, ptt->parity, ptt->stop_bits, ptt->flow_control))
+                {
+                    uint64_t seq = next_seq();
+                    invoke_async([this, seq, &entry = *ptt]() { events_->get().on_serial_port_opened(seq, entry); });
+                    invoke_ptt_entry_loggers_async(*ptt, [seq, &entry = *ptt](logger_base& l) { l.on_serial_port_opened(seq, entry); });
+                }
                 ptt->ptt_control->ptt(false);
             }
         }
@@ -892,14 +941,14 @@ void pipeline::start()
         {
             data_stream->data_stream->start();
             uint64_t seq = next_seq();
-            invoke_async([this, seq, &ds = *data_stream]() { events_->get().on_data_stream_started(seq, ds); });
-            invoke_data_stream_loggers_async(*data_stream, [seq, &ds = *data_stream](logger_base& l) { l.on_data_stream_started(seq, ds); });
+            invoke_async([this, seq, &entry = *data_stream]() { events_->get().on_data_stream_started(seq, entry); });
+            invoke_data_stream_loggers_async(*data_stream, [seq, &entry = *data_stream](logger_base& l) { l.on_data_stream_started(seq, entry); });
         }
     }
 
     uint64_t seq = next_seq();
-    invoke_async([this, seq]() { events_->get().on_started(seq); });
-    invoke_loggers_async([seq](logger_base& l) { l.on_started(seq); });
+    invoke_async([this, seq]() { events_->get().on_started(seq, *this); });
+    invoke_loggers_async([seq, this](logger_base& l) { l.on_started(seq, *this); });
 }
 
 void pipeline::stop()
@@ -911,8 +960,8 @@ void pipeline::stop()
             data_stream->data_stream->stop();
 
             uint64_t seq = next_seq();
-            invoke_async([this, seq, &ds = *data_stream]() { events_->get().on_data_stream_stopped(seq, ds); });
-            invoke_data_stream_loggers_async(*data_stream, [seq, &ds = *data_stream](logger_base& l) { l.on_data_stream_stopped(seq, ds); });
+            invoke_async([this, seq, &entry = *data_stream]() { events_->get().on_data_stream_stopped(seq, entry); });
+            invoke_data_stream_loggers_async(*data_stream, [seq, &entry = *data_stream](logger_base& l) { l.on_data_stream_stopped(seq, entry); });
         }
     }
 
@@ -921,10 +970,10 @@ void pipeline::stop()
     {
         if (ptt->enabled && ptt->type == ptt_control_type::serial_port && ptt->serial_port)
         {
-            auto* sp = dynamic_cast<serial_port_no_throw*>(ptt->serial_port.get());
-            if (sp)
+            auto* serial = dynamic_cast<serial_port_no_throw*>(ptt->serial_port.get());
+            if (serial)
             {
-                sp->close();
+                serial->close();
             }
         }
     }
@@ -957,7 +1006,7 @@ void pipeline::populate_audio_entries()
         }
 
         auto entry = std::make_unique<audio_entry>();
-        if (!try_create_audio_entry(*entry, audio_config, *this, *impl_->pool.get()))
+        if (!try_create_audio_entry(*entry, audio_config))
         {
             uint64_t seq = next_seq();
             invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "failed to create audio stream"); });
@@ -1044,45 +1093,20 @@ void pipeline::populate_data_streams()
         entry->name = data_stream_config.name;
         entry->config = data_stream_config;
 
-        switch (data_stream_config.format)
+        if (!create_formatter(*entry))
         {
-            case data_stream_format_type::ax25_kiss_formatter:
-                entry->formatter = std::make_unique<ax25_kiss_formatter>();
-                break;
-            default:
-                break;
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "unknown format type"); });
+            invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "unknown format type"); });
+            continue;
         }
 
-        switch (data_stream_config.transport)
+        if (!create_transport(*entry))
         {
-            case data_stream_transport_type::tcp:
-            {
-                auto tcp = std::make_unique<tcp_transport>(data_stream_config.bind_address, data_stream_config.port);
-
-                tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                    uint64_t seq = next_seq();
-                    invoke_async([this, seq, conn, &ds]() { events_->get().on_client_connected(seq, ds, conn); });
-                    invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_connected(seq, ds, conn); });
-                }, std::ref(*entry));
-
-                tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                    uint64_t seq = next_seq();
-                    invoke_async([this, seq, conn, &ds]() { events_->get().on_client_disconnected(seq, ds, conn); });
-                    invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_disconnected(seq, ds, conn); });
-                }, std::ref(*entry));
-
-                entry->transport = std::make_unique<transport_no_throw>(std::move(tcp), *entry, *this, *impl_->pool.get());
-
-                break;
-            }
-            case data_stream_transport_type::serial:
-                entry->transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), *entry, *this, *impl_->pool.get());
-                break;
-            default:
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
-                invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
-                continue;
+            uint64_t seq = next_seq();
+            invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
+            invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "unknown transport type"); });
+            continue;
         }
 
         entry->data_stream = std::make_unique<modem_data_stream>();
@@ -1108,6 +1132,8 @@ void pipeline::populate_data_streams()
 
 void pipeline::populate_transmit_modems()
 {
+    uint64_t next_modem_id = 0;
+
     for (const auto& modulator_config : config.modulators)
     {
         if (!can_add_modem(modulator_config))
@@ -1119,11 +1145,13 @@ void pipeline::populate_transmit_modems()
         }
 
         auto entry = create_modem_entry(modulator_config);
+        entry->modem_id = next_modem_id++;
 
         register_modem(*entry);
 
         modem_entry* entry_ptr = entry.get();
         modems_.push_back(std::move(entry));
+
         uint64_t seq = next_seq();
         invoke_async([this, seq, entry_ptr]() { events_->get().on_modem_created(seq, *entry_ptr); });
         invoke_loggers_async([seq, entry_ptr](logger_base& l) { l.on_modem_created(seq, *entry_ptr); });
@@ -1133,8 +1161,10 @@ void pipeline::populate_transmit_modems()
 void pipeline::populate_receive_modems()
 {
     // To match a modulator and demodulator to the same modem:
-    // - Match bitstream converters of the modulator and demodulator
-    // - Match data sources
+    //
+    //   - Match bitstream converters of the modulator and demodulator
+    //   - Match data sources
+    //
     // TODO: Implement receive modem population
 }
 
@@ -1157,6 +1187,14 @@ void pipeline::populate_loggers()
             {
                 file_policy_config policy_config;
                 policy_config.base_path = logger_config.log_file;
+
+                if (logger_config.format == "audio")
+                {
+                    std::filesystem::path p(policy_config.base_path);
+                    p.replace_extension(".wav");
+                    policy_config.base_path = p.string();
+                }
+
                 policy_config.max_file_size = logger_config.max_file_size_bytes > 0 ? static_cast<size_t>(logger_config.max_file_size_bytes) : 10 * 1024 * 1024;
                 policy_config.max_file_count = logger_config.max_files > 0 ? static_cast<size_t>(logger_config.max_files) : 5;
                 policy_config.mode = rotation_mode::rotate_on_size;
@@ -1177,18 +1215,29 @@ void pipeline::populate_loggers()
                 }
                 break;
             }
+
             case logger_type::tcp:
                 continue;
+
             default:
                 continue;
         }
 
         entry->logger->name(logger_config.name);
-        entry->logger->events(*this);
+        entry->logger->on_events(*this);
 
         register_logger(*entry, logger_config);
 
+        auto name = entry->logger->name();
+        auto target = entry->logger->target();
+
         owned_loggers_.push_back(std::move(entry));
+
+        uint64_t seq = next_seq();
+        if (events_)
+        {
+            invoke_async([this, seq, name, target]() { events_->get().on_logger_created(seq, name, target); });
+        }
     }
 }
 
@@ -1201,14 +1250,14 @@ void pipeline::assign_audio_streams()
             continue;
         }
 
-        auto audio_entry = get_output_stream(modem_entry->modulator_config, audio_entries_);
+        auto audio_entry = get_output_stream(modem_entry->modulator_config);
         if (!audio_entry || !audio_entry->get().enabled)
         {
             modem_entry->enabled = false;
 
             uint64_t seq = next_seq();
-            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "no audio output stream available"); });
-            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "no audio output stream available"); });
+            invoke_async([this, seq, &modem = *modem_entry]() { events_->get().on_modem_init_failed(seq, modem.modulator_config, "no audio output stream available"); });
+            invoke_loggers_async([seq, &modem = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, modem.modulator_config, "no audio output stream available"); });
             continue;
         }
 
@@ -1218,8 +1267,8 @@ void pipeline::assign_audio_streams()
             modem_entry->enabled = false;
 
             uint64_t seq = next_seq();
-            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "audio stream already in use"); });
-            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "audio stream already in use"); });
+            invoke_async([this, seq, &modem = *modem_entry]() { events_->get().on_modem_init_failed(seq, modem.modulator_config, "audio stream already in use"); });
+            invoke_loggers_async([seq, &modem = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, modem.modulator_config, "audio stream already in use"); });
             continue;
         }
 
@@ -1234,8 +1283,8 @@ void pipeline::assign_audio_streams()
             modem_entry->enabled = false;
 
             uint64_t seq = next_seq();
-            invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_init_failed(seq, me.modulator_config, "failed to create modulator"); });
-            invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, me.modulator_config, "failed to create modulator"); });
+            invoke_async([this, seq, &modem = *modem_entry]() { events_->get().on_modem_init_failed(seq, modem.modulator_config, "failed to create modulator"); });
+            invoke_loggers_async([seq, &modem = *modem_entry](logger_base& l) { l.on_modem_init_failed(seq, modem.modulator_config, "failed to create modulator"); });
             continue;
         }
 
@@ -1249,8 +1298,8 @@ void pipeline::assign_audio_streams()
         modem_entry->associated_audio_entry = audio_entry;
 
         uint64_t seq = next_seq();
-        invoke_async([this, seq, &me = *modem_entry]() { events_->get().on_modem_initialized(seq, me); });
-        invoke_loggers_async([seq, &me = *modem_entry](logger_base& l) { l.on_modem_initialized(seq, me); });
+        invoke_async([this, seq, &modem = *modem_entry]() { events_->get().on_modem_initialized(seq, modem); });
+        invoke_loggers_async([seq, &modem = *modem_entry](logger_base& l) { l.on_modem_initialized(seq, modem); });
     }
 }
 
@@ -1265,122 +1314,302 @@ void pipeline::assign_modems()
 
         for (const auto& ds_name : modem_entry->modulator_config.data_streams)
         {
-            auto ds_entry = find_data_stream_entry(data_streams_, ds_name);
+            auto ds_entry = find_data_stream_entry(ds_name);
             if (!ds_entry || !ds_entry->get().enabled)
             {
                 continue;
             }
 
-            // Check if already assigned to another modem
-            if (!ds_entry->get().referenced_by.empty())
-            {
-                continue;
-            }
-
             // Wire modem to data stream
-            ds_entry->get().data_stream->modem(modem_entry->modem);
+            ds_entry->get().data_stream->add_modem(modem_entry->modem);
 
-            // Wire packet callbacks - id is generated by data_stream and propagated through
-            ds_entry->get().data_stream->add_on_packet_received([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
-                // Call synchronously to establish TX tracking BEFORE any async events are posted
-                if (events_)
-                {
-                    events_->get().on_begin_packet_received(me, ds, p, id);
-                }
+            // Wire callbacks only once per data stream (first modem triggers wiring).
+            // All callbacks use resolve_modem_entry(m, ds) so they're modem-agnostic.
+            bool first_modem_for_ds = ds_entry->get().referenced_by.empty();
 
-                // Synchronously invoke modem's associated loggers
-                for (auto& logger_ref : me.associated_loggers)
-                {
-                    logger_entry& entry = logger_ref.get();
-                    if (entry.logger)
+            if (first_modem_for_ds)
+            {
+                ds_entry->get().data_stream->add_on_packet_received([this, &data_stream = ds_entry->get()](const packet& p, uint64_t packet_id, uint64_t receive_id) {
+                    if (events_)
                     {
-                        entry.logger->on_begin_packet_received(me, ds, p, id);
+                        uint64_t seq = next_seq();
+                        events_->get().on_begin_packet_received(seq, packet_id, receive_id, data_stream, p);
                     }
-                }
 
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_received(seq, me, ds, p, id); });
-                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_received(seq, me, ds, p, id); });
-            });
+                    impl_->receive_completed_counts[receive_id] = 0;
 
-            ds_entry->get().data_stream->add_on_transmit_started([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
-                auto [previous_volume, new_volume] = adjust_audio_volume(me, ds, p, id);
+                    for (const auto& modem_name : data_stream.referenced_by)
+                    {
+                        auto entry = find_modem_entry(modem_name);
+                        if (entry)
+                        {
+                            for (auto& logger_ref : entry->get().associated_loggers)
+                            {
+                                if (logger_ref.get().logger)
+                                {
+                                    logger_ref.get().logger->on_begin_packet_received(0, packet_id, receive_id, data_stream, p);
+                                }
+                            }
+                        }
+                    }
 
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_transmit_started(seq, me, ds, p, id); });
-                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_transmit_started(seq, me, ds, p, id); });
+                    if (events_)
+                    {
+                        events_->get().on_packet_received_unbuffered();
+                    }
 
-                if (me.associated_audio_entry)
-                {
-                    auto& audio_entry = me.associated_audio_entry->get();
-                    invoke_async([this, seq = next_seq(), &audio_entry, previous_volume, new_volume, id]() { events_->get().on_volume_changed(seq, audio_entry, previous_volume, new_volume, id); });
-                    invoke_modem_loggers_async(me, [seq = next_seq(), &audio_entry, previous_volume, new_volume, id](logger_base& l) { l.on_volume_changed(seq, audio_entry, previous_volume, new_volume, id); });
-                }
-            });
+                    if (events_)
+                    {
+                        struct modem_entry* resolved_modem = nullptr;
+                        if (!data_stream.referenced_by.empty())
+                        {
+                            auto entry = find_modem_entry(data_stream.referenced_by.front());
+                            if (entry) resolved_modem = &entry->get();
+                        }
 
-            ds_entry->get().data_stream->add_on_transmit_completed([this, &me = *modem_entry, &ds = ds_entry->get()](const packet& p, uint64_t id) {
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, &me, &ds, p, id]() { events_->get().on_packet_transmit_completed(seq, me, ds, p, id); });
-                invoke_modem_loggers_async(me, [seq, &me, &ds, p, id](logger_base& l) { l.on_packet_transmit_completed(seq, me, ds, p, id); });
-            });
+                        if (resolved_modem)
+                        {
+                            uint64_t seq = next_seq();
+                            events_->get().on_packet_received(seq, packet_id, receive_id, *resolved_modem, data_stream, p);
 
-            // Wire modem event callbacks - modem_data_stream intercepts modem events and re-fires with data_stream's id
-            ds_entry->get().data_stream->add_on_modem_transmit_packet([this, &me = *modem_entry](const packet& p, uint64_t id) {
-                uint64_t seq = next_seq();
-                if (events_)
-                {
-                    invoke_async([this, seq, p, id]() { events_->get().on_modem_transmit(seq, p, id); });
-                }
-                invoke_modem_loggers_async(me, [seq, p, id](logger_base& l) { l.on_modem_transmit(seq, p, id); });
-            });
+                            for (auto& logger_ref : resolved_modem->associated_loggers)
+                            {
+                                logger_entry& log_entry = logger_ref.get();
+                                if (log_entry.logger)
+                                {
+                                    log_entry.logger->on_packet_received(seq, packet_id, receive_id, *resolved_modem, data_stream, p);
+                                }
+                            }
+                        }
+                    }
+                });
 
-            ds_entry->get().data_stream->add_on_modem_transmit_bitstream([this, &me = *modem_entry](const std::vector<uint8_t>& bitstream, uint64_t id) {
-                uint64_t seq = next_seq();
-                if (events_)
-                {
-                    invoke_async([this, seq, &me, bitstream = bitstream, id]() { events_->get().on_modem_transmit(seq, me, bitstream, id); });
-                }
-                invoke_modem_loggers_async(me, [seq, &me, bitstream = bitstream, id](logger_base& l) { l.on_modem_transmit(seq, me, bitstream, id); });
-            });
+                ds_entry->get().data_stream->add_on_transmit_started([this, &data_stream = ds_entry->get()](struct modem& m, const packet& p, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem)
+                    {
+                        return;
+                    }
 
-            ds_entry->get().data_stream->add_on_modem_ptt([this, &me = *modem_entry](bool state, uint64_t id) {
-                uint64_t seq = next_seq();
-                if (events_)
-                {
-                    invoke_async([this, seq, state, id]() { events_->get().on_modem_ptt(seq, state, id); });
-                }
-                invoke_modem_loggers_async(me, [seq, state, id](logger_base& l) { l.on_modem_ptt(seq, state, id); });
-            });
+                    if (events_)
+                    {
+                        events_->get().on_packet_transmit_unbuffered(resolved_modem->name, p.from, p.to, true);
+                    }
 
-            ds_entry->get().data_stream->add_on_modem_before_start_render_audio([this, &me = *modem_entry](uint64_t id) {
-                if (me.associated_audio_entry)
-                {
+                    auto [previous_volume, new_volume] = adjust_audio_volume(*resolved_modem, data_stream, p, packet_id);
+
                     uint64_t seq = next_seq();
                     if (events_)
                     {
-                        invoke_async([this, seq, &ae = me.associated_audio_entry->get(), id]() { events_->get().on_modem_before_start_render_audio(seq, ae, id); });
+                        events_->get().on_packet_transmit_started(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
                     }
-                    invoke_modem_loggers_async(me, [seq, &ae = me.associated_audio_entry->get(), id](logger_base& l) { l.on_modem_before_start_render_audio(seq, ae, id); });
-                }
-            });
 
-            ds_entry->get().data_stream->add_on_modem_end_render_audio([this, &me = *modem_entry](const std::vector<double>& samples, size_t count, uint64_t id) {
-                if (me.associated_audio_entry)
-                {
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_packet_transmit_started(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
+                        }
+                    }
+
+                    if (resolved_modem->associated_audio_entry)
+                    {
+                        auto& audio = resolved_modem->associated_audio_entry->get();
+                        uint64_t seq2 = next_seq();
+                        if (events_)
+                        {
+                            events_->get().on_volume_changed(seq2, packet_id, receive_id, transmit_id, *resolved_modem, audio, previous_volume, new_volume);
+                        }
+
+                        for (auto& logger_ref : resolved_modem->associated_loggers)
+                        {
+                            logger_entry& log_entry = logger_ref.get();
+                            if (log_entry.logger)
+                            {
+                                log_entry.logger->on_volume_changed(seq2, packet_id, receive_id, transmit_id, *resolved_modem, audio, previous_volume, new_volume);
+                            }
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_modem_transmit_packet([this, &data_stream = ds_entry->get()](struct modem& m, const packet& p, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem)
+                    {
+                        return;
+                    }
+
+                    if (events_)
+                    {
+                        events_->get().on_modem_transmit_unbuffered();
+                    }
+
                     uint64_t seq = next_seq();
                     if (events_)
                     {
-                        invoke_async([this, seq, &ae = me.associated_audio_entry->get(), samples, count, id]() { events_->get().on_modem_end_render_audio(seq, ae, samples, count, id); });
+                        events_->get().on_modem_transmit(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
                     }
-                    invoke_modem_loggers_async(me, [seq, &ae = me.associated_audio_entry->get(), samples, count, id](logger_base& l) { l.on_modem_end_render_audio(seq, ae, samples, count, id); });
-                }
-            });
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_modem_transmit(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_modem_transmit_bitstream([this, &data_stream = ds_entry->get()](struct modem& m, const std::vector<uint8_t>& bitstream, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem)
+                    {
+                        return;
+                    }
+
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        events_->get().on_modem_transmit(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, bitstream);
+                    }
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_modem_transmit(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, bitstream);
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_modem_ptt([this, &data_stream = ds_entry->get()](struct modem& m, bool state, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem || !resolved_modem->associated_ptt_entry)
+                    {
+                        return;
+                    }
+
+                    if (events_)
+                    {
+                        events_->get().on_modem_ptt_unbuffered(state);
+                    }
+
+                    auto& ptt = resolved_modem->associated_ptt_entry->get();
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        events_->get().on_modem_ptt(seq, packet_id, receive_id, transmit_id, *resolved_modem, ptt, state);
+                    }
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_modem_ptt(seq, packet_id, receive_id, transmit_id, *resolved_modem, ptt, state);
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_modem_before_start_render_audio([this, &data_stream = ds_entry->get()](struct modem& m, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem || !resolved_modem->associated_audio_entry)
+                    {
+                        return;
+                    }
+
+                    auto& audio = resolved_modem->associated_audio_entry->get();
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        events_->get().on_modem_before_start_render_audio(seq, packet_id, receive_id, transmit_id, *resolved_modem, audio);
+                    }
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_modem_before_start_render_audio(seq, packet_id, receive_id, transmit_id, *resolved_modem, audio);
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_modem_end_render_audio([this, &data_stream = ds_entry->get()](struct modem& m, const std::vector<double>& samples, size_t count, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem || !resolved_modem->associated_audio_entry)
+                    {
+                        return;
+                    }
+
+                    auto& audio = resolved_modem->associated_audio_entry->get();
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        events_->get().on_modem_end_render_audio(seq, packet_id, receive_id, transmit_id, *resolved_modem, audio, samples, count);
+                    }
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_modem_end_render_audio(seq, packet_id, receive_id, transmit_id, *resolved_modem, audio, samples, count);
+                        }
+                    }
+                });
+
+                ds_entry->get().data_stream->add_on_transmit_completed([this, &data_stream = ds_entry->get()](struct modem& m, const packet& p, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id) {
+                    auto* resolved_modem = resolve_modem_entry(m, data_stream);
+                    if (!resolved_modem)
+                    {
+                        return;
+                    }
+
+                    if (events_)
+                    {
+                        events_->get().on_packet_transmit_unbuffered(resolved_modem->name, "", "", false);
+                    }
+
+                    uint64_t seq = next_seq();
+                    if (events_)
+                    {
+                        events_->get().on_packet_transmit_completed(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
+                    }
+
+                    for (auto& logger_ref : resolved_modem->associated_loggers)
+                    {
+                        logger_entry& log_entry = logger_ref.get();
+                        if (log_entry.logger)
+                        {
+                            log_entry.logger->on_packet_transmit_completed(seq, packet_id, receive_id, transmit_id, *resolved_modem, data_stream, p);
+                        }
+                    }
+
+                    auto receive_it = impl_->receive_completed_counts.find(receive_id);
+                    if (receive_it != impl_->receive_completed_counts.end())
+                    {
+                        receive_it->second++;
+                        if (receive_it->second >= data_stream.referenced_by.size())
+                        {
+                            if (events_)
+                            {
+                                uint64_t seq2 = next_seq();
+                                events_->get().on_receive_completed(seq2, packet_id, receive_id, data_stream);
+                            }
+                            impl_->receive_completed_counts.erase(receive_it);
+                        }
+                    }
+                });
+            } // end if (first_modem_for_ds)
 
             ds_entry->get().referenced_by.push_back(modem_entry->name);
 
             modem_entry->associated_data_stream_entry = ds_entry;
 
-            // Only one modem per data stream
+            // One data stream per modem (but a data stream can have multiple modems)
             break;
         }
     }
@@ -1397,7 +1626,7 @@ void pipeline::assign_ptt_controls()
 
         for (const auto& ptt_name : modem_entry->modulator_config.ptt_controls)
         {
-            auto ptt_entry = find_ptt_entry(ptt_controls_, ptt_name);
+            auto ptt_entry = find_ptt_entry(ptt_name);
             if (!ptt_entry || !ptt_entry->get().enabled)
             {
                 continue;
@@ -1837,13 +2066,14 @@ bool pipeline::is_valid_logger_config(const logger_config& logger_config)
 
 void pipeline::register_logger(const logger_entry& entry, const logger_config& logger_config)
 {
-    (void)entry;
     used_logger_names_.insert(logger_config.name);
 
     if (logger_config.type == logger_type::tcp)
     {
         used_logger_tcp_ports_.insert(logger_config.port);
     }
+
+    (void)entry; // Unused for now, but kept for consistency
 }
 
 std::optional<std::reference_wrapper<logger_entry>> pipeline::find_logger_entry(const std::string& name)
@@ -1868,6 +2098,19 @@ std::optional<std::reference_wrapper<modem_entry>> pipeline::find_modem_entry(co
         }
     }
     return std::nullopt;
+}
+
+modem_entry* pipeline::resolve_modem_entry(struct modem& m, data_stream_entry& ds)
+{
+    for (const auto& modem_name : ds.referenced_by)
+    {
+        auto entry = find_modem_entry(modem_name);
+        if (entry && &entry->get().modem == &m)
+        {
+            return &entry->get();
+        }
+    }
+    return nullptr;
 }
 
 void pipeline::validate_entries()
@@ -1902,7 +2145,7 @@ void pipeline::validate_entries()
 
 bool pipeline::try_recover_audio_stream(audio_entry& audio_entry, modem_entry& modem_entry)
 {
-    if (!try_create_audio_entry(audio_entry, audio_entry.config, *this, *impl_->pool.get()))
+    if (!try_create_audio_entry(audio_entry, audio_entry.config))
     {
         return false;
     }
@@ -2004,7 +2247,7 @@ void pipeline::attempt_audio_recovery(audio_entry& entry, modem_entry& modem_ent
             {
                 attempt_audio_recovery(entry, modem_entry, ds_entry);
             }
-        });
+            });
     }
 }
 
@@ -2024,6 +2267,11 @@ bool pipeline::try_recover_ptt_control(ptt_entry& entry, modem_entry& modem_entr
             if (!serial_port->open(entry.port_name, entry.baud_rate, entry.data_bits, entry.parity, entry.stop_bits, entry.flow_control))
             {
                 return false; // Open failed, will trigger retry loop
+            }
+            {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &entry]() { events_->get().on_serial_port_opened(seq, entry); });
+                invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_serial_port_opened(seq, entry); });
             }
             entry.ptt_control->ptt(false);
         }
@@ -2114,7 +2362,7 @@ void pipeline::attempt_ptt_recovery(ptt_entry& entry, modem_entry& modem_entry, 
             {
                 attempt_ptt_recovery(entry, modem_entry, ds_entry);
             }
-        });
+            });
     }
 }
 
@@ -2140,6 +2388,11 @@ bool pipeline::try_recover_serial_port(ptt_entry& entry, modem_entry& modem_entr
             if (!serial_port->open(entry.port_name, entry.baud_rate, entry.data_bits, entry.parity, entry.stop_bits, entry.flow_control))
             {
                 return false; // Open failed, will trigger retry loop
+            }
+            {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, &entry]() { events_->get().on_serial_port_opened(seq, entry); });
+                invoke_ptt_entry_loggers_async(entry, [seq, &entry](logger_base& l) { l.on_serial_port_opened(seq, entry); });
             }
             entry.ptt_control->ptt(false);
         }
@@ -2230,39 +2483,15 @@ void pipeline::attempt_serial_port_recovery(ptt_entry& entry, modem_entry& modem
             {
                 attempt_serial_port_recovery(entry, modem_entry, ds_entry);
             }
-        });
+            });
     }
 }
 
 bool pipeline::try_recover_transport(data_stream_entry& entry)
 {
-    switch (entry.config.transport)
+    if (!create_transport(entry))
     {
-        case data_stream_transport_type::tcp:
-        {
-            auto tcp = std::make_unique<tcp_transport>(entry.config.bind_address, entry.config.port);
-
-            tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, conn, &ds]() { events_->get().on_client_connected(seq, ds, conn); });
-                invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_connected(seq, ds, conn); });
-            }, std::ref(entry));
-
-            tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& ds) {
-                uint64_t seq = next_seq();
-                invoke_async([this, seq, conn, &ds]() { events_->get().on_client_disconnected(seq, ds, conn); });
-                invoke_data_stream_loggers_async(ds, [seq, conn, &ds](logger_base& l) { l.on_client_disconnected(seq, ds, conn); });
-            }, std::ref(entry));
-
-            entry.transport = std::make_unique<transport_no_throw>(std::move(tcp), entry, *this, *impl_->pool.get());
-
-            break;
-        }
-        case data_stream_transport_type::serial:
-            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), entry, *this, *impl_->pool.get());
-            break;
-        default:
-            return false;
+        return false;
     }
 
     entry.data_stream->transport(*entry.transport);
@@ -2289,14 +2518,18 @@ void pipeline::schedule_transport_recovery(data_stream_entry& ds_entry)
 void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
 {
     int attempts;
+
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
+
         auto it = impl_->transport_recovery_contexts.find(&ds_entry);
         if (it == impl_->transport_recovery_contexts.end())
         {
             return;
         }
+
         it->second.attempts++;
+
         attempts = it->second.attempts;
     }
 
@@ -2345,12 +2578,15 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
     // Schedule next attempt
     {
         std::lock_guard<std::mutex> lock(impl_->recovery_mutex);
+
         auto it = impl_->transport_recovery_contexts.find(&ds_entry);
         if (it == impl_->transport_recovery_contexts.end())
         {
             return;
         }
+
         it->second.timer->expires_after(std::chrono::seconds(ds_entry.config.recovery_delay_seconds));
+
         it->second.timer->async_wait([this, &ds_entry](const boost::system::error_code& ec) {
             if (!ec)
             {
@@ -2362,9 +2598,6 @@ void pipeline::attempt_transport_recovery(data_stream_entry& ds_entry)
 
 void pipeline::try_reenable_data_stream(modem_entry& modem_entry, data_stream_entry& ds_entry)
 {
-    // Check all dependencies are healthy before re-enabling
-
-    // Check audio stream
     if (modem_entry.associated_audio_entry)
     {
         if (modem_entry.associated_audio_entry->get().faulted.load())
@@ -2373,7 +2606,6 @@ void pipeline::try_reenable_data_stream(modem_entry& modem_entry, data_stream_en
         }
     }
 
-    // Check PTT control
     if (modem_entry.associated_ptt_entry)
     {
         auto& ptt = modem_entry.associated_ptt_entry->get();
@@ -2383,18 +2615,69 @@ void pipeline::try_reenable_data_stream(modem_entry& modem_entry, data_stream_en
         }
     }
 
-    // Check data stream transport
     if (ds_entry.faulted.load())
     {
         return; // Transport still faulted, can't enable
     }
 
     // All dependencies healthy, re-enable
+
     ds_entry.data_stream->enabled(true);
+
+    uint64_t seq = next_seq();
+    invoke_async([this, seq, &ds_entry]() { events_->get().on_data_stream_enabled(seq, ds_entry); });
+    invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_data_stream_enabled(seq, ds_entry); });
+}
+
+bool pipeline::create_transport(data_stream_entry& entry)
+{
+    switch (entry.config.transport)
     {
-        uint64_t seq = next_seq();
-        invoke_async([this, seq, &ds_entry]() { events_->get().on_data_stream_enabled(seq, ds_entry); });
-        invoke_data_stream_loggers_async(ds_entry, [seq, &ds_entry](logger_base& l) { l.on_data_stream_enabled(seq, ds_entry); });
+        case data_stream_transport_type::tcp:
+        {
+            auto tcp = std::make_unique<tcp_transport>(entry.config.bind_address, entry.config.port);
+
+            tcp->add_on_client_connected([this](const tcp_client_connection& conn, data_stream_entry& data_stream) {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, conn, &data_stream]() { events_->get().on_client_connected(seq, data_stream, conn); });
+                invoke_data_stream_loggers_async(data_stream, [seq, conn, &data_stream](logger_base& l) { l.on_client_connected(seq, data_stream, conn); });
+            }, std::ref(entry));
+
+            tcp->add_on_client_disconnected([this](const tcp_client_connection& conn, data_stream_entry& data_stream) {
+                uint64_t seq = next_seq();
+                invoke_async([this, seq, conn, &data_stream]() { events_->get().on_client_disconnected(seq, data_stream, conn); });
+                invoke_data_stream_loggers_async(data_stream, [seq, conn, &data_stream](logger_base& l) { l.on_client_disconnected(seq, data_stream, conn); });
+            }, std::ref(entry));
+
+            entry.transport = std::make_unique<transport_no_throw>(std::move(tcp), entry, *this, *impl_->pool.get());
+            break;
+        }
+
+        case data_stream_transport_type::serial:
+            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), entry, *this, *impl_->pool.get());
+            break;
+
+        default:
+            return false;
+    }
+
+    return true;
+}
+
+bool pipeline::create_formatter(data_stream_entry& entry)
+{
+    switch (entry.config.format)
+    {
+        case data_stream_format_type::ax25_kiss_formatter:
+            entry.formatter = std::make_unique<ax25_kiss_formatter>();
+            return true;
+
+        case data_stream_format_type::agwpe_formatter:
+            entry.formatter = std::make_unique<agwpe_formatter>();
+            return true;
+
+        default:
+            return false;
     }
 }
 
@@ -2415,21 +2698,21 @@ void pipeline::on_error(audio_stream_no_throw& component, audio_entry& entry, co
         auto& modem_entry = entry.associated_modem_entry->get();
         if (modem_entry.associated_data_stream_entry)
         {
-            auto& ds = modem_entry.associated_data_stream_entry->get();
-            ds.data_stream->enabled(false);
+            auto& data_stream = modem_entry.associated_data_stream_entry->get();
+            data_stream.data_stream->enabled(false);
             {
                 uint64_t seq = next_seq();
-                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
-                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+                invoke_async([this, seq, &data_stream]() { events_->get().on_data_stream_disabled(seq, data_stream); });
+                invoke_data_stream_loggers_async(data_stream, [seq, &data_stream](logger_base& l) { l.on_data_stream_disabled(seq, data_stream); });
             }
 
-            size_t error_count = ds.data_stream->audio_stream_error_count(ds.data_stream->audio_stream_error_count() + 1);
+            size_t error_count = data_stream.data_stream->audio_stream_error_count(data_stream.data_stream->audio_stream_error_count() + 1);
             if (error_count > static_cast<size_t>(entry.config.max_error_count))
             {
                 return;
             }
 
-            schedule_audio_recovery(entry, modem_entry, ds);
+            schedule_audio_recovery(entry, modem_entry, data_stream);
         }
     }
 }
@@ -2451,15 +2734,15 @@ void pipeline::on_error(ptt_control_no_throw& component, ptt_entry& entry, const
         auto& modem_entry = entry.associated_modem_entry->get();
         if (modem_entry.associated_data_stream_entry)
         {
-            auto& ds = modem_entry.associated_data_stream_entry->get();
-            ds.data_stream->enabled(false);
+            auto& data_stream = modem_entry.associated_data_stream_entry->get();
+            data_stream.data_stream->enabled(false);
             {
                 uint64_t seq = next_seq();
-                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
-                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+                invoke_async([this, seq, &data_stream]() { events_->get().on_data_stream_disabled(seq, data_stream); });
+                invoke_data_stream_loggers_async(data_stream, [seq, &data_stream](logger_base& l) { l.on_data_stream_disabled(seq, data_stream); });
             }
 
-            schedule_ptt_recovery(entry, modem_entry, ds);
+            schedule_ptt_recovery(entry, modem_entry, data_stream);
         }
     }
 }
@@ -2481,15 +2764,15 @@ void pipeline::on_error(serial_port_no_throw& component, ptt_entry& entry, const
         auto& modem_entry = entry.associated_modem_entry->get();
         if (modem_entry.associated_data_stream_entry)
         {
-            auto& ds = modem_entry.associated_data_stream_entry->get();
-            ds.data_stream->enabled(false);
+            auto& data_stream = modem_entry.associated_data_stream_entry->get();
+            data_stream.data_stream->enabled(false);
             {
                 uint64_t seq = next_seq();
-                invoke_async([this, seq, &ds]() { events_->get().on_data_stream_disabled(seq, ds); });
-                invoke_data_stream_loggers_async(ds, [seq, &ds](logger_base& l) { l.on_data_stream_disabled(seq, ds); });
+                invoke_async([this, seq, &data_stream]() { events_->get().on_data_stream_disabled(seq, data_stream); });
+                invoke_data_stream_loggers_async(data_stream, [seq, &data_stream](logger_base& l) { l.on_data_stream_disabled(seq, data_stream); });
             }
 
-            schedule_serial_port_recovery(entry, modem_entry, ds);
+            schedule_serial_port_recovery(entry, modem_entry, data_stream);
         }
     }
 }
@@ -2515,12 +2798,22 @@ void pipeline::on_error(transport_no_throw& component, data_stream_entry& entry,
     schedule_transport_recovery(entry);
 }
 
-void pipeline::on_log(logger_base& logger, uint64_t id)
+void pipeline::on_log(logger_base& logger, uint64_t transmit_id, uint64_t packet_id, uint64_t receive_id, modem_entry& modem)
 {
     uint64_t seq = next_seq();
+
     if (events_)
     {
-        events_->get().on_log(seq, logger, id);
+        events_->get().on_log(seq, packet_id, receive_id, transmit_id, modem, logger);
+    }
+
+    for (auto& logger_ref : modem.associated_loggers)
+    {
+        logger_entry& log_entry = logger_ref.get();
+        if (log_entry.logger)
+        {
+            log_entry.logger->on_log(next_seq(), packet_id, receive_id, transmit_id, modem, logger);
+        }
     }
 }
 
@@ -2537,11 +2830,184 @@ std::pair<int, int> pipeline::adjust_audio_volume(modem_entry& modem_entry, data
     {
         auto& audio_entry = modem_entry.associated_audio_entry->get();
         previous_volume = audio_entry.stream.volume();
-        audio_entry.stream.volume(audio_entry.config.volume);
+        if (audio_entry.config.volume > 0)
+        {
+            audio_entry.stream.volume(audio_entry.config.volume);
+        }
         new_volume = audio_entry.stream.volume();
     }
 
     return { previous_volume, new_volume };
+}
+
+bool pipeline::try_create_audio_entry(audio_entry& entry, const audio_stream_config& audio_config)
+{
+    if (requires_audio_hardware(audio_config.type))
+    {
+        audio_device device;
+        if (!try_find_audio_device(audio_config, device))
+        {
+            return false;
+        }
+
+        entry.name = audio_config.name;
+        entry.display_name = device.name;
+        entry.stream = audio_stream(std::make_unique<audio_stream_no_throw>(device.stream().release(), entry, *this, *impl_->pool));
+        entry.device = std::move(device);
+        entry.config = audio_config;
+
+        return true;
+    }
+    else
+    {
+        auto stream = create_non_hardware_audio_stream(entry, audio_config);
+        if (!stream)
+        {
+            return false;
+        }
+
+        entry.name = audio_config.name;
+        entry.display_name = stream->name();
+        entry.device = {};
+        entry.stream = audio_stream(std::move(stream));
+        entry.config = audio_config;
+
+        return true;
+    }
+}
+
+std::unique_ptr<audio_stream_base> pipeline::create_non_hardware_audio_stream(audio_entry& entry, const audio_stream_config& audio_config)
+{
+    std::unique_ptr<audio_stream_base> stream_base;
+
+    switch (audio_config.type)
+    {
+        case audio_stream_config_type::wav_audio_input_stream:
+            stream_base = std::make_unique<wav_audio_input_stream>(audio_config.filename);
+            break;
+        case audio_stream_config_type::wav_audio_output_stream:
+            stream_base = std::make_unique<wav_audio_output_stream>(audio_config.filename, audio_config.sample_rate);
+            break;
+        case audio_stream_config_type::null_audio_stream:
+            stream_base = std::make_unique<null_audio_stream>();
+            break;
+        default:
+            return nullptr;
+    }
+
+    return std::make_unique<audio_stream_no_throw>(std::move(stream_base), entry, *this, *impl_->pool);
+}
+
+bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config& c)
+{
+    switch (c.type)
+    {
+        case ptt_control_config_type::null_ptt_control:
+        {
+            entry.type = ptt_control_type::null;
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<null_ptt_control>(), entry, *this, *impl_->pool);
+            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& ptt_ref) {
+                invoke_ptt_event_async(enabled, ptt_ref);
+            }, std::ref(entry));
+            entry.ptt_control = std::move(ptt);
+            return true;
+        }
+        case ptt_control_config_type::serial_port_ptt_control:
+        {
+            entry.type = ptt_control_type::serial_port;
+            auto serial = std::make_unique<serial_port_no_throw>(std::make_unique<serial_port>(), entry, *this, *impl_->pool);
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<serial_port_ptt_control>(*serial), entry, *this, *impl_->pool);
+            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& ptt_ref) {
+                invoke_ptt_event_async(enabled, ptt_ref);
+            }, std::ref(entry));
+            entry.ptt_control = std::move(ptt);
+            entry.serial_port = std::move(serial);
+            return true;
+        }
+        case ptt_control_config_type::library_ptt_control:
+        {
+            entry.type = ptt_control_type::library;
+            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<library_ptt_control>(entry.ptt_library), entry, *this, *impl_->pool);
+            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& ptt_ref) {
+                invoke_ptt_event_async(enabled, ptt_ref);
+            }, std::ref(entry));
+            entry.ptt_control = std::move(ptt);
+            return true;
+        }
+        case ptt_control_config_type::tcp_ptt_control:
+            return false;
+        default:
+            return false;
+    }
+}
+
+std::optional<std::reference_wrapper<audio_entry>> pipeline::find_audio_entry(const std::string& name)
+{
+    for (auto& entry : audio_entries_)
+    {
+        if (entry->name == name)
+        {
+            return *entry;
+        }
+    }
+    return {};
+}
+
+std::optional<std::reference_wrapper<audio_entry>> pipeline::get_output_stream(const modulator_config& mod_config)
+{
+    if (mod_config.audio_output_streams.empty())
+    {
+        return {};
+    }
+
+    if (mod_config.audio_output_streams.size() == 1)
+    {
+        auto audio_entry = find_audio_entry(mod_config.audio_output_streams[0]);
+        if (!audio_entry)
+        {
+            return {};
+        }
+
+        if (audio_entry->get().stream.type() != audio_stream_type::output)
+        {
+            // A modulator requires an output audio_entry stream
+            // If this is not an output stream, skip it
+            return {};
+        }
+
+        return audio_entry;
+    }
+    else
+    {
+        // If the modulator configuration has more than one output stream
+        // We have to create chained audio_entry stream
+        // Each have to match the sample rate
+        return {};
+    }
+}
+
+std::optional<std::reference_wrapper<ptt_entry>> pipeline::find_ptt_entry(const std::string& name)
+{
+    for (auto& entry : ptt_controls_)
+    {
+        if (entry->name == name)
+        {
+            return *entry;
+        }
+    }
+    return {};
+}
+
+std::optional<std::reference_wrapper<data_stream_entry>> pipeline::find_data_stream_entry(const std::string& name)
+{
+    for (auto& entry : data_streams_)
+    {
+        if (entry->name == name)
+        {
+            return *entry;
+        }
+    }
+    return {};
 }
 
 // **************************************************************** //
@@ -2678,7 +3144,6 @@ void rotating_file_policy::rotate_to_next_file()
     should_truncate_ = true;
 }
 
-
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
@@ -2695,17 +3160,31 @@ void logger_base::stop()
 {
 }
 
-void logger_base::notify_logged(uint64_t id)
+void logger_base::notify_logged(uint64_t transmit_id, uint64_t packet_id, uint64_t receive_id, modem_entry& modem)
 {
     if (events_)
     {
-        events_->get().on_log(*this, id);
+        events_->get().on_log(*this, transmit_id, packet_id, receive_id, modem);
     }
 }
 
-void logger_base::on_started(uint64_t seq)
+void logger_base::on_config_load(uint64_t seq, const std::string& config_file)
 {
     (void)seq;
+    (void)config_file;
+}
+
+void logger_base::on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target)
+{
+    (void)seq;
+    (void)logger_name;
+    (void)target;
+}
+
+void logger_base::on_started(uint64_t seq, pipeline& p)
+{
+    (void)seq;
+    (void)p;
 }
 
 void logger_base::on_stopped(uint64_t seq)
@@ -2713,11 +3192,14 @@ void logger_base::on_stopped(uint64_t seq)
     (void)seq;
 }
 
-void logger_base::on_log(uint64_t seq, logger_base& logger, uint64_t id)
+void logger_base::on_log(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, logger_base& logger)
 {
     (void)seq;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
     (void)logger;
-    (void)id;
+    (void)receive_id;
 }
 
 void logger_base::on_audio_stream_created(uint64_t seq, audio_entry& entry)
@@ -2819,6 +3301,12 @@ void logger_base::on_ptt_activated(uint64_t seq, ptt_entry& entry)
 }
 
 void logger_base::on_ptt_deactivated(uint64_t seq, ptt_entry& entry)
+{
+    (void)seq;
+    (void)entry;
+}
+
+void logger_base::on_serial_port_opened(uint64_t seq, ptt_entry& entry)
 {
     (void)seq;
     (void)entry;
@@ -2966,86 +3454,157 @@ void logger_base::on_modem_initialized(uint64_t seq, modem_entry& entry)
     (void)entry;
 }
 
-void logger_base::on_modem_transmit(uint64_t seq, const packet& p, uint64_t id)
+void logger_base::on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
     (void)seq;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)ds_entry;
     (void)p;
-    (void)id;
+    (void)receive_id;
 }
 
-void logger_base::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
+void logger_base::on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream)
 {
     (void)seq;
-    (void)entry;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)ds_entry;
     (void)bitstream;
-    (void)id;
+    (void)receive_id;
 }
 
-void logger_base::on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id)
+void logger_base::on_modem_before_start_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio)
 {
     (void)seq;
-    (void)entry;
-    (void)id;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)audio;
+    (void)receive_id;
 }
 
-void logger_base::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id)
+void logger_base::on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count)
 {
     (void)seq;
-    (void)entry;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)audio;
     (void)samples;
     (void)count;
-    (void)id;
+    (void)receive_id;
 }
 
-void logger_base::on_modem_ptt(uint64_t seq, bool state, uint64_t id)
+void logger_base::on_modem_ptt(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, ptt_entry& ptt, bool state)
 {
     (void)seq;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)ptt;
     (void)state;
-    (void)id;
+    (void)receive_id;
 }
 
-void logger_base::on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id)
+void logger_base::on_volume_changed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, int previous_volume, int new_volume)
 {
     (void)seq;
-    (void)entry;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)audio;
     (void)previous_volume;
     (void)new_volume;
-    (void)id;
+    (void)receive_id;
 }
 
-void logger_base::on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void logger_base::on_modem_ptt_unbuffered(bool state)
 {
-    (void)modem_entry;
-    (void)ds_entry;
-    (void)p;
-    (void)id;
+    (void)state;
 }
 
-void logger_base::on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void logger_base::on_modem_transmit_unbuffered()
 {
-    (void)seq;
-    (void)modem_entry;
-    (void)ds_entry;
-    (void)p;
-    (void)id;
 }
 
-void logger_base::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void logger_base::on_packet_received_unbuffered()
 {
-    (void)seq;
-    (void)modem_entry;
-    (void)ds_entry;
-    (void)p;
-    (void)id;
 }
 
-void logger_base::on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void logger_base::on_packet_transmit_unbuffered(const std::string& modem_name, const std::string& from, const std::string& to, bool active)
+{
+    (void)modem_name;
+    (void)from;
+    (void)to;
+    (void)active;
+}
+
+void logger_base::on_begin_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry, const packet& p)
 {
     (void)seq;
-    (void)modem_entry;
+    (void)packet_id;
+    (void)receive_id;
     (void)ds_entry;
     (void)p;
-    (void)id;
+}
+
+void logger_base::on_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
+{
+    (void)seq;
+    (void)packet_id;
+    (void)receive_id;
+    (void)modem;
+    (void)ds_entry;
+    (void)p;
+}
+
+void logger_base::on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
+{
+    (void)seq;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)ds_entry;
+    (void)p;
+    (void)receive_id;
+}
+
+void logger_base::on_packet_transmit_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
+{
+    (void)seq;
+    (void)packet_id;
+    (void)transmit_id;
+    (void)modem;
+    (void)ds_entry;
+    (void)p;
+    (void)receive_id;
+}
+
+void logger_base::on_receive_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry)
+{
+    (void)seq;
+    (void)packet_id;
+    (void)receive_id;
+    (void)ds_entry;
+}
+
+void logger_base::on_audio_devices_enumeration_started(uint64_t seq)
+{
+    (void)seq;
+}
+
+void logger_base::on_audio_device_detected(uint64_t seq, audio_device& device)
+{
+    (void)seq;
+    (void)device;
+}
+
+void logger_base::on_audio_devices_enumeration_completed(uint64_t seq)
+{
+    (void)seq;
 }
 
 // **************************************************************** //
@@ -3069,13 +3628,13 @@ std::string bitstream_file_logger::target() const
     return last_written_path_;
 }
 
-void bitstream_file_logger::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
+void bitstream_file_logger::on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream)
 {
     (void)seq;
-    (void)entry;
+    (void)ds_entry;
 
     write_bitstream(bitstream);
-    notify_logged(id);
+    notify_logged(transmit_id, packet_id, receive_id, modem);
 }
 
 void bitstream_file_logger::write_bitstream(const std::vector<uint8_t>& data)
@@ -3140,14 +3699,13 @@ std::string packet_file_logger::target() const
     return last_written_path_;
 }
 
-void packet_file_logger::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void packet_file_logger::on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
     (void)seq;
-    (void)modem_entry;
     (void)ds_entry;
 
     write_packet(p);
-    notify_logged(id);
+    notify_logged(transmit_id, packet_id, receive_id, modem);
 }
 
 void packet_file_logger::write_packet(const packet& p)
@@ -3197,13 +3755,13 @@ std::string audio_file_logger::target() const
     return last_written_path_;
 }
 
-void audio_file_logger::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id)
+void audio_file_logger::on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count)
 {
     (void)seq;
 
-    int sample_rate = entry.config.sample_rate;
+    int sample_rate = audio.config.sample_rate;
     write_audio(samples, count, sample_rate);
-    notify_logged(id);
+    notify_logged(transmit_id, packet_id, receive_id, modem);
 }
 
 void audio_file_logger::write_audio(const std::vector<double>& samples, size_t count, int sample_rate)
@@ -3215,18 +3773,17 @@ void audio_file_logger::write_audio(const std::vector<double>& samples, size_t c
         return;
     }
 
-    std::string path = policy_.resolve_write_path(count * sizeof(double));
+    // 16-bit PCM = 2 bytes per sample on disk
+    size_t estimated_bytes = count * 2;
 
-    // Change extension to .wav
-    std::filesystem::path p(path);
-    p.replace_extension(".wav");
-    path = p.string();
+    std::string path = policy_.resolve_write_path(estimated_bytes);
 
-    wav_audio_output_stream wav(path, sample_rate);
+    wav_file_mode mode = policy_.should_truncate() ? wav_file_mode::create : wav_file_mode::append;
+    wav_audio_output_stream wav(path, sample_rate, mode);
     wav.write(samples.data(), count);
     wav.close();
 
-    policy_.on_write_complete(count * sizeof(double));
+    policy_.on_write_complete(estimated_bytes);
 
     last_written_path_ = path;
 }
@@ -3238,42 +3795,6 @@ void audio_file_logger::write_audio(const std::vector<double>& samples, size_t c
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
-
-bool try_create_audio_entry(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool)
-{
-    if (requires_audio_hardware(config.type))
-    {
-        audio_device device;
-        if (!try_find_audio_device(config, device))
-        {
-            return false;
-        }
-
-        entry.name = config.name;
-        entry.display_name = device.name;
-        entry.stream = audio_stream(std::make_unique<audio_stream_no_throw>(device.stream().release(), entry, events, pool));
-        entry.device = std::move(device);
-        entry.config = config;
-
-        return true;
-    }
-    else
-    {
-        auto stream = create_non_hardware_audio_stream(entry, config, events, pool);
-        if (!stream)
-        {
-            return false;
-        }
-
-        entry.name = config.name;
-        entry.display_name = stream->name();
-        entry.device = {};
-        entry.stream = audio_stream(std::move(stream));
-        entry.config = config;
-
-        return true;
-    }
-}
 
 bool try_find_audio_device(const audio_stream_config& audio_config, audio_device& device)
 {
@@ -3293,131 +3814,6 @@ bool try_find_audio_device(const audio_stream_config& audio_config, audio_device
     }
 
     return false;
-}
-
-std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(audio_entry& entry, const audio_stream_config& config, error_events& events, boost::asio::thread_pool& pool)
-{
-    std::unique_ptr<audio_stream_base> stream_base;
-
-    switch (config.type)
-    {
-        case audio_stream_config_type::wav_audio_input_stream:
-            stream_base = std::make_unique<wav_audio_input_stream>(config.filename);
-            break;
-        case audio_stream_config_type::wav_audio_output_stream:
-            stream_base = std::make_unique<wav_audio_output_stream>(config.filename, config.sample_rate);
-            break;
-        case audio_stream_config_type::null_audio_stream:
-            stream_base = std::make_unique<null_audio_stream>();
-            break;
-        default:
-            return nullptr;
-    }
-
-    return std::make_unique<audio_stream_no_throw>(std::move(stream_base), entry, events, pool);
-}
-
-bool pipeline::try_create_ptt_control(ptt_entry& entry, const ptt_control_config& c)
-{
-    switch (c.type)
-    {
-        case ptt_control_config_type::null_ptt_control:
-        {
-            entry.type = ptt_control_type::null;
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<null_ptt_control>(), entry, *this, *impl_->pool);
-            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
-                invoke_ptt_event_async(enabled, pe);
-            }, std::ref(entry));
-            entry.ptt_control = std::move(ptt);
-            return true;
-        }
-        case ptt_control_config_type::serial_port_ptt_control:
-        {
-            entry.type = ptt_control_type::serial_port;
-            auto serial = std::make_unique<serial_port_no_throw>(std::make_unique<serial_port>(), entry, *this, *impl_->pool);
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<serial_port_ptt_control>(*serial), entry, *this, *impl_->pool);
-            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
-                invoke_ptt_event_async(enabled, pe);
-            }, std::ref(entry));
-            entry.ptt_control = std::move(ptt);
-            entry.serial_port = std::move(serial);
-            return true;
-        }
-        case ptt_control_config_type::library_ptt_control:
-        {
-            entry.type = ptt_control_type::library;
-            auto ptt = std::make_unique<ptt_control_no_throw>(std::make_unique<library_ptt_control>(entry.ptt_library), entry, *this, *impl_->pool);
-            ptt->add_on_ptt_changed([this](bool enabled, ptt_entry& pe) {
-                invoke_ptt_event_async(enabled, pe);
-            }, std::ref(entry));
-            entry.ptt_control = std::move(ptt);
-            return true;
-        }
-        case ptt_control_config_type::tcp_ptt_control:
-            return false;
-        default:
-            return false;
-    }
-}
-
-bool try_create_transport(data_stream_entry& entry, const data_stream_config& config, error_events& events, boost::asio::thread_pool& pool)
-{
-    switch (config.transport)
-    {
-        case data_stream_transport_type::tcp:
-            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<tcp_transport>(config.bind_address, config.port), entry, events, pool);
-            return true;
-        case data_stream_transport_type::serial:
-            entry.transport = std::make_unique<transport_no_throw>(std::make_unique<serial_transport>(), entry, events, pool);
-            return true;
-        default:
-            return false;
-    }
-}
-
-std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(std::vector<std::unique_ptr<audio_entry>>& entries, const std::string& name)
-{
-    for (auto& entry : entries)
-    {
-        if (entry->name == name)
-        {
-            return *entry;
-        }
-    }
-    return {};
-}
-
-std::optional<std::reference_wrapper<audio_entry>> get_output_stream(const modulator_config& config, std::vector<std::unique_ptr<audio_entry>>& audio_entries)
-{
-    if (config.audio_output_streams.empty())
-    {
-        return {};
-    }
-
-    if (config.audio_output_streams.size() == 1)
-    {
-        auto audio_entry = find_audio_entry(audio_entries, config.audio_output_streams[0]);
-        if (!audio_entry)
-        {
-            return {};
-        }
-
-        if (audio_entry->get().stream.type() != audio_stream_type::output)
-        {
-            // A modulator requires an output audio_entry stream
-            // If this is not an output stream, skip it
-            return {};
-        }
-
-        return audio_entry;
-    }
-    else
-    {
-        // If the modulator configuration has more than one output stream
-        // We have to create chained audio_entry stream
-        // Each have to match the sample rate
-        return {};
-    }
 }
 
 std::unique_ptr<modem_entry> create_modem_entry(const modulator_config& config)
@@ -3470,30 +3866,6 @@ std::unique_ptr<modulator_base> create_modulator(const modulator_config& config,
         default:
             return nullptr;
     }
-}
-
-std::optional<std::reference_wrapper<ptt_entry>> find_ptt_entry(std::vector<std::unique_ptr<ptt_entry>>& entries, const std::string& name)
-{
-    for (auto& entry : entries)
-    {
-        if (entry->name == name)
-        {
-            return *entry;
-        }
-    }
-    return {};
-}
-
-std::optional<std::reference_wrapper<data_stream_entry>> find_data_stream_entry(std::vector<std::unique_ptr<data_stream_entry>>& entries, const std::string& name)
-{
-    for (auto& entry : entries)
-    {
-        if (entry->name == name)
-        {
-            return *entry;
-        }
-    }
-    return {};
 }
 
 bool is_output_stream(audio_stream_config_type type)
@@ -3552,313 +3924,315 @@ std::string platform_name()
 //                                                                  //
 // **************************************************************** //
 
-void pipeline_events_default::on_started(uint64_t seq)
+void pipeline_events_default::on_modem_ptt_unbuffered(bool state)
 {
-    (void)seq;
-    std::printf("pipeline: started\n");
+    std::printf("modem: ptt unbuffered state=%s\n", state ? "on" : "off");
+}
+
+void pipeline_events_default::on_modem_transmit_unbuffered()
+{
+    std::printf("modem: transmit unbuffered\n");
+}
+
+void pipeline_events_default::on_packet_received_unbuffered()
+{
+    std::printf("packet: received unbuffered\n");
+}
+
+void pipeline_events_default::on_packet_transmit_unbuffered(const std::string& modem_name, const std::string& from, const std::string& to, bool active)
+{
+    std::printf("packet: transmit unbuffered modem='%s' from='%s' to='%s' active=%s\n", modem_name.c_str(), from.c_str(), to.c_str(), active ? "true" : "false");
+}
+
+void pipeline_events_default::on_config_load(uint64_t seq, const std::string& config_file)
+{
+    std::printf("config: [seq=%lu] loaded '%s'\n", (unsigned long)seq, config_file.c_str());
+}
+
+void pipeline_events_default::on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target)
+{
+    std::printf("logger: [seq=%lu] created '%s' target='%s'\n", (unsigned long)seq, logger_name.c_str(), target.c_str());
+}
+
+void pipeline_events_default::on_started(uint64_t seq, pipeline& p)
+{
+    (void)p;
+    std::printf("pipeline: [seq=%lu] started\n", (unsigned long)seq);
 }
 
 void pipeline_events_default::on_stopped(uint64_t seq)
 {
-    (void)seq;
-    std::printf("pipeline: stopped\n");
+    std::printf("pipeline: [seq=%lu] stopped\n", (unsigned long)seq);
 }
 
-void pipeline_events_default::on_log(uint64_t seq, logger_base& logger, uint64_t id)
+void pipeline_events_default::on_log(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, logger_base& logger)
 {
-    (void)seq;
-    (void)logger;
-    (void)id;
+    std::printf("log: [seq=%lu] packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' logger='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), logger.name().c_str());
 }
 
 void pipeline_events_default::on_audio_stream_created(uint64_t seq, audio_entry& entry)
 {
-    (void)seq;
-    std::printf("audio_stream: created '%s'\n", entry.name.c_str());
+    std::printf("audio_stream: [seq=%lu] created '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason)
 {
-    (void)seq;
-    std::printf("audio_stream: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
+    std::printf("audio_stream: [seq=%lu] init failed '%s': %s\n", (unsigned long)seq, config.name.c_str(), reason.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error)
 {
-    (void)seq;
-    std::printf("audio_stream: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
+    std::printf("audio_stream: [seq=%lu] faulted '%s': %s\n", (unsigned long)seq, entry.name.c_str(), error.message.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_recovery_started(uint64_t seq, audio_entry& entry)
 {
-    (void)seq;
-    std::printf("audio_stream: recovery started '%s'\n", entry.name.c_str());
+    std::printf("audio_stream: [seq=%lu] recovery started '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_recovery_attempt(uint64_t seq, audio_entry& entry, int attempt, int max_attempts)
 {
-    (void)seq;
-    std::printf("audio_stream: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
+    std::printf("audio_stream: [seq=%lu] recovery attempt %d/%d '%s'\n", (unsigned long)seq, attempt, max_attempts, entry.name.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_recovered(uint64_t seq, audio_entry& entry)
 {
-    (void)seq;
-    std::printf("audio_stream: recovered '%s'\n", entry.name.c_str());
+    std::printf("audio_stream: [seq=%lu] recovered '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_audio_stream_recovery_failed(uint64_t seq, audio_entry& entry)
 {
-    (void)seq;
-    std::printf("audio_stream: recovery failed '%s'\n", entry.name.c_str());
+    std::printf("audio_stream: [seq=%lu] recovery failed '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_created(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: created '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] created '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_init_failed(uint64_t seq, const ptt_control_config& config, const std::string& reason)
 {
-    (void)seq;
-    std::printf("ptt_control: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
+    std::printf("ptt_control: [seq=%lu] init failed '%s': %s\n", (unsigned long)seq, config.name.c_str(), reason.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
 {
-    (void)seq;
-    std::printf("ptt_control: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
+    std::printf("ptt_control: [seq=%lu] faulted '%s': %s\n", (unsigned long)seq, entry.name.c_str(), error.message.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_recovery_started(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: recovery started '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] recovery started '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
 {
-    (void)seq;
-    std::printf("ptt_control: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] recovery attempt %d/%d '%s'\n", (unsigned long)seq, attempt, max_attempts, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_recovered(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: recovered '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] recovered '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: recovery failed '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] recovery failed '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_activated(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: activated '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] activated '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_ptt_deactivated(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("ptt_control: deactivated '%s'\n", entry.name.c_str());
+    std::printf("ptt_control: [seq=%lu] deactivated '%s'\n", (unsigned long)seq, entry.name.c_str());
+}
+
+void pipeline_events_default::on_serial_port_opened(uint64_t seq, ptt_entry& entry)
+{
+    std::printf("serial_port: [seq=%lu] opened '%s' on %s\n", (unsigned long)seq, entry.name.c_str(), entry.port_name.c_str());
 }
 
 void pipeline_events_default::on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error)
 {
-    (void)seq;
-    std::printf("serial_port: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
+    std::printf("serial_port: [seq=%lu] faulted '%s': %s\n", (unsigned long)seq, entry.name.c_str(), error.message.c_str());
 }
 
 void pipeline_events_default::on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("serial_port: recovery started '%s'\n", entry.name.c_str());
+    std::printf("serial_port: [seq=%lu] recovery started '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts)
 {
-    (void)seq;
-    std::printf("serial_port: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
+    std::printf("serial_port: [seq=%lu] recovery attempt %d/%d '%s'\n", (unsigned long)seq, attempt, max_attempts, entry.name.c_str());
 }
 
 void pipeline_events_default::on_serial_port_recovered(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("serial_port: recovered '%s'\n", entry.name.c_str());
+    std::printf("serial_port: [seq=%lu] recovered '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_serial_port_recovery_failed(uint64_t seq, ptt_entry& entry)
 {
-    (void)seq;
-    std::printf("serial_port: recovery failed '%s'\n", entry.name.c_str());
+    std::printf("serial_port: [seq=%lu] recovery failed '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_transport_created(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("transport: created '%s'\n", entry.name.c_str());
+    std::printf("transport: [seq=%lu] created '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_transport_init_failed(uint64_t seq, const data_stream_config& config, const std::string& reason)
 {
-    (void)seq;
-    std::printf("transport: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
+    std::printf("transport: [seq=%lu] init failed '%s': %s\n", (unsigned long)seq, config.name.c_str(), reason.c_str());
 }
 
 void pipeline_events_default::on_transport_faulted(uint64_t seq, data_stream_entry& entry, const error_info& error)
 {
-    (void)seq;
-    std::printf("transport: faulted '%s': %s\n", entry.name.c_str(), error.message.c_str());
+    std::printf("transport: [seq=%lu] faulted '%s': %s\n", (unsigned long)seq, entry.name.c_str(), error.message.c_str());
 }
 
 void pipeline_events_default::on_transport_recovery_started(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("transport: recovery started '%s'\n", entry.name.c_str());
+    std::printf("transport: [seq=%lu] recovery started '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_transport_recovery_attempt(uint64_t seq, data_stream_entry& entry, int attempt, int max_attempts)
 {
-    (void)seq;
-    std::printf("transport: recovery attempt %d/%d '%s'\n", attempt, max_attempts, entry.name.c_str());
+    std::printf("transport: [seq=%lu] recovery attempt %d/%d '%s'\n", (unsigned long)seq, attempt, max_attempts, entry.name.c_str());
 }
 
 void pipeline_events_default::on_transport_recovered(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("transport: recovered '%s'\n", entry.name.c_str());
+    std::printf("transport: [seq=%lu] recovered '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_transport_recovery_failed(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("transport: recovery failed '%s'\n", entry.name.c_str());
+    std::printf("transport: [seq=%lu] recovery failed '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_client_connected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
 {
-    (void)seq;
-    std::printf("transport: client connected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
+    std::printf("transport: [seq=%lu] client connected '%s' id=%zu ip=%s\n", (unsigned long)seq, entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
 void pipeline_events_default::on_client_disconnected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection)
 {
-    (void)seq;
-    std::printf("transport: client disconnected '%s' id=%zu ip=%s\n", entry.name.c_str(), connection.id, connection.remote_address.c_str());
+    std::printf("transport: [seq=%lu] client disconnected '%s' id=%zu ip=%s\n", (unsigned long)seq, entry.name.c_str(), connection.id, connection.remote_address.c_str());
 }
 
 void pipeline_events_default::on_data_stream_created(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("data_stream: created '%s'\n", entry.name.c_str());
+    std::printf("data_stream: [seq=%lu] created '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_data_stream_started(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("data_stream: started '%s'\n", entry.name.c_str());
+    std::printf("data_stream: [seq=%lu] started '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_data_stream_stopped(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("data_stream: stopped '%s'\n", entry.name.c_str());
+    std::printf("data_stream: [seq=%lu] stopped '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_data_stream_enabled(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("data_stream: enabled '%s'\n", entry.name.c_str());
+    std::printf("data_stream: [seq=%lu] enabled '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_data_stream_disabled(uint64_t seq, data_stream_entry& entry)
 {
-    (void)seq;
-    std::printf("data_stream: disabled '%s'\n", entry.name.c_str());
+    std::printf("data_stream: [seq=%lu] disabled '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_modem_created(uint64_t seq, modem_entry& entry)
 {
-    (void)seq;
-    std::printf("modem: created '%s'\n", entry.name.c_str());
+    std::printf("modem: [seq=%lu] created '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_modem_initialized(uint64_t seq, modem_entry& entry)
 {
-    (void)seq;
-    std::printf("modem: initialized '%s'\n", entry.name.c_str());
+    std::printf("modem: [seq=%lu] initialized '%s'\n", (unsigned long)seq, entry.name.c_str());
 }
 
 void pipeline_events_default::on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason)
 {
-    (void)seq;
-    std::printf("modem: init failed '%s': %s\n", config.name.c_str(), reason.c_str());
+    std::printf("modem: [seq=%lu] init failed '%s': %s\n", (unsigned long)seq, config.name.c_str(), reason.c_str());
 }
 
-void pipeline_events_default::on_modem_transmit(uint64_t seq, const packet& p, uint64_t id)
+void pipeline_events_default::on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
-    (void)seq;
-    std::printf("modem: transmit id=%lu from='%s' to='%s'\n", (unsigned long)id, p.from.c_str(), p.to.c_str());
+    std::printf("modem: [seq=%lu] transmit packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id)
+void pipeline_events_default::on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream)
 {
-    (void)seq;
-    std::printf("modem: transmit id=%lu '%s' bitstream_size=%zu\n", (unsigned long)id, entry.name.c_str(), bitstream.size());
+    std::printf("modem: [seq=%lu] transmit packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' ds='%s' bitstream_size=%zu\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), ds_entry.name.c_str(), bitstream.size());
 }
 
-void pipeline_events_default::on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id)
+void pipeline_events_default::on_modem_before_start_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio)
 {
-    (void)seq;
-    std::printf("modem: before_start_render_audio id=%lu '%s'\n", (unsigned long)id, entry.name.c_str());
+    std::printf("modem: [seq=%lu] before_start_render_audio packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' audio='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), audio.name.c_str());
 }
 
-void pipeline_events_default::on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& audio, uint64_t sample_rate, uint64_t id)
+void pipeline_events_default::on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count)
 {
-    (void)seq;
-    std::printf("modem: end_render_audio id=%lu '%s' samples=%zu sample_rate=%lu\n", (unsigned long)id, entry.name.c_str(), audio.size(), (unsigned long)sample_rate);
+    std::printf("modem: [seq=%lu] end_render_audio packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' audio='%s' samples=%zu count=%zu\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), audio.name.c_str(), samples.size(), count);
 }
 
-void pipeline_events_default::on_modem_ptt(uint64_t seq, bool state, uint64_t id)
+void pipeline_events_default::on_modem_ptt(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, ptt_entry& ptt, bool state)
 {
-    (void)seq;
-    std::printf("modem: ptt id=%lu state=%s\n", (unsigned long)id, state ? "on" : "off");
+    std::printf("modem: [seq=%lu] ptt packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' ptt='%s' state=%s\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), ptt.name.c_str(), state ? "on" : "off");
 }
 
-void pipeline_events_default::on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id)
+void pipeline_events_default::on_volume_changed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, int previous_volume, int new_volume)
 {
-    (void)seq;
-    std::printf("audio: volume_changed id=%lu '%s' %d -> %d\n", (unsigned long)id, entry.name.c_str(), previous_volume, new_volume);
+    std::printf("audio: [seq=%lu] volume_changed packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' audio='%s' %d -> %d\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), audio.name.c_str(), previous_volume, new_volume);
 }
 
-void pipeline_events_default::on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void pipeline_events_default::on_begin_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry, const packet& p)
 {
-    (void)modem_entry;
-    (void)ds_entry;
-    (void)p;
-    (void)id;
+    std::printf("packet: [seq=%lu] begin_received packet_id=%lu receive_id=%lu ds='%s' from='%s' to='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void pipeline_events_default::on_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
-    (void)seq;
-    std::printf("packet: received id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    std::printf("packet: [seq=%lu] received packet_id=%lu receive_id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, modem.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void pipeline_events_default::on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
-    (void)seq;
-    std::printf("packet: transmit_started id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    std::printf("packet: [seq=%lu] transmit_started packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
 }
 
-void pipeline_events_default::on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id)
+void pipeline_events_default::on_packet_transmit_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p)
 {
-    (void)seq;
-    std::printf("packet: transmit_completed id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)id, modem_entry.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+    std::printf("packet: [seq=%lu] transmit_completed packet_id=%lu receive_id=%lu transmit_id=%lu modem='%s' ds='%s' from='%s' to='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, (unsigned long)transmit_id, modem.name.c_str(), ds_entry.name.c_str(), p.from.c_str(), p.to.c_str());
+}
+
+void pipeline_events_default::on_receive_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry)
+{
+    std::printf("packet: [seq=%lu] receive_completed packet_id=%lu receive_id=%lu ds='%s'\n", (unsigned long)seq, (unsigned long)packet_id, (unsigned long)receive_id, ds_entry.name.c_str());
+}
+
+void pipeline_events_default::on_audio_devices_enumeration_started(uint64_t seq)
+{
+    std::printf("audio: [seq=%lu] devices_enumeration_started\n", (unsigned long)seq);
+}
+
+void pipeline_events_default::on_audio_device_detected(uint64_t seq, audio_device& device)
+{
+    std::printf("audio: [seq=%lu] device_detected '%s'\n", (unsigned long)seq, device.name.c_str());
+}
+
+void pipeline_events_default::on_audio_devices_enumeration_completed(uint64_t seq)
+{
+    std::printf("audio: [seq=%lu] devices_enumeration_completed\n", (unsigned long)seq);
 }
 
 LIBMODEM_NAMESPACE_END

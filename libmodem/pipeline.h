@@ -75,16 +75,6 @@ class pipeline;
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// setup_console                                                    //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-void setup_console();
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
 // error_info                                                       //
 //                                                                  //
 //                                                                  //
@@ -267,6 +257,7 @@ struct modem_entry
 {
     std::string name;
     bool enabled = true;
+    uint64_t modem_id = 0;
     struct modem modem;
     std::unique_ptr<bitstream_converter_base> converter;
     std::string converter_name;
@@ -325,11 +316,16 @@ struct logger_entry
 struct pipeline_events
 {
     virtual ~pipeline_events() = default;
+
+    virtual void on_modem_ptt_unbuffered(bool state) = 0;
+    virtual void on_modem_transmit_unbuffered() = 0;
+    virtual void on_packet_received_unbuffered() = 0;
+    virtual void on_packet_transmit_unbuffered(const std::string& modem_name, const std::string& from, const std::string& to, bool active) = 0;
+
     virtual void on_config_load(uint64_t seq, const std::string& config_file) = 0;
-    virtual void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) = 0;
     virtual void on_started(uint64_t seq, pipeline& p) = 0;
     virtual void on_stopped(uint64_t seq) = 0;
-    virtual void on_log(uint64_t seq, logger_base& logger, uint64_t id) = 0;
+
     virtual void on_audio_stream_created(uint64_t seq, audio_entry& entry) = 0;
     virtual void on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason) = 0;
     virtual void on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error) = 0;
@@ -337,6 +333,7 @@ struct pipeline_events
     virtual void on_audio_stream_recovery_attempt(uint64_t seq, audio_entry& entry, int attempt, int max_attempts) = 0;
     virtual void on_audio_stream_recovered(uint64_t seq, audio_entry& entry) = 0;
     virtual void on_audio_stream_recovery_failed(uint64_t seq, audio_entry& entry) = 0;
+
     virtual void on_ptt_control_created(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_ptt_control_init_failed(uint64_t seq, const ptt_control_config& config, const std::string& reason) = 0;
     virtual void on_ptt_control_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) = 0;
@@ -346,11 +343,14 @@ struct pipeline_events
     virtual void on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_ptt_activated(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_ptt_deactivated(uint64_t seq, ptt_entry& entry) = 0;
+
+    virtual void on_serial_port_opened(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) = 0;
     virtual void on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts) = 0;
     virtual void on_serial_port_recovered(uint64_t seq, ptt_entry& entry) = 0;
     virtual void on_serial_port_recovery_failed(uint64_t seq, ptt_entry& entry) = 0;
+
     virtual void on_transport_created(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_transport_init_failed(uint64_t seq, const data_stream_config& config, const std::string& reason) = 0;
     virtual void on_transport_faulted(uint64_t seq, data_stream_entry& entry, const error_info& error) = 0;
@@ -360,27 +360,36 @@ struct pipeline_events
     virtual void on_transport_recovery_failed(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_client_connected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection) = 0;
     virtual void on_client_disconnected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection) = 0;
+
     virtual void on_data_stream_created(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_data_stream_started(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_data_stream_stopped(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_data_stream_enabled(uint64_t seq, data_stream_entry& entry) = 0;
     virtual void on_data_stream_disabled(uint64_t seq, data_stream_entry& entry) = 0;
+
     virtual void on_modem_created(uint64_t seq, modem_entry& entry) = 0;
     virtual void on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason) = 0;
     virtual void on_modem_initialized(uint64_t seq, modem_entry& entry) = 0;
-    virtual void on_modem_transmit(uint64_t seq, const packet& p, uint64_t id) = 0;
-    virtual void on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id) = 0;
-    virtual void on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id) = 0;
-    virtual void on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id) = 0;
-    virtual void on_modem_ptt(uint64_t seq, bool state, uint64_t id) = 0;
-    virtual void on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id) = 0;
-    virtual void on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
-    virtual void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
-    virtual void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
-    virtual void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) = 0;
+
+    virtual void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) = 0;
+
     virtual void on_audio_devices_enumeration_started(uint64_t seq) = 0;
     virtual void on_audio_device_detected(uint64_t seq, audio_device& device) = 0;
     virtual void on_audio_devices_enumeration_completed(uint64_t seq) = 0;
+
+    virtual void on_begin_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) = 0;
+
+    virtual void on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream) = 0;
+    virtual void on_volume_changed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, int previous_volume, int new_volume) = 0;
+    virtual void on_modem_ptt(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, ptt_entry& ptt, bool state) = 0;
+    virtual void on_modem_before_start_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio) = 0;
+    virtual void on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count) = 0;
+    virtual void on_log(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, logger_base& logger) = 0;
+    virtual void on_packet_transmit_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) = 0;
+    virtual void on_receive_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry) = 0;
 };
 
 // **************************************************************** //
@@ -393,11 +402,14 @@ struct pipeline_events
 
 struct pipeline_events_default : public pipeline_events
 {
+    void on_modem_ptt_unbuffered(bool state) override;
+    void on_modem_transmit_unbuffered() override;
+    void on_packet_received_unbuffered() override;
+    void on_packet_transmit_unbuffered(const std::string& modem_name, const std::string& from, const std::string& to, bool active) override;
     void on_config_load(uint64_t seq, const std::string& config_file) override;
     void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
     void on_started(uint64_t seq, pipeline& p) override;
     void on_stopped(uint64_t seq) override;
-    void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
     void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
     void on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason) override;
     void on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error) override;
@@ -414,6 +426,7 @@ struct pipeline_events_default : public pipeline_events
     void on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry) override;
     void on_ptt_activated(uint64_t seq, ptt_entry& entry) override;
     void on_ptt_deactivated(uint64_t seq, ptt_entry& entry) override;
+    void on_serial_port_opened(uint64_t seq, ptt_entry& entry) override;
     void on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) override;
     void on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry) override;
     void on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts) override;
@@ -436,85 +449,18 @@ struct pipeline_events_default : public pipeline_events
     void on_modem_created(uint64_t seq, modem_entry& entry) override;
     void on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason) override;
     void on_modem_initialized(uint64_t seq, modem_entry& entry) override;
-    void on_modem_transmit(uint64_t seq, const packet& p, uint64_t id) override;
-    void on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id) override;
-    void on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id) override;
-    void on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id) override;
-    void on_modem_ptt(uint64_t seq, bool state, uint64_t id) override;
-    void on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id) override;
-    void on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_audio_devices_enumeration_started(uint64_t seq) override;
-    void on_audio_device_detected(uint64_t seq, audio_device& device) override;
-    void on_audio_devices_enumeration_completed(uint64_t seq) override;
-};
-
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// pipeline_events_rich                                             //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
-class pipeline_events_rich : public pipeline_events
-{
-public:
-    void on_config_load(uint64_t seq, const std::string& config_file) override;
-    void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
-    void on_started(uint64_t seq, pipeline& p) override;
-    void on_stopped(uint64_t seq) override;
-    void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
-    void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
-    void on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason) override;
-    void on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error) override;
-    void on_audio_stream_recovery_started(uint64_t seq, audio_entry& entry) override;
-    void on_audio_stream_recovery_attempt(uint64_t seq, audio_entry& entry, int attempt, int max_attempts) override;
-    void on_audio_stream_recovered(uint64_t seq, audio_entry& entry) override;
-    void on_audio_stream_recovery_failed(uint64_t seq, audio_entry& entry) override;
-    void on_ptt_control_created(uint64_t seq, ptt_entry& entry) override;
-    void on_ptt_control_init_failed(uint64_t seq, const ptt_control_config& config, const std::string& reason) override;
-    void on_ptt_control_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) override;
-    void on_ptt_control_recovery_started(uint64_t seq, ptt_entry& entry) override;
-    void on_ptt_control_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts) override;
-    void on_ptt_control_recovered(uint64_t seq, ptt_entry& entry) override;
-    void on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry) override;
-    void on_ptt_activated(uint64_t seq, ptt_entry& entry) override;
-    void on_ptt_deactivated(uint64_t seq, ptt_entry& entry) override;
-    void on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) override;
-    void on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry) override;
-    void on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts) override;
-    void on_serial_port_recovered(uint64_t seq, ptt_entry& entry) override;
-    void on_serial_port_recovery_failed(uint64_t seq, ptt_entry& entry) override;
-    void on_transport_created(uint64_t seq, data_stream_entry& entry) override;
-    void on_transport_init_failed(uint64_t seq, const data_stream_config& config, const std::string& reason) override;
-    void on_transport_faulted(uint64_t seq, data_stream_entry& entry, const error_info& error) override;
-    void on_transport_recovery_started(uint64_t seq, data_stream_entry& entry) override;
-    void on_transport_recovery_attempt(uint64_t seq, data_stream_entry& entry, int attempt, int max_attempts) override;
-    void on_transport_recovered(uint64_t seq, data_stream_entry& entry) override;
-    void on_transport_recovery_failed(uint64_t seq, data_stream_entry& entry) override;
-    void on_client_connected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection) override;
-    void on_client_disconnected(uint64_t seq, data_stream_entry& entry, const tcp_client_connection& connection) override;
-    void on_data_stream_created(uint64_t seq, data_stream_entry& entry) override;
-    void on_data_stream_started(uint64_t seq, data_stream_entry& entry) override;
-    void on_data_stream_stopped(uint64_t seq, data_stream_entry& entry) override;
-    void on_data_stream_enabled(uint64_t seq, data_stream_entry& entry) override;
-    void on_data_stream_disabled(uint64_t seq, data_stream_entry& entry) override;
-    void on_modem_created(uint64_t seq, modem_entry& entry) override;
-    void on_modem_initialized(uint64_t seq, modem_entry& entry) override;
-    void on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason) override;
-    void on_modem_transmit(uint64_t seq, const packet& p, uint64_t id) override;
-    void on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id) override;
-    void on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id) override;
-    void on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& audio, uint64_t sample_rate, uint64_t id) override;
-    void on_modem_ptt(uint64_t seq, bool state, uint64_t id) override;
-    void on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id) override;
-    void on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
+    void on_begin_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry, const packet& p) override;
+    void on_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    void on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream) override;
+    void on_volume_changed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, int previous_volume, int new_volume) override;
+    void on_modem_ptt(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, ptt_entry& ptt, bool state) override;
+    void on_modem_before_start_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio) override;
+    void on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count) override;
+    void on_log(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, logger_base& logger) override;
+    void on_packet_transmit_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    void on_receive_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry) override;
     void on_audio_devices_enumeration_started(uint64_t seq) override;
     void on_audio_device_detected(uint64_t seq, audio_device& device) override;
     void on_audio_devices_enumeration_completed(uint64_t seq) override;
@@ -531,7 +477,7 @@ public:
 struct logger_events
 {
     virtual ~logger_events() = default;
-    virtual void on_log(logger_base& logger, uint64_t id) = 0;
+    virtual void on_log(logger_base& logger, uint64_t transmit_id, uint64_t packet_id, uint64_t receive_id, modem_entry& modem) = 0;
 };
 
 // **************************************************************** //
@@ -569,11 +515,26 @@ public:
         events_ = e;
     }
 
+    virtual void on_modem_ptt_unbuffered(bool state) override;
+    virtual void on_modem_transmit_unbuffered() override;
+    virtual void on_packet_received_unbuffered() override;
+    virtual void on_packet_transmit_unbuffered(const std::string& modem_name, const std::string& from, const std::string& to, bool active) override;
+    virtual void on_begin_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry, const packet& p) override;
+    virtual void on_packet_received(uint64_t seq, uint64_t packet_id, uint64_t receive_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    virtual void on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    virtual void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    virtual void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream) override;
+    virtual void on_volume_changed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, int previous_volume, int new_volume) override;
+    virtual void on_modem_ptt(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, ptt_entry& ptt, bool state) override;
+    virtual void on_modem_before_start_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio) override;
+    virtual void on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count) override;
+    virtual void on_log(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, logger_base& logger) override;
+    virtual void on_packet_transmit_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
+    virtual void on_receive_completed(uint64_t seq, uint64_t packet_id, uint64_t receive_id, data_stream_entry& ds_entry) override;
     virtual void on_config_load(uint64_t seq, const std::string& config_file) override;
     virtual void on_logger_created(uint64_t seq, const std::string& logger_name, const std::string& target) override;
     virtual void on_started(uint64_t seq, pipeline& p) override;
     virtual void on_stopped(uint64_t seq) override;
-    virtual void on_log(uint64_t seq, logger_base& logger, uint64_t id) override;
     virtual void on_audio_stream_created(uint64_t seq, audio_entry& entry) override;
     virtual void on_audio_stream_init_failed(uint64_t seq, const audio_stream_config& config, const std::string& reason) override;
     virtual void on_audio_stream_faulted(uint64_t seq, audio_entry& entry, const error_info& error) override;
@@ -590,6 +551,7 @@ public:
     virtual void on_ptt_control_recovery_failed(uint64_t seq, ptt_entry& entry) override;
     virtual void on_ptt_activated(uint64_t seq, ptt_entry& entry) override;
     virtual void on_ptt_deactivated(uint64_t seq, ptt_entry& entry) override;
+    virtual void on_serial_port_opened(uint64_t seq, ptt_entry& entry) override;
     virtual void on_serial_port_faulted(uint64_t seq, ptt_entry& entry, const error_info& error) override;
     virtual void on_serial_port_recovery_started(uint64_t seq, ptt_entry& entry) override;
     virtual void on_serial_port_recovery_attempt(uint64_t seq, ptt_entry& entry, int attempt, int max_attempts) override;
@@ -612,22 +574,12 @@ public:
     virtual void on_modem_created(uint64_t seq, modem_entry& entry) override;
     virtual void on_modem_init_failed(uint64_t seq, const modulator_config& config, const std::string& reason) override;
     virtual void on_modem_initialized(uint64_t seq, modem_entry& entry) override;
-    virtual void on_modem_transmit(uint64_t seq, const packet& p, uint64_t id) override;
-    virtual void on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id) override;
-    virtual void on_modem_before_start_render_audio(uint64_t seq, audio_entry& entry, uint64_t id) override;
-    virtual void on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id) override;
-    virtual void on_modem_ptt(uint64_t seq, bool state, uint64_t id) override;
-    virtual void on_volume_changed(uint64_t seq, audio_entry& entry, int previous_volume, int new_volume, uint64_t id) override;
-    virtual void on_begin_packet_received(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    virtual void on_packet_received(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    virtual void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
-    virtual void on_packet_transmit_completed(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
     virtual void on_audio_devices_enumeration_started(uint64_t seq) override;
     virtual void on_audio_device_detected(uint64_t seq, audio_device& device) override;
     virtual void on_audio_devices_enumeration_completed(uint64_t seq) override;
 
 protected:
-    void notify_logged(uint64_t id);
+void notify_logged(uint64_t transmit_id, uint64_t packet_id, uint64_t receive_id, modem_entry& modem);
 
 private:
     std::string name_;
@@ -642,7 +594,7 @@ public:
 
     std::string target() const override;
 
-    void on_modem_transmit(uint64_t seq, modem_entry& entry, const std::vector<uint8_t>& bitstream, uint64_t id) override;
+    void on_modem_transmit(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const std::vector<uint8_t>& bitstream) override;
 
 private:
     void write_bitstream(const std::vector<uint8_t>& bitstream);
@@ -660,7 +612,7 @@ public:
 
     std::string target() const override;
 
-    void on_packet_transmit_started(uint64_t seq, modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t id) override;
+    void on_packet_transmit_started(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, data_stream_entry& ds_entry, const packet& p) override;
 
 private:
     void write_packet(const packet& p);
@@ -678,7 +630,7 @@ public:
 
     std::string target() const override;
 
-    void on_modem_end_render_audio(uint64_t seq, audio_entry& entry, const std::vector<double>& samples, size_t count, uint64_t id) override;
+    void on_modem_end_render_audio(uint64_t seq, uint64_t packet_id, uint64_t receive_id, uint64_t transmit_id, modem_entry& modem, audio_entry& audio, const std::vector<double>& samples, size_t count) override;
 
 private:
     void write_audio(const std::vector<double>& samples, size_t count, int sample_rate);
@@ -742,6 +694,12 @@ private:
     bool is_duplicate_library_file(const std::string& path);
     bool is_valid_ptt_config(const ptt_control_config& ptt_config);
     void register_ptt_control(const ptt_entry& entry, const ptt_control_config& ptt_config);
+    bool try_create_audio_entry(audio_entry& entry, const audio_stream_config& audio_config);
+    std::unique_ptr<audio_stream_base> create_non_hardware_audio_stream(audio_entry& entry, const audio_stream_config& audio_config);
+    std::optional<std::reference_wrapper<audio_entry>> find_audio_entry(const std::string& name);
+    std::optional<std::reference_wrapper<audio_entry>> get_output_stream(const modulator_config& mod_config);
+    std::optional<std::reference_wrapper<ptt_entry>> find_ptt_entry(const std::string& name);
+    std::optional<std::reference_wrapper<data_stream_entry>> find_data_stream_entry(const std::string& name);
     bool try_create_ptt_control(ptt_entry& entry, const ptt_control_config& config);
     bool can_add_modem(const modulator_config& modulator_config);
     bool is_duplicate_modem_name(const std::string& name);
@@ -763,6 +721,7 @@ private:
     void register_logger(const logger_entry& entry, const logger_config& logger_config);
     std::optional<std::reference_wrapper<logger_entry>> find_logger_entry(const std::string& name);
     std::optional<std::reference_wrapper<modem_entry>> find_modem_entry(const std::string& name);
+    modem_entry* resolve_modem_entry(struct modem& m, data_stream_entry& ds);
 
     bool try_recover_audio_stream(audio_entry& entry, modem_entry& modem_entry);
     void schedule_audio_recovery(audio_entry& entry, modem_entry& modem_entry, data_stream_entry& ds_entry);
@@ -778,12 +737,15 @@ private:
     void attempt_transport_recovery(data_stream_entry& entry);
     void try_reenable_data_stream(modem_entry& modem_entry, data_stream_entry& ds_entry);
 
+    bool create_transport(data_stream_entry& entry);
+    bool create_formatter(data_stream_entry& entry);
+
     void on_error(audio_stream_no_throw& component, audio_entry& entry, const error_info& error) override;
     void on_error(ptt_control_no_throw& component, ptt_entry& entry, const error_info& error) override;
     void on_error(serial_port_no_throw& component, ptt_entry& entry, const error_info& error) override;
     void on_error(transport_no_throw& component, data_stream_entry& entry, const error_info& error) override;
 
-    void on_log(logger_base& logger, uint64_t id) override;
+    void on_log(logger_base& logger, uint64_t transmit_id, uint64_t packet_id, uint64_t receive_id, modem_entry& modem) override;
 
     std::pair<int, int> adjust_audio_volume(modem_entry& modem_entry, data_stream_entry& ds_entry, const packet& p, uint64_t global_id);
 
@@ -818,7 +780,6 @@ private:
     std::vector<std::unique_ptr<modem_entry>> modems_;
     std::vector<std::unique_ptr<data_stream_entry>> data_streams_;
     std::vector<std::unique_ptr<audio_device>> audio_devices_;
-
     std::set<std::string> used_audio_names_;
     std::set<std::pair<std::string, audio_device_type>> used_audio_devices_;
     std::set<std::string> used_audio_files_;
@@ -830,7 +791,6 @@ private:
     std::set<int> used_tcp_ports_;
     std::set<std::string> used_logger_names_;
     std::set<int> used_logger_tcp_ports_;
-
     std::unique_ptr<pipeline_impl> impl_;
     std::atomic<uint64_t> event_sequence_{ 0 };
 };
