@@ -596,7 +596,7 @@ bool try_decode(const frame& f, packet& p)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// session                                                          //
+// handle_frame                                                     //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -819,10 +819,18 @@ void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
 
     buffer_.insert(buffer_.end(), data.begin(), data.begin() + count);
 
+    // Accumulate bytes until we have at least a full header,
+    // then try to parse frames as long as we have enough data for them
+
     while (buffer_.size() >= sizeof(agwpe::header))
     {
+        // Parse the header by deserializing the first sizeof(header) bytes of the buffer
+        // into the header struct.
+
         agwpe::header h;
         std::memcpy(&h, buffer_.data(), sizeof(agwpe::header));
+
+        // Ensure that the data length is not unreasonably large to avoid potential DoS attacks or memory issues.
 
         if (h.data_length > 65535)
         {
@@ -832,10 +840,15 @@ void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
 
         size_t frame_size = sizeof(agwpe::header) + h.data_length;
 
+        // If we don't have enough bytes for the full frame, wait for more data to arrive.
+        // Exit the loop and keep accumulating until we have a complete frame to process.
+
         if (buffer_.size() < frame_size)
         {
             break;
         }
+
+        // We have a complete frame in the buffer, so we can parse it and handle it accordingly.
 
         agwpe::frame f;
         f.header = h;
@@ -844,7 +857,11 @@ void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
             f.data.assign(buffer_.begin() + sizeof(agwpe::header), buffer_.begin() + frame_size);
         }
 
+        // Remove the processed frame from the buffer so that the next iteration can attempt to parse the next frame if available.
+
         buffer_.erase(buffer_.begin(), buffer_.begin() + frame_size);
+
+        // If the frame is a data frame, try to decode it into a packet and store it in the pending packets queue.
 
         if (agwpe::is_data_frame(f))
         {
@@ -856,6 +873,9 @@ void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
         }
         else
         {
+            // If it's not a data frame, handle it as a protocol command and store any generated response frames in the pending responses queue.
+            // A client will use the response bytes to send back to an AGWPE client.
+
             for (auto& response : agwpe::handle_frame(f, session_))
             {
                 std::vector<uint8_t> bytes = agwpe::to_bytes(response);
