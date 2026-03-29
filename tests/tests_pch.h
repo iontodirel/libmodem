@@ -5,7 +5,7 @@
 // Copyright (c) 2025 Ion Todirel                                   //
 // **************************************************************** //
 //
-// tests_pch.h - Precompiled header for test build performance optimization
+// tests_pch.h
 //
 // MIT License
 //
@@ -29,10 +29,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#ifndef LIBMODEM_TESTS_PCH_H
-#define LIBMODEM_TESTS_PCH_H
+#pragma once
 
-// Windows headers
 #ifdef WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -43,20 +41,35 @@
 #include <io.h>
 #endif
 
-// Standard library headers
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iostream>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
+#include <queue>
 #include <random>
+#include <set>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-// Boost headers
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -66,11 +79,7 @@
 #pragma clang diagnostic pop
 #endif
 
-// fmt library
 #include <fmt/core.h>
 #include <fmt/format.h>
 
-// Google Test
 #include <gtest/gtest.h>
-
-#endif // LIBMODEM_TESTS_PCH_H

@@ -43,33 +43,57 @@
 #endif
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <charconv>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <initializer_list>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
+#include <set>
+#include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <typeinfo>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <boost/asio.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/serial_port.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <boost/beast/core/detail/base64.hpp>
+#include <boost/circular_buffer.hpp>
 #include <boost/endian/conversion.hpp>
 #include <boost/filesystem/path.hpp>
 
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
 #include <ftxui/screen/terminal.hpp>
+
+#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include <nlohmann/json.hpp>
