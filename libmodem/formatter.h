@@ -424,6 +424,15 @@ struct session
     std::vector<std::string> port_descriptions = { "Port1 libmodem" };
     uint32_t version_major = 1;
     uint32_t version_minor = 0;
+    uint8_t on_air_baud_rate = 0;
+    uint8_t traffic_level = 0xff;
+    uint8_t tx_delay = 50;
+    uint8_t tx_tail = 0;
+    uint8_t persist = 63;
+    uint8_t slottime = 10;
+    uint8_t maxframe = 7;
+    uint8_t active_connections = 0;
+    uint32_t bytes_received = 0;
 };
 
 bool try_process_frame(const frame& f, session& s, frame& response);

@@ -624,7 +624,7 @@ bool try_process_frame(const frame& f, session& s, frame& response)
 
         case data_kind::port_cap_request:
         {
-            response = encode_port_capabilities_response_frame(f.header.port, 0, 0xff, 50, 0, 63, 10, 7, 0, 0);
+            response = encode_port_capabilities_response_frame(f.header.port, s.on_air_baud_rate, s.traffic_level, s.tx_delay, s.tx_tail, s.persist, s.slottime, s.maxframe, s.active_connections, s.bytes_received);
             return true;
         }
 
