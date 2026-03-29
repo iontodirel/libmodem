@@ -426,7 +426,7 @@ struct session
     uint32_t version_minor = 0;
 };
 
-std::vector<frame> handle_frame(const frame& f, session& s);
+bool try_process_frame(const frame& f, session& s, frame& response);
 
 LIBMODEM_AGWPE_NAMESPACE_END
 

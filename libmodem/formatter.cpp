@@ -594,92 +594,90 @@ bool try_decode(const frame& f, packet& p)
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// handle_frame                                                     //
+// try_process_frame                                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-std::vector<frame> handle_frame(const frame& f, session& s)
+bool try_process_frame(const frame& f, session& s, frame& response)
 {
-    std::vector<frame> responses;
+    response = {};
 
     switch (static_cast<data_kind>(f.header.datakind))
     {
         case data_kind::login:
         {
-            break;
+            return false;
         }
 
         case data_kind::version_request:
         {
-            responses.push_back(encode_version_response_frame(s.version_major, s.version_minor));
-            break;
+            response = encode_version_response_frame(s.version_major, s.version_minor);
+            return true;
         }
 
         case data_kind::port_info_request:
         {
-            responses.push_back(encode_port_info_response_frame(s.port_descriptions));
-            break;
+            response = encode_port_info_response_frame(s.port_descriptions);
+            return true;
         }
 
         case data_kind::port_cap_request:
         {
-            responses.push_back(encode_port_capabilities_response_frame(f.header.port, 0, 0xff, 50, 0, 63, 10, 7, 0, 0));
-            break;
+            response = encode_port_capabilities_response_frame(f.header.port, 0, 0xff, 50, 0, 63, 10, 7, 0, 0);
+            return true;
         }
 
         case data_kind::register_call:
         {
             s.callsign = unpack_address(f.header.from);
-            responses.push_back(encode_register_response_frame(s.callsign, true));
-            break;
+            response = encode_register_response_frame(s.callsign, true);
+            return true;
         }
 
         case data_kind::unregister_call:
         {
             s.callsign.clear();
-            break;
+            return false;
         }
 
         case data_kind::toggle_monitor:
         {
             s.monitoring_enabled = !s.monitoring_enabled;
-            break;
+            return false;
         }
 
         case data_kind::toggle_raw:
         {
             s.raw_enabled = !s.raw_enabled;
-            break;
+            return false;
         }
 
         case data_kind::query_frames_port:
         {
-            responses.push_back(encode_outstanding_frames_response_frame(f.header.port, 0));
-            break;
+            response = encode_outstanding_frames_response_frame(f.header.port, 0);
+            return true;
         }
 
         case data_kind::query_frames_conn:
         {
             std::string from = unpack_address(f.header.from);
             std::string to = unpack_address(f.header.to);
-            responses.push_back(encode_connection_frames_response_frame(f.header.port, from, to, 0));
-            break;
+            response = encode_connection_frames_response_frame(f.header.port, from, to, 0);
+            return true;
         }
 
         case data_kind::heard_stations:
         {
-            responses.push_back(encode_heard_stations_response_frame(f.header.port));
-            break;
+            response = encode_heard_stations_response_frame(f.header.port);
+            return true;
         }
 
         default:
         {
-            break;
+            return false;
         }
     }
-
-    return responses;
 }
 
 LIBMODEM_AGWPE_NAMESPACE_END
@@ -874,7 +872,8 @@ void agwpe_formatter::decode(const std::vector<uint8_t>& data, size_t count)
             // If it's not a data frame, handle it as a protocol command and store any generated response frames in the pending responses queue.
             // A client will use the response bytes to send back to an AGWPE client.
 
-            for (auto& response : agwpe::handle_frame(f, session_))
+            agwpe::frame response;
+            if (agwpe::try_process_frame(f, session_, response))
             {
                 std::vector<uint8_t> bytes = agwpe::to_bytes(response);
                 pending_responses_.push(std::move(bytes));
