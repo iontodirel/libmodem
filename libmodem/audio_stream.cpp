@@ -132,6 +132,19 @@ void throw_alsa_error(int err, const std::string& function_name)
     throw audio_stream_exception(function_name + ": " + snd_strerror(err), error);
 }
 
+int parse_alsa_card_id(const std::string& id)
+{
+    auto colon = id.find(':');
+    if (colon != std::string::npos)
+    {
+        // if "hw:1,0" or "plughw:1,0" skip the prefix, parse card number after ':'
+        // atoi stops at the comma so "1,0" correctly parses as 1
+        return std::atoi(id.c_str() + colon + 1);
+    }
+    // No colon, parse as plain card number like "0" or "1"
+    return std::atoi(id.c_str());
+}
+
 LIBMODEM_ANONYMOUS_NAMESPACE_END
 
 #endif // __linux__
@@ -1450,7 +1463,13 @@ audio_device_impl* audio_device::implementation()
 
 audio_device::operator bool()
 {
+#if WIN32
     return impl_->device_ != nullptr;
+#elif __linux__
+    return card_id != -1 && device_id != -1;
+#else
+    return false;
+#endif
 }
 
 // **************************************************************** //
@@ -1645,8 +1664,7 @@ bool try_get_audio_device_by_id(const std::string& id, audio_device& device)
         return dev.id == id;
 #endif // WIN32
 #ifdef __linux__
-
-        int id_int = std::atoi(id.c_str());
+        int id_int = parse_alsa_card_id(id);
         return dev.card_id == id_int;
 #endif // __linux__
 #ifdef __APPLE__

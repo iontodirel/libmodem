@@ -480,8 +480,8 @@ struct audio_device
 #endif // WIN32
 
 #if __linux__
-    int card_id;
-    int device_id;
+    int card_id = -1;
+    int device_id = -1;
 #endif // __linux__
 
 private:
