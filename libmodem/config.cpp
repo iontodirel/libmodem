@@ -228,6 +228,7 @@ data_stream_config parse_data_stream(const nlohmann::json& j)
     c.format = parse_format_type(j.value("format", "ax25_kiss"));
     c.transport = parse_transport_type(j.value("transport", "tcp"));
     c.bind_address = j.value("bind_address", "127.0.0.1");
+    c.enabled = j.value("enabled", true);
     c.max_recovery_attempts = j.value("max_recovery_attempts", 10);
     c.recovery_delay_seconds = j.value("recovery_delay_seconds", 5);
 

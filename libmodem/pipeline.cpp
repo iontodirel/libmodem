@@ -1084,9 +1084,6 @@ void pipeline::populate_data_streams()
     {
         if (!can_add_data_stream(data_stream_config))
         {
-            uint64_t seq = next_seq();
-            invoke_async([this, seq, data_stream_config]() { events_->get().on_transport_init_failed(seq, data_stream_config, "invalid configuration or duplicate"); });
-            invoke_loggers_async([seq, data_stream_config](logger_base& l) { l.on_transport_init_failed(seq, data_stream_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -1139,9 +1136,6 @@ void pipeline::populate_transmit_modems()
     {
         if (!can_add_modem(modulator_config))
         {
-            uint64_t seq = next_seq();
-            invoke_async([this, seq, modulator_config]() { events_->get().on_modem_init_failed(seq, modulator_config, "invalid configuration or duplicate"); });
-            invoke_loggers_async([seq, modulator_config](logger_base& l) { l.on_modem_init_failed(seq, modulator_config, "invalid configuration or duplicate"); });
             continue;
         }
 
@@ -1687,8 +1681,8 @@ bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
     if (!is_platform_compatible_audio_device(audio_config.type))
     {
         uint64_t seq = next_seq();
-        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "incompatible platform"); });
-        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "incompatible platform"); });
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "unsupported platform"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "unsupported platform"); });
         return false;
     }
 
@@ -1859,11 +1853,17 @@ bool pipeline::can_add_modem(const modulator_config& modulator_config)
 {
     if (!modulator_config.enabled)
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, modulator_config]() { events_->get().on_modem_init_failed(seq, modulator_config, "disabled"); });
+        invoke_loggers_async([seq, modulator_config](logger_base& l) { l.on_modem_init_failed(seq, modulator_config, "disabled"); });
         return false;
     }
 
     if (is_duplicate_modem_name(modulator_config.name))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, modulator_config]() { events_->get().on_modem_init_failed(seq, modulator_config, "duplicate name"); });
+        invoke_loggers_async([seq, modulator_config](logger_base& l) { l.on_modem_init_failed(seq, modulator_config, "duplicate name"); });
         return false;
     }
 
@@ -1914,13 +1914,27 @@ bool pipeline::is_ptt_control_referenced(const std::string& name)
 
 bool pipeline::can_add_data_stream(const data_stream_config& data_config)
 {
+    if (!data_config.enabled)
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "disabled"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "disabled"); });
+        return false;
+    }
+
     if (!is_valid_data_stream_config(data_config))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "invalid configuration"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "invalid configuration"); });
         return false;
     }
 
     if (is_duplicate_data_stream_name(data_config.name))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "duplicate name"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "duplicate name"); });
         return false;
     }
 
@@ -1928,6 +1942,9 @@ bool pipeline::can_add_data_stream(const data_stream_config& data_config)
     if (data_config.transport == data_stream_transport_type::tcp &&
         is_duplicate_tcp_port(data_config.port))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "duplicate tcp port"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "duplicate tcp port"); });
         return false;
     }
 
@@ -1935,11 +1952,17 @@ bool pipeline::can_add_data_stream(const data_stream_config& data_config)
     if (data_config.transport == data_stream_transport_type::serial &&
         is_duplicate_serial_port(data_config.serial_port))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "duplicate serial port"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "duplicate serial port"); });
         return false;
     }
 
     if (!is_data_stream_referenced(data_config.name))
     {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, data_config]() { events_->get().on_transport_init_failed(seq, data_config, "not referenced"); });
+        invoke_loggers_async([seq, data_config](logger_base& l) { l.on_transport_init_failed(seq, data_config, "not referenced"); });
         return false;
     }
 
@@ -2985,30 +3008,29 @@ std::optional<std::reference_wrapper<audio_entry>> pipeline::get_output_stream(c
         return {};
     }
 
-    if (mod_config.audio_output_streams.size() == 1)
+    for (const auto& stream_name : mod_config.audio_output_streams)
     {
-        auto audio_entry = find_audio_entry(mod_config.audio_output_streams[0]);
+        auto audio_entry = find_audio_entry(stream_name);
         if (!audio_entry)
         {
-            return {};
+            continue;
         }
 
         if (audio_entry->get().stream.type() != audio_stream_type::output)
         {
             // A modulator requires an output audio_entry stream
             // If this is not an output stream, skip it
-            return {};
+            continue;
         }
 
         return audio_entry;
     }
-    else
-    {
-        // If the modulator configuration has more than one output stream
-        // We have to create chained audio_entry stream
-        // Each have to match the sample rate
-        return {};
-    }
+
+    // If the modulator configuration has more than one output stream
+    // We have to create chained audio_entry stream
+    // Each have to match the sample rate
+
+    return {};
 }
 
 std::optional<std::reference_wrapper<ptt_entry>> pipeline::find_ptt_entry(const std::string& name)
@@ -3913,13 +3935,17 @@ bool is_platform_compatible_audio_device(audio_stream_config_type type)
     {
         return type == audio_stream_config_type::wasapi_audio_input_stream ||
             type == audio_stream_config_type::wasapi_audio_output_stream ||
-            type == audio_stream_config_type::null_audio_stream;
+            type == audio_stream_config_type::null_audio_stream ||
+            type == audio_stream_config_type::wav_audio_input_stream ||
+            type == audio_stream_config_type::wav_audio_output_stream;
     }
     else if (platform_name() == "linux")
     {
         return type == audio_stream_config_type::alsa_audio_input_stream ||
             type == audio_stream_config_type::alsa_audio_output_stream ||
-            type == audio_stream_config_type::null_audio_stream;
+            type == audio_stream_config_type::null_audio_stream ||
+            type == audio_stream_config_type::wav_audio_input_stream ||
+            type == audio_stream_config_type::wav_audio_output_stream;
     }
     else
     {

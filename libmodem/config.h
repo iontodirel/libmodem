@@ -185,6 +185,7 @@ struct data_stream_config
     std::string bind_address;
     int port;
     std::string serial_port;
+    bool enabled = true;
     int max_recovery_attempts = 10;
     int recovery_delay_seconds = 5;
 };
