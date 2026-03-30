@@ -77,6 +77,7 @@ std::unique_ptr<modem_entry> create_modem_entry(const modulator_config& config);
 std::unique_ptr<modulator_base> create_modulator(const modulator_config& config, int sample_rate);
 bool is_output_stream(audio_stream_config_type type);
 bool is_input_stream(audio_stream_config_type type);
+bool is_platform_compatible_audio_device(audio_stream_config_type type);
 bool requires_audio_hardware(audio_stream_config_type type);
 serial_port_ptt_trigger parse_ptt_trigger(const std::string& trigger);
 serial_port_ptt_line parse_ptt_line(const std::string& line);
@@ -1683,6 +1684,14 @@ bool pipeline::can_add_audio_entry(const audio_stream_config& audio_config)
         return false;
     }
 
+    if (!is_platform_compatible_audio_device(audio_config.type))
+    {
+        uint64_t seq = next_seq();
+        invoke_async([this, seq, audio_config]() { events_->get().on_audio_stream_init_failed(seq, audio_config, "incompatible platform"); });
+        invoke_loggers_async([seq, audio_config](logger_base& l) { l.on_audio_stream_init_failed(seq, audio_config, "incompatible platform"); });
+        return false;
+    }
+
     if (is_duplicate_audio_name(audio_config.name))
     {
         uint64_t seq = next_seq();
@@ -2850,9 +2859,25 @@ bool pipeline::try_create_audio_entry(audio_entry& entry, const audio_stream_con
             return false;
         }
 
+        audio_stream stream(nullptr);
+
+        try
+        {
+            stream = device.stream();
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+
+        if (!stream)
+        {
+            return false;
+        }
+
         entry.name = audio_config.name;
         entry.display_name = device.name;
-        entry.stream = audio_stream(std::make_unique<audio_stream_no_throw>(device.stream().release(), entry, *this, *impl_->pool));
+        entry.stream = audio_stream(std::make_unique<audio_stream_no_throw>(stream.release(), entry, *this, *impl_->pool));
         entry.device = std::move(device);
         entry.config = audio_config;
 
@@ -3880,6 +3905,26 @@ bool is_input_stream(audio_stream_config_type type)
     return type == audio_stream_config_type::wasapi_audio_input_stream ||
         type == audio_stream_config_type::alsa_audio_input_stream ||
         type == audio_stream_config_type::wav_audio_input_stream;
+}
+
+bool is_platform_compatible_audio_device(audio_stream_config_type type)
+{
+    if (platform_name() == "windows")
+    {
+        return type == audio_stream_config_type::wasapi_audio_input_stream ||
+            type == audio_stream_config_type::wasapi_audio_output_stream ||
+            type == audio_stream_config_type::null_audio_stream;
+    }
+    else if (platform_name() == "linux")
+    {
+        return type == audio_stream_config_type::alsa_audio_input_stream ||
+            type == audio_stream_config_type::alsa_audio_output_stream ||
+            type == audio_stream_config_type::null_audio_stream;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 bool requires_audio_hardware(audio_stream_config_type type)
