@@ -172,9 +172,9 @@ struct serial_port_info
     std::string port_name;
     unsigned int baud_rate = 9600;
     unsigned int data_bits = 8;
-    parity parity = parity::none;
-    stop_bits stop_bits = stop_bits::one;
-    flow_control flow_control = flow_control::none;
+    enum parity parity = parity::none;
+    enum stop_bits stop_bits = stop_bits::one;
+    enum flow_control flow_control = flow_control::none;
 };
 
 struct serial_port_impl;
