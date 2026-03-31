@@ -33,6 +33,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <array>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -52,7 +53,26 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// dds_afsk_modulator                                               //
+// modulator_bit_clock                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct modulator_bit_clock
+{
+    modulator_bit_clock(int sample_rate, int bitrate);
+    int next_samples_per_bit() noexcept;
+    void reset() noexcept;
+
+private:
+    double samples_per_bit_;
+    double samples_per_bit_error_ = 0.0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// dds_afsk_modulator_double                                        //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -79,7 +99,7 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// gfsk_modulator                                                   //
+// gfsk_modulator_double                                            //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -93,9 +113,11 @@ struct gfsk_modulator_double
     int next_samples_per_bit() noexcept;
 
 private:
-    std::vector<double> fir_coeffs_;  // Gaussian FIR pulse-shaping coefficients
-    std::vector<double> delay_line_;  // Circular buffer for FIR filter
-    int delay_pos_ = 0;               // Current write position in circular buffer
+    static constexpr int max_fir_taps = 256;
+    std::array<double, max_fir_taps> fir_coeffs_{}; // Gaussian FIR pulse-shaping coefficients
+    std::array<double, max_fir_taps> delay_line_{}; // Circular buffer for FIR filter
+    int fir_taps_ = 0;
+    int delay_pos_ = 0; // Current write position in circular buffer
     double samples_per_bit_;
     double samples_per_bit_error_ = 0.0;
 };
@@ -103,7 +125,7 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// sine_fsk_modulator                                               //
+// sine_fsk_modulator_double                                        //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -117,7 +139,9 @@ struct sine_fsk_modulator_double
     int next_samples_per_bit() noexcept;
 
 private:
-    std::vector<double> transition_table_;
+    static constexpr int max_transition_samples = 256;
+    std::array<double, max_transition_samples> transition_table_{};
+    int transition_table_size_ = 0;
     double level_ = 1.0;
     int sample_index_ = 0;
     int current_bit_samples_ = 0;
@@ -136,18 +160,26 @@ private:
 
 struct modulator_base
 {
+    modulator_base(int sample_rate, int bitrate);
+
     virtual double modulate_double(uint8_t bit) noexcept;
     virtual float modulate_float(uint8_t bit) noexcept;
     virtual int16_t modulate_int(uint8_t bit) noexcept;
-    virtual void reset() noexcept = 0;
+    virtual std::vector<double> modulate_doubles(uint8_t bit) noexcept;
+    virtual std::vector<float> modulate_floats(uint8_t bit) noexcept;
+    virtual std::vector<int16_t> modulate_ints(uint8_t bit) noexcept;
+    virtual void reset() noexcept;
     virtual int next_samples_per_bit() noexcept = 0;
     virtual ~modulator_base() = default;
+
+private:
+    modulator_bit_clock bit_clock_;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// dds_afsk_modulator_adapter                                       //
+// dds_afsk_modulator_double_adapter                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -167,7 +199,7 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// gfsk_modulator_adapter                                           //
+// gfsk_modulator_double_adapter                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -187,7 +219,7 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// sine_fsk_modulator_adapter                                       //
+// sine_fsk_modulator_double_adapter                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //

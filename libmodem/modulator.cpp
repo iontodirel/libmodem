@@ -40,7 +40,40 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// dds_afsk_modulator                                               //
+// modulator_bit_clock                                              //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+modulator_bit_clock::modulator_bit_clock(int sample_rate, int bitrate) : samples_per_bit_(static_cast<double>(sample_rate) / bitrate)
+{
+}
+
+int modulator_bit_clock::next_samples_per_bit() noexcept
+{
+    // WARNING: Call only once per bit period
+    // Calculate samples per bit with fractional error accumulation
+    // This allows for non-integer samples per bit rates (e.g., 44100/1200 = 36.75)
+    // While maintaining accurate timing over long transmissions
+
+    double v = samples_per_bit_ + samples_per_bit_error_;
+
+    int n = static_cast<int>(std::round(v));
+
+    samples_per_bit_error_ = v - static_cast<double>(n);
+
+    return n;
+}
+
+void modulator_bit_clock::reset() noexcept
+{
+    samples_per_bit_error_ = 0.0;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// dds_afsk_modulator_double                                        //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -132,7 +165,7 @@ int dds_afsk_modulator_double::next_samples_per_bit() noexcept
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// gfsk_modulator                                                   //
+// gfsk_modulator_double                                            //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -166,8 +199,8 @@ gfsk_modulator_double::gfsk_modulator_double(int bitrate, int sample_rate, doubl
         ntaps++;  // Force odd for symmetric FIR
     }
 
-    fir_coeffs_.resize(ntaps);
-    delay_line_.resize(ntaps, 0.0);
+    assert(ntaps <= max_fir_taps);
+    fir_taps_ = ntaps;
     delay_pos_ = 0;
 
     double sum = 0.0;
@@ -216,7 +249,7 @@ double gfsk_modulator_double::modulate(uint8_t bit) noexcept
 
     double output = 0.0;
 
-    int ntaps = static_cast<int>(fir_coeffs_.size());
+    int ntaps = fir_taps_;
     int pos = delay_pos_;
 
     for (int i = 0; i < ntaps; i++)
@@ -243,7 +276,7 @@ double gfsk_modulator_double::modulate(uint8_t bit) noexcept
 
 void gfsk_modulator_double::reset() noexcept
 {
-    std::fill(delay_line_.begin(), delay_line_.end(), 0.0);
+    delay_line_.fill(0.0);
     delay_pos_ = 0;
     samples_per_bit_error_ = 0.0;
 }
@@ -267,7 +300,7 @@ int gfsk_modulator_double::next_samples_per_bit() noexcept
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// sine_fsk_modulator                                               //
+// sine_fsk_modulator_double                                        //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -285,7 +318,9 @@ sine_fsk_modulator_double::sine_fsk_modulator_double(int bitrate, int sample_rat
     // On a 1->0 transition, output these values directly.
     // On a 0->1 transition, output them negated.
     // On a steady bit, output +/-1.0 directly -- no table needed.
-    transition_table_.resize(n);
+    assert(n <= max_transition_samples);
+
+    transition_table_size_ = n;
 
     for (int i = 0; i < n; i++)
     {
@@ -324,7 +359,7 @@ double sine_fsk_modulator_double::modulate(uint8_t bit) noexcept
         // Linearly interpolate the half-cosine table to the current
         // bit period length, which may differ from the table size
         // due to fractional sample accumulation in next_samples_per_bit().
-        int table_size = static_cast<int>(transition_table_.size());
+        int table_size = static_cast<int>(transition_table_size_);
         double fractional_index = static_cast<double>(sample_index_) * (table_size - 1) / (current_bit_samples_ - 1);
         int lower = static_cast<int>(fractional_index);
         double blend = fractional_index - lower;
@@ -364,7 +399,7 @@ void sine_fsk_modulator_double::reset() noexcept
 {
     level_ = 1.0;
     sample_index_ = 0;
-    current_bit_samples_ = static_cast<int>(transition_table_.size());
+    current_bit_samples_ = transition_table_size_;
     transitioning_ = false;
     samples_per_bit_error_ = 0.0;
 }
@@ -390,6 +425,10 @@ int sine_fsk_modulator_double::next_samples_per_bit() noexcept
 //                                                                  //
 // **************************************************************** //
 
+modulator_base::modulator_base(int sample_rate, int bitrate) : bit_clock_(sample_rate, bitrate)
+{
+}
+
 double modulator_base::modulate_double(uint8_t bit) noexcept
 {
     (void)bit;
@@ -408,15 +447,46 @@ int16_t modulator_base::modulate_int(uint8_t bit) noexcept
     return 0;
 }
 
+std::vector<double> modulator_base::modulate_doubles(uint8_t bit) noexcept
+{
+    int n = bit_clock_.next_samples_per_bit();
+
+    std::vector<double> samples(n);
+
+    for (int i = 0; i < n; ++i)
+    {
+        samples[i] = modulate_double(bit);
+    }
+
+    return samples;
+}
+
+std::vector<float> modulator_base::modulate_floats(uint8_t bit) noexcept
+{
+    (void)bit;
+    return {};
+}
+
+std::vector<int16_t> modulator_base::modulate_ints(uint8_t bit) noexcept
+{
+    (void)bit;
+    return {};
+}
+
+void modulator_base::reset() noexcept
+{
+    bit_clock_.reset();
+}
+
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// dds_afsk_modulator_adapter                                       //
+// dds_afsk_modulator_double_adapter                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-dds_afsk_modulator_double_adapter::dds_afsk_modulator_double_adapter(double f_mark, double f_space, int bitrate, int sample_rate, double alpha) : modulator(f_mark, f_space, bitrate, sample_rate, alpha)
+dds_afsk_modulator_double_adapter::dds_afsk_modulator_double_adapter(double f_mark, double f_space, int bitrate, int sample_rate, double alpha) : modulator_base(sample_rate, bitrate), modulator(f_mark, f_space, bitrate, sample_rate, alpha)
 {
 }
 
@@ -428,6 +498,7 @@ double dds_afsk_modulator_double_adapter::modulate_double(uint8_t bit) noexcept
 void dds_afsk_modulator_double_adapter::reset() noexcept
 {
     modulator.reset();
+    modulator_base::reset();
 }
 
 int dds_afsk_modulator_double_adapter::next_samples_per_bit() noexcept
@@ -438,12 +509,12 @@ int dds_afsk_modulator_double_adapter::next_samples_per_bit() noexcept
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// gfsk_modulator_adapter                                           //
+// gfsk_modulator_double_adapter                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-gfsk_modulator_double_adapter::gfsk_modulator_double_adapter(int bitrate, int sample_rate, double bt) : modulator(bitrate, sample_rate, bt)
+gfsk_modulator_double_adapter::gfsk_modulator_double_adapter(int bitrate, int sample_rate, double bt) : modulator_base(sample_rate, bitrate), modulator(bitrate, sample_rate, bt)
 {
 }
 
@@ -455,6 +526,7 @@ double gfsk_modulator_double_adapter::modulate_double(uint8_t bit) noexcept
 void gfsk_modulator_double_adapter::reset() noexcept
 {
     modulator.reset();
+    modulator_base::reset();
 }
 
 int gfsk_modulator_double_adapter::next_samples_per_bit() noexcept
@@ -465,12 +537,12 @@ int gfsk_modulator_double_adapter::next_samples_per_bit() noexcept
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// sine_fsk_modulator_adapter                                       //
+// sine_fsk_modulator_double_adapter                                //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-sine_fsk_modulator_double_adapter::sine_fsk_modulator_double_adapter(int bitrate, int sample_rate) : modulator(bitrate, sample_rate)
+sine_fsk_modulator_double_adapter::sine_fsk_modulator_double_adapter(int bitrate, int sample_rate) : modulator_base(sample_rate, bitrate), modulator(bitrate, sample_rate)
 {
 }
 
@@ -482,6 +554,7 @@ double sine_fsk_modulator_double_adapter::modulate_double(uint8_t bit) noexcept
 void sine_fsk_modulator_double_adapter::reset() noexcept
 {
     modulator.reset();
+    modulator_base::reset();
 }
 
 int sine_fsk_modulator_double_adapter::next_samples_per_bit() noexcept
