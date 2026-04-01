@@ -598,6 +598,10 @@ audio_stream_type parse_audio_stream_type(const std::string& type_string)
     {
         return audio_stream_type::output;
     }
+    else if (type_string == "null")
+    {
+        return audio_stream_type::null;
+    }
     else
     {
         return audio_stream_type::unknown;
@@ -613,6 +617,10 @@ std::string to_string(audio_stream_type type)
     else if (type == audio_stream_type::output)
     {
         return "output";
+    }
+    else if (type == audio_stream_type::null)
+    {
+        return "null";
     }
     else
     {
@@ -632,7 +640,12 @@ audio_stream_base& audio_stream_base::operator=(wav_audio_input_stream& rhs)
 {
     if (this->sample_rate() != rhs.sample_rate())
     {
-        throw audio_stream_exception("Cannot assign wav_audio_input_stream to audio_stream_base with different sample rate or channels", audio_stream_error::invalid_argument);
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to audio_stream_base with different sample rate", audio_stream_error::invalid_argument);
+    }
+
+    if (this->channels() != rhs.channels())
+    {
+        throw audio_stream_exception("Cannot assign wav_audio_input_stream to audio_stream_base with different channels", audio_stream_error::invalid_argument);
     }
 
     if (this->type() != audio_stream_type::output)
@@ -4134,7 +4147,7 @@ void alsa_audio_stream_control::volume(int percent)
 
     if ((err = snd_mixer_attach(mixer, card_name.c_str())) != 0)
     {
-        throw_alsa_error(err, "snd_mixer_open");
+        throw_alsa_error(err, "snd_mixer_attach");
     }
 
     if ((err = snd_mixer_selem_register(mixer, nullptr, nullptr)) != 0)
@@ -5692,6 +5705,10 @@ wav_audio_input_stream::wav_audio_input_stream(wav_audio_input_stream&& other) n
 
 wav_audio_input_stream& wav_audio_input_stream::operator=(wav_audio_input_stream&& other) noexcept
 {
+    if (this == &other)
+    {
+        return *this;
+    }
     if (impl_ && impl_->sf_file_)
     {
         close();
@@ -5911,6 +5928,10 @@ wav_audio_output_stream::wav_audio_output_stream(wav_audio_output_stream&& other
 
 wav_audio_output_stream& wav_audio_output_stream::operator=(wav_audio_output_stream&& other) noexcept
 {
+    if (this == &other)
+    {
+        return *this;
+    }
     if (impl_ && impl_->sf_file_ != nullptr)
     {
         close();
@@ -6631,7 +6652,7 @@ void tcp_audio_stream_control_server::accept_async()
 
         if (ec)
         {
-            if (ec != boost::asio::error::operation_aborted)
+            if (ec == boost::asio::error::operation_aborted)
             {
                 return;
             }

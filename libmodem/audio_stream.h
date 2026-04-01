@@ -45,7 +45,6 @@
 #include <exception>
 #include <array>
 #include <unordered_set>
-#include <exception>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -220,6 +219,8 @@ struct audio_stream_base
 
 struct audio_stream_control_base
 {
+    virtual ~audio_stream_control_base() = default;
+
     virtual std::string id() const = 0;
     virtual std::string name() const = 0;
     virtual int index() const = 0;
@@ -628,7 +629,7 @@ public:
 
     void close() noexcept override;
 
-    std::string name();
+    std::string name() override;
     audio_stream_type type() override;
 
     void mute(bool);
@@ -718,7 +719,7 @@ public:
 
     void close() noexcept override;
 
-    std::string name();
+    std::string name() override;
     audio_stream_type type() override;
 
     void mute(bool);
