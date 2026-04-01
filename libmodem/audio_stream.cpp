@@ -850,7 +850,7 @@ std::unique_ptr<audio_stream_base> audio_stream::release()
 
 audio_stream::operator bool()
 {
-    return stream_ != nullptr && stream_.operator bool();
+    return stream_ != nullptr && static_cast<bool>(*stream_);
 }
 
 // **************************************************************** //
@@ -2166,19 +2166,6 @@ wasapi_audio_output_stream::wasapi_audio_output_stream(audio_device_impl* impl, 
         throw_hresult_error(hr, "Failed to get buffer size");
     }
 
-    if (ducking_disabled_)
-    {
-        CComPtr<IAudioSessionControl> session_control;
-        if (SUCCEEDED(audio_client->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
-        {
-            CComPtr<IAudioSessionControl2> session_control2;
-            if (SUCCEEDED(session_control->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&session_control2)))
-            {
-                session_control2->SetDuckingPreference(TRUE); // Disable ducking
-            }
-        }
-    }
-
     buffer_.resize(buffer_size_ * channels_);
 
     // Initialize ring buffer to hold ~5 second of audio
@@ -2567,6 +2554,21 @@ bool wasapi_audio_output_stream::mute()
 void wasapi_audio_output_stream::ducking(bool enable)
 {
     ducking_disabled_ = !enable;
+
+    if (impl_ && impl_->audio_client_)
+    {
+        ensure_com_initialized();
+
+        CComPtr<IAudioSessionControl> session_control;
+        if (SUCCEEDED(impl_->audio_client_->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
+        {
+            CComPtr<IAudioSessionControl2> session_control2;
+            if (SUCCEEDED(session_control->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&session_control2)))
+            {
+                session_control2->SetDuckingPreference(ducking_disabled_ ? TRUE : FALSE);
+            }
+        }
+    }
 }
 
 bool wasapi_audio_output_stream::ducking()
@@ -3350,19 +3352,6 @@ wasapi_audio_input_stream::wasapi_audio_input_stream(audio_device_impl* impl, in
         throw_hresult_error(hr, "Failed to get buffer size");
     }
 
-    if (ducking_disabled_)
-    {
-        CComPtr<IAudioSessionControl> session_control;
-        if (SUCCEEDED(audio_client->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
-        {
-            CComPtr<IAudioSessionControl2> session_control2;
-            if (SUCCEEDED(session_control->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&session_control2)))
-            {
-                session_control2->SetDuckingPreference(TRUE); // Disable ducking
-            }
-        }
-    }
-
     // Initialize ring buffer to hold ~5 second of audio
     size_t ring_buffer_size = sample_rate_ * channels_ * ring_buffer_size_seconds_;
 
@@ -3559,6 +3548,21 @@ bool wasapi_audio_input_stream::mute()
 void wasapi_audio_input_stream::ducking(bool enable)
 {
     ducking_disabled_ = !enable;
+
+    if (impl_ && impl_->audio_client_)
+    {
+        ensure_com_initialized();
+
+        CComPtr<IAudioSessionControl> session_control;
+        if (SUCCEEDED(impl_->audio_client_->GetService(__uuidof(IAudioSessionControl), (void**)&session_control)))
+        {
+            CComPtr<IAudioSessionControl2> session_control2;
+            if (SUCCEEDED(session_control->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&session_control2)))
+            {
+                session_control2->SetDuckingPreference(ducking_disabled_ ? TRUE : FALSE);
+            }
+        }
+    }
 }
 
 bool wasapi_audio_input_stream::ducking()
