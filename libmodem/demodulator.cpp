@@ -63,8 +63,10 @@ double biquad_bandpass::process(double sample) noexcept
 {
     double w = sample - a1_ * w1_ - a2_ * w2_;
     double out = b0_ * w + b2_ * w2_;
+
     w2_ = w1_;
     w1_ = w;
+
     return out;
 }
 
@@ -117,6 +119,7 @@ bool pll_gardner::advance(double soft) noexcept
     {
         double error = mid_soft_ * (prev_sign - curr_sign);
         double norm = std::max(std::abs(prev_soft_), std::abs(soft));
+
         if (norm > 0)
         {
             error /= norm;
@@ -126,10 +129,12 @@ bool pll_gardner::advance(double soft) noexcept
 
         // Clamp frequency
         double max_dev = freq_nominal_ * 0.05;
+
         freq_ = std::max(freq_nominal_ - max_dev, std::min(freq_nominal_ + max_dev, freq_));
     }
 
     prev_soft_ = soft;
+
     return true;
 }
 
@@ -152,18 +157,19 @@ void pll_gardner::reset() noexcept
 sdft_afsk_demodulator_double::sdft_afsk_demodulator_double(double f_mark, double f_space, int bitrate, int sample_rate)
 {
     constexpr double two_pi = 2.0 * 3.14159265358979323846;
+    constexpr int N = sdft_window_length;
 
     samples_per_bit_ = static_cast<double>(sample_rate) / bitrate;
 
     // DFT bin indices: k = f * N / sample_rate
-    double k_mark = f_mark * sdft_window_length / static_cast<double>(sample_rate);
-    double k_space = f_space * sdft_window_length / static_cast<double>(sample_rate);
+    double k_mark = f_mark * N / static_cast<double>(sample_rate);
+    double k_space = f_space * N / static_cast<double>(sample_rate);
 
     // Twiddle factors for sDFT rotation: e^{-j*2*pi*k/N}
-    tw_re_mark_ =  std::cos(two_pi * k_mark / sdft_window_length);
-    tw_im_mark_ = -std::sin(two_pi * k_mark / sdft_window_length);
-    tw_re_space_ =  std::cos(two_pi * k_space / sdft_window_length);
-    tw_im_space_ = -std::sin(two_pi * k_space / sdft_window_length);
+    tw_re_mark_ =  std::cos(two_pi * k_mark / N);
+    tw_im_mark_ = -std::sin(two_pi * k_mark / N);
+    tw_re_space_ =  std::cos(two_pi * k_space / N);
+    tw_im_space_ = -std::sin(two_pi * k_space / N);
 
     // W^N correction for fractional bins: e^{-j*2*pi*k}
     wn_re_mark_ =  std::cos(two_pi * k_mark);
@@ -189,37 +195,43 @@ bool sdft_afsk_demodulator_double::try_demodulate(double sample, uint8_t& bit) n
     // Update sDFT circular buffer
     double x_old = sdft_window_[sdft_window_pos_];
     sdft_window_[sdft_window_pos_] = sample;
+    // Advance circular buffer position, wrapping around the window
     sdft_window_pos_ = (sdft_window_pos_ + 1) % N;
 
-    // Sliding DFT update: Z[n] = tw * Z[n-1] + x_new - x_old * wn
-    double tz_re = tw_re_mark_ * re_mark_ - tw_im_mark_ * im_mark_;
-    double tz_im = tw_im_mark_ * re_mark_ + tw_re_mark_ * im_mark_;
-    re_mark_ = tz_re + sample - x_old * wn_re_mark_;
-    im_mark_ = tz_im         - x_old * wn_im_mark_;
+    // Sliding DFT update: Z[n] = twiddle * Z[n-1] + x_new - x_old * W^N
+    //
+    // z_re/z_im = twiddle rotation of previous bin (complex multiply)
+    // + sample (real only) = new sample entering the window
+    // - x_old * wn (complex) = old sample leaving the window, corrected by W^N
 
-    tz_re = tw_re_space_ * re_space_ - tw_im_space_ * im_space_;
-    tz_im = tw_im_space_ * re_space_ + tw_re_space_ * im_space_;
-    re_space_ = tz_re + sample - x_old * wn_re_space_;
-    im_space_ = tz_im         - x_old * wn_im_space_;
+    double z_re_mark = tw_re_mark_ * re_mark_ - tw_im_mark_ * im_mark_;
+    double z_im_mark = tw_im_mark_ * re_mark_ + tw_re_mark_ * im_mark_;
+    re_mark_ = z_re_mark + sample - x_old * wn_re_mark_;
+    im_mark_ = z_im_mark          - x_old * wn_im_mark_;
 
-    // Compute soft decision from sDFT magnitudes
+    double z_re_space = tw_re_space_ * re_space_ - tw_im_space_ * im_space_;
+    double z_im_space = tw_im_space_ * re_space_ + tw_re_space_ * im_space_;
+    re_space_ = z_re_space + sample - x_old * wn_re_space_;
+    im_space_ = z_im_space          - x_old * wn_im_space_;
+
+    // Compute mark_space_diff from sDFT magnitudes
     double mag2_mark  = re_mark_ * re_mark_ + im_mark_ * im_mark_;
     double mag2_space = re_space_ * re_space_ + im_space_ * im_space_;
-    double soft = mag2_mark - mag2_space;
+    double mark_space_diff = mag2_mark - mag2_space;
 
     // Wait for buffer to fill
     if (sdft_samples_fed_ < N)
     {
-        ++sdft_samples_fed_;
+        sdft_samples_fed_++;
     }
 
     // PLL decides when to output a bit
-    if (sdft_samples_fed_ < N || !pll_.advance(soft))
+    if (sdft_samples_fed_ < N || !pll_.advance(mark_space_diff))
     {
         return false;
     }
 
-    bit = (soft > 0) ? 1 : 0;
+    bit = (mark_space_diff > 0) ? 1 : 0;
 
     return true;
 }
