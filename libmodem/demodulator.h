@@ -49,37 +49,117 @@
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// goertzel_afsk_demodulator_double                                 //
+// sdft_afsk_demodulator_double                                     //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
 LIBMODEM_NAMESPACE_BEGIN
 
-struct goertzel_afsk_demodulator_double
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// biquad_bandpass                                                  //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct biquad_bandpass
 {
-    goertzel_afsk_demodulator_double(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000);
+    biquad_bandpass() = default;
+    biquad_bandpass(double f_center, double bandwidth, int sample_rate);
+
+    double process(double sample) noexcept;
+    void reset() noexcept;
+
+private:
+    double b0_ = 0;
+    double b2_ = 0;
+    double a1_ = 0;
+    double a2_ = 0;
+    double w1_ = 0;
+    double w2_ = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// pll_gardner                                                      //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct pll_gardner
+{
+    pll_gardner() = default;
+    pll_gardner(double samples_per_bit, double alpha);
+
+    bool advance(double soft) noexcept;
+    void reset() noexcept;
+
+private:
+    double phase_ = 0;
+    double freq_ = 0;
+    double freq_nominal_ = 0;
+    double alpha_ = 0;
+
+    // Gardner TED state
+    double mid_soft_ = 0;
+    double prev_soft_ = 0;
+    bool mid_captured_ = false;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// sdft_afsk_demodulator_double                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct sdft_afsk_demodulator_double
+{
+    sdft_afsk_demodulator_double(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000);
 
     bool try_demodulate(double sample, uint8_t& bit) noexcept;
     void reset() noexcept;
 
 private:
-    void begin_bit() noexcept;
-    int next_samples_per_bit() noexcept;
+    double samples_per_bit_ = 0; // exact ratio (e.g. 36.75)
+    static constexpr int sdft_window_length = 51;
+    static constexpr double bpf_extra_bandwidth = 600.0;
+    static constexpr double pll_alpha = -0.07;
+    int current_bit_samples_ = sdft_window_length;
 
-    double f_mark_;
-    double f_space_;
-    int sample_rate_;
-    double samples_per_bit_;
-    double samples_per_bit_error_;
-    int current_bit_samples_;
-    int sample_count_;
-    double coeff_mark_;
-    double coeff_space_;
-    double s1_mark_;
-    double s2_mark_;
-    double s1_space_;
-    double s2_space_;
+    // Band-pass filter
+    biquad_bandpass bpf_;
+
+    // Circular buffer for sliding DFT
+    static constexpr int max_window_size = 64;
+    double sdft_window_[max_window_size] = {};
+    int sdft_window_pos_ = 0;
+    int sdft_samples_fed_ = 0;
+
+    // Sliding DFT complex state
+    double re_mark_ = 0;
+    double im_mark_ = 0;
+    double re_space_ = 0;
+    double im_space_ = 0;
+
+    // Twiddle factors
+    double tw_re_mark_ = 0;
+    double tw_im_mark_ = 0;
+    double tw_re_space_ = 0;
+    double tw_im_space_ = 0;
+
+    // W^N correction
+    double wn_re_mark_ = 0;
+    double wn_im_mark_ = 0;
+    double wn_re_space_ = 0;
+    double wn_im_space_ = 0;
+
+    // PLL bit timing recovery
+    pll_gardner pll_;
 };
 
 LIBMODEM_NAMESPACE_END
