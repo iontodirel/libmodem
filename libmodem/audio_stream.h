@@ -1012,10 +1012,21 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wav_file_mode                                                    //
+// read_wav_file                                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+std::vector<double> read_wav_file(const std::string& filename);
+std::vector<double> read_wav_file(const std::string& filename, int& sample_rate);
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wav_file_mode                                                    //
+//                                                                  //
+//                                                                  //
+// *****************************************************************//
 
 enum class wav_file_mode
 {

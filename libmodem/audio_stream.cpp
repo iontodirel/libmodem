@@ -5870,10 +5870,47 @@ wav_audio_input_stream::operator bool()
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// wav_audio_output_stream                                          //
+// read_wav_file                                                    //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
+
+std::vector<double> read_wav_file(const std::string& filename)
+{
+    int sample_rate;
+    return read_wav_file(filename, sample_rate);
+}
+
+std::vector<double> read_wav_file(const std::string& filename, int& sample_rate)
+{
+    wav_audio_input_stream stream(filename);
+
+    sample_rate = stream.sample_rate();
+
+    std::vector<double> samples;
+
+    std::vector<double> buffer(4096);
+
+    while (!stream.eof())
+    {
+        size_t n = stream.read(buffer.data(), buffer.size());
+        if (n == 0)
+        {
+            break;
+        }
+        samples.insert(samples.end(), buffer.begin(), buffer.begin() + n);
+    }
+
+    return samples;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// wav_audio_output_stream                                          //
+//                                                                  //
+//                                                                  //
+// *****************************************************************//
 
 wav_audio_output_stream::wav_audio_output_stream(const std::string& filename, int sample_rate, wav_file_mode mode) : sample_rate_(sample_rate), filename_(filename)
 {
