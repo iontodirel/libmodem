@@ -107,7 +107,8 @@ LIBMODEM_NAMESPACE_BEGIN
 
 struct address
 {
-    std::string text;
+    std::array<char, 6> text = {};
+    size_t text_length = 0;
     int ssid = 0;
     bool mark = false; // H-bit
     bool command_response = false; // C/R-bit
@@ -243,8 +244,10 @@ struct frame
 {
     address from;
     address to;
-    std::vector<address> path;
-    std::vector<uint8_t> data;
+    std::array<address, 8> path = {};
+    size_t path_count = 0;
+    std::array<uint8_t, 256> data = {};
+    size_t data_length = 0;
     std::array<uint8_t, 2> crc = { 0, 0 };
     std::array<uint8_t, 2> control = { 0x03, 0x00 };
     uint8_t pid = 0xF0;
@@ -276,16 +279,19 @@ struct bitstream_state
     bool in_frame = false;        // Currently in frame. Internal use.
     bool complete = false;        // Frame complete. Internal use.
     uint8_t last_nrzi_level = 0;  // The last NRZI level seen. Internal use.
-    size_t frame_start_index = 0; // Index in bitstream where current frame starts. Internal use.
+    size_t frame_start_index = 0; // Index in bitstream buffer where current frame bits start
+    size_t frame_end_index = 0;   // Index in bitstream buffer where current frame bits end (excluding postamble)
 
-    // Accumulated bitstream with NRZI decoded bits and without preamble/postamble
-    // Partial during decoding, and invalidated when frame decode is complete, do not use directly
-    // Use frame instead
-    std::vector<uint8_t> bitstream; // Internal use.
-    
-    // Fully decoded frame
-    struct frame frame;
-    
+    size_t bitstream_size = 0;    // Number of valid bits in external bitstream buffer. Internal use.
+
+    uint8_t hdlc_shift_register = 0; // Rolling 8-bit register for HDLC flag detection. Internal use.
+
+    // Incremental byte assembly state for try_decode_bitstream_bare. Internal use.
+    uint8_t current_byte = 0;
+    int bit_index = 0;
+    int stuff_count = 0;
+    size_t byte_count = 0;
+
     bool enable_diagnostics = false; // Enable diagnostic frame capture
 
     uint8_t frame_nrzi_level = 0;         // Initial NRZI level at the start of the frame, after the preamble. Requires diagnostics.
@@ -322,12 +328,13 @@ struct ax25_bitstream_converter
 
 private:
     LIBMODEM_AX25_NAMESPACE_REFERENCE bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// ax25_scrambled_bitstream_converter                                //
+// ax25_scrambled_bitstream_converter                               //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -551,6 +558,11 @@ OutputIt bit_stuff(InputIt first, InputIt last, OutputIt out);
 template<typename InputIt, typename OutputIt>
 OutputIt bit_unstuff(InputIt first, InputIt last, OutputIt out);
 
+template<typename InputIt, typename OutputIt>
+OutputIt bit_unstuff_to_bytes(InputIt first, InputIt last, OutputIt out);
+
+bool bit_unstuff_to_byte(uint8_t bit, uint8_t& byte, int& bit_index, int& stuff_count);
+
 template<typename It>
 void nrzi_encode(It first, It last, uint8_t initial_level = 0);
 
@@ -580,6 +592,8 @@ bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream);
 
 template<typename InputIt>
 bool ends_with_hdlc_flag(InputIt first, InputIt last);
+
+bool hdlc_shift_register_detect(uint8_t decoded_bit, uint8_t& shift_register);
 
 template<typename InputIt>
 LIBMODEM_INLINE bool ends_with_hdlc_flag(InputIt first, InputIt last)
@@ -877,6 +891,59 @@ LIBMODEM_INLINE OutputIt bit_unstuff(InputIt first, InputIt last, OutputIt out)
     return out;
 }
 
+template<typename InputIt, typename OutputIt>
+LIBMODEM_INLINE OutputIt bit_unstuff_to_bytes(InputIt first, InputIt last, OutputIt out)
+{
+    // Fused bit-unstuffing and bits-to-bytes conversion in a single pass.
+    // Removes stuffed 0-bits after five consecutive 1-bits, and packs
+    // the remaining bits into bytes LSB-first.
+
+    uint8_t byte = 0;
+
+    int stuff_count = 0;
+    int bit_index = 0;
+
+    for (auto it = first; it != last; ++it)
+    {
+        uint8_t bit = *it;
+
+        if (bit == 1)
+        {
+            stuff_count++;
+            byte |= (1 << bit_index);
+            bit_index++;
+        }
+        else // bit == 0
+        {
+            if (stuff_count == 5)
+            {
+                // Stuffed bit, skip it
+                stuff_count = 0;
+                continue;
+            }
+
+            // Real zero bit
+            bit_index++;
+            stuff_count = 0;
+        }
+
+        if (bit_index == 8)
+        {
+            *out++ = byte;
+
+            byte = 0;
+            bit_index = 0;
+        }
+    }
+
+    if (bit_index > 0)
+    {
+        *out++ = byte;
+    }
+
+    return out;
+}
+
 template<typename InputIt>
 LIBMODEM_INLINE void nrzi_encode(InputIt first, InputIt last, uint8_t initial_level)
 {
@@ -1028,6 +1095,12 @@ struct nrz_scrambled_t
 
 inline constexpr nrz_scrambled_t nrz_scrambled;
 
+struct from_nrzi_bits_t
+{
+};
+
+inline constexpr from_nrzi_bits_t from_nrzi_bits;
+
 template <typename InputIt, typename OutputIt>
 std::pair<OutputIt, bool> try_parse_address(InputIt first, InputIt last, OutputIt out, int& ssid, bool& cr_or_h_bit);
 
@@ -1126,7 +1199,25 @@ template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
 
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename UnstuffedOutputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, UnstuffedOutputIt unstuffed_bits_it, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename UnstuffedOutputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, UnstuffedOutputIt unstuffed_bits_it, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<BytesOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<BytesOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc);
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid);
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid);
 
 std::vector<uint8_t> encode_header(const packet& p);
 std::vector<uint8_t> encode_header(const address& from, const address& to, const std::vector<address>& path);
@@ -1199,9 +1290,10 @@ BidirIt encode_bitstream(nrz_scrambled_t, InputIt frame_first, InputIt frame_las
 template<typename InputIt, typename BidirIt>
 BidirIt encode_bitstream(nrz_scrambled_t, InputIt frame_first, InputIt frame_last, uint8_t initial_nrzi_level, int preamble_flags, int postamble_flags, BidirIt out);
 
-bool try_decode_bitstream(uint8_t bit, bitstream_state& state);
-bool try_decode_bitstream(uint8_t bit, packet& packet, bitstream_state& state);
-bool try_decode_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state);
+bool try_decode_bitstream(uint8_t bit, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer);
+bool try_decode_bitstream(uint8_t bit, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer, struct frame& frame);
+bool try_decode_bitstream(uint8_t bit, packet& packet, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer);
+bool try_decode_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer);
 
 template <typename InputIt, typename OutputIt>
 LIBMODEM_INLINE std::pair<OutputIt, bool> try_parse_address(InputIt first_it, InputIt last_it, OutputIt out, int& ssid, bool& cr_or_h_bit)
@@ -1288,17 +1380,20 @@ LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, std::string&
 template <typename InputIt>
 LIBMODEM_INLINE bool try_parse_address(InputIt first, InputIt last, struct address& address)
 {
-    address.text = "";
+    address.text = {};
+    address.text_length = 0;
     address.ssid = 0;
     address.mark = false;
     address.command_response = false;
     address.reserved_bits = { 1, 1 };
 
     bool cr_or_h_bit = false;
+    bool last_address = false;
 
-    bool result = try_parse_address(first, last, address.text, address.ssid, cr_or_h_bit, address.reserved_bits);
+    auto [out_it, result] = try_parse_address(first, last, address.text.data(), address.ssid, cr_or_h_bit, last_address, address.reserved_bits);
     if (result)
     {
+        address.text_length = static_cast<size_t>(out_it - address.text.data());
         address.command_response = cr_or_h_bit;
         address.mark = cr_or_h_bit;
     }
@@ -1319,6 +1414,422 @@ LIBMODEM_INLINE OutputIt parse_addresses(InputIt first, InputIt last, OutputIt o
     }
 
     return out;
+}
+
+template<typename BitstreamIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_bitstream(uint8_t bit, bitstream_state& state, BitstreamIt bitstream_it_first, BitstreamIt bitstream_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_bitstream(bit, state, bitstream_it_first, bitstream_it_last, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename BitstreamIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_bitstream(uint8_t bit, bitstream_state& state, BitstreamIt bitstream_it_first, BitstreamIt bitstream_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    std::array<uint8_t, 1000> frame_bytes = {};
+    auto [frame_bytes_end, path_out, data_out, result] = try_decode_bitstream(bit, state, bitstream_it_first, bitstream_it_last, frame_bytes.begin(), from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+    return { path_out, data_out, result };
+}
+
+template<typename BitstreamIt, typename FrameOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<FrameOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_bitstream(uint8_t bit, bitstream_state& state, BitstreamIt bitstream_it_first, BitstreamIt bitstream_it_last, FrameOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_bitstream(bit, state, bitstream_it_first, bitstream_it_last, frame_bytes_it, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename BitstreamIt, typename FrameOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<FrameOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_bitstream(uint8_t bit, bitstream_state& state, BitstreamIt bitstream_it_first, BitstreamIt bitstream_it_last, FrameOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    auto [frame_bytes_end, result] = try_decode_bitstream(bit, state, bitstream_it_first, bitstream_it_last, frame_bytes_it);
+
+    if (result)
+    {
+        auto [path_out, data_out, decode_result] = try_decode_frame(frame_bytes_it, frame_bytes_end, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+        return { frame_bytes_end, path_out, data_out, decode_result };
+    }
+
+    return { frame_bytes_it, path, data, false };
+}
+
+template<typename BitstreamIt, typename FrameOutputIt>
+LIBMODEM_INLINE std::pair<FrameOutputIt, bool> try_decode_bitstream(uint8_t bit, bitstream_state& state, BitstreamIt bitstream_it_first, BitstreamIt bitstream_it_last, FrameOutputIt frame_bytes_it)
+{
+    // Process one bit at a time through the AX.25 bitstream decoding pipeline:
+    //
+    // 1. NRZI decode the incoming raw bit
+    // 2. Add decoded bit to external bitstream buffer
+    // 3. Check for HDLC flag patterns (0x7E = 01111110)
+    // 4. State machine:
+    //    - searching: Looking for first preamble flag
+    //    - in_preamble: Found flag(s), waiting for frame data or more flags
+    //    - in_frame: Collecting frame data until postamble flag
+    // 5. When postamble found, decode the accumulated frame
+    //
+    // Returns true when a complete frame has been decoded
+
+    // After a successful decode, we preserve the state (in_preamble with the shared flag)
+    // Only reset the complete flag, not the entire state - this allows shared flags to work
+    // where the postamble of one packet serves as the preamble of the next
+    if (state.complete)
+    {
+        // Deferred buffer shift
+        // The raw bitstream was preserved for the caller to read
+        // Now shift the postamble flag to the start for the next frame
+        std::copy(bitstream_it_first + state.frame_end_index, bitstream_it_first + state.bitstream_size, bitstream_it_first);
+        state.bitstream_size = state.bitstream_size - state.frame_end_index;
+        state.frame_start_index = state.bitstream_size;
+        state.complete = false;
+    }
+
+    // NRZI decode: no transition = 1, transition = 0
+    uint8_t decoded_bit = nrzi_decode(bit, state.last_nrzi_level);
+
+    state.last_nrzi_level = bit;
+
+    size_t capacity = static_cast<size_t>(std::distance(bitstream_it_first, bitstream_it_last));
+
+    // Add decoded bit to buffer
+    if (state.bitstream_size < capacity)
+    {
+        *(bitstream_it_first + state.bitstream_size) = decoded_bit;
+        state.bitstream_size++;
+    }
+    else
+    {
+        // Buffer full, reset to search mode
+        state.searching = true;
+        state.in_frame = false;
+        state.in_preamble = false;
+        state.bitstream_size = 0;
+        state.frame_start_index = 0;
+        state.global_preamble_start_pending = 0;
+        state.frame_nrzi_level_pending = 0;
+        state.preamble_count_pending = 0;
+        state.postamble_count_pending = 0;
+        return { frame_bytes_it, false };
+    }
+
+    state.global_bit_count++;
+
+    // Check for HDLC flag pattern in the last 8 bits
+    bool found_hdlc_flag = ends_with_hdlc_flag(bitstream_it_first, bitstream_it_first + state.bitstream_size);
+
+    if (state.searching)
+    {
+        // Looking for the first HDLC flag
+        if (found_hdlc_flag)
+        {
+            state.searching = false;
+            state.in_preamble = true;
+            state.frame_start_index = state.bitstream_size; // Frame starts after this flag
+            state.preamble_count_pending = 1;
+            state.postamble_count_pending = 0;
+
+            if (state.enable_diagnostics)
+            {
+                // Track where preamble started (first bit of this flag)
+                state.global_preamble_start_pending = state.global_bit_count - 7;
+
+                // Compute NRZI level before the preamble by working backwards through the 8 flag bits
+                uint8_t level = state.last_nrzi_level;
+                for (size_t i = 0; i < 8 && i < state.bitstream_size; i++)
+                {
+                    if (*(bitstream_it_first + state.bitstream_size - 1 - i) == 0)
+                    {
+                        level = level ? 0 : 1;
+                    }
+                }
+                state.frame_nrzi_level_pending = level;
+            }
+        }
+        else if (state.bitstream_size > 16)
+        {
+            // Optimization: prevent buffer from growing indefinitely while searching
+            // Keep only the last 8 bits needed for flag detection
+            std::copy(bitstream_it_first + state.bitstream_size - 8, bitstream_it_first + state.bitstream_size, bitstream_it_first);
+            state.bitstream_size = 8;
+        }
+    }
+    else if (state.in_preamble)
+    {
+        // We've seen at least one flag. Check if this is another consecutive flag
+        // or if frame data has started.
+        if (found_hdlc_flag)
+        {
+            // Another consecutive flag, update frame start position
+            state.frame_start_index = state.bitstream_size;
+            state.preamble_count_pending++;
+        }
+        else
+        {
+            // Check if we have at least 8 bits since the last flag
+            // to confirm we're in frame data (not still at a flag boundary)
+            if (state.bitstream_size >= state.frame_start_index + 8)
+            {
+                state.in_preamble = false;
+                state.in_frame = true;
+            }
+        }
+    }
+    else if (state.in_frame)
+    {
+        // Collecting frame data. Check for postamble flag.
+        if (found_hdlc_flag)
+        {
+            state.postamble_count_pending = 1;
+
+            // Found postamble! Extract frame bits (excluding the 8-bit postamble flag)
+            size_t frame_end = state.bitstream_size - 8;
+
+            if (frame_end > state.frame_start_index)
+            {
+                auto frame_begin_it = bitstream_it_first + state.frame_start_index;
+                auto frame_end_it = bitstream_it_first + frame_end;
+
+                size_t frame_bits_size = frame_end - state.frame_start_index;
+
+                // Convert frame bits to bytes in caller-provided buffer
+                auto frame_bytes_end = bit_unstuff_to_bytes(frame_begin_it, frame_end_it, frame_bytes_it);
+
+                // Set the global bit positions for the successfully found frame
+                state.global_preamble_start = state.global_preamble_start_pending;
+                state.global_postamble_end = state.global_bit_count;
+                state.frame_nrzi_level = state.frame_nrzi_level_pending;
+
+                // Save frame boundaries for caller access
+                // The raw bitstream bits at [frame_start_index, frame_end_index) remain valid until the next call
+                // The buffer shift is deferred to the next call when state.complete is cleared
+                state.frame_end_index = frame_end;
+                state.in_preamble = true; // Ready for next frame
+                state.in_frame = false;
+                // If we found a valid frame, set complete flag regardless of whether the packet was decoded successfully
+                state.complete = true;
+                state.preamble_count = state.preamble_count_pending;
+                state.postamble_count = state.postamble_count_pending;
+                state.preamble_count_pending = 1;
+                state.postamble_count_pending = 0;
+
+                state.frame_size_bits = frame_bits_size;
+
+                if (state.enable_diagnostics)
+                {
+                    // Set up tracking for potential next frame using the shared flag
+                    state.global_preamble_start_pending = state.global_bit_count - 7;
+
+                    // Compute NRZI level before this shared flag
+                    uint8_t level = state.last_nrzi_level;
+                    for (size_t i = 0; i < 8; i++)
+                    {
+                        if (*(bitstream_it_first + state.bitstream_size - 1 - i) == 0)
+                        {
+                            level = level ? 0 : 1;
+                        }
+                    }
+                    state.frame_nrzi_level_pending = level;
+                }
+
+                return { frame_bytes_end, true };
+            }
+            else
+            {
+                // Empty frame - just consecutive flags, stay in preamble mode
+                state.frame_start_index = state.bitstream_size;
+                state.in_frame = false;
+                state.in_preamble = true;
+            }
+        }
+
+        // Continue collecting frame bits
+        //
+        // Safety check: prevent runaway buffer growth (max reasonable AX.25 frame)
+        // AX.25 max frame is ~330 bytes = 2640 bits, with bit stuffing could be ~3200 bits
+        // Add preamble flags overhead, let's say 4000 bits max
+
+        if (state.bitstream_size > 8000)
+        {
+            // Something went wrong (noise, lost sync), reset to search mode
+            state.searching = true;
+            state.in_frame = false;
+            state.bitstream_size = 0;
+            state.frame_start_index = 0;
+            state.global_preamble_start_pending = 0;
+            state.frame_nrzi_level_pending = 0;
+            state.preamble_count_pending = 0;
+            state.postamble_count_pending = 0;
+        }
+    }
+
+    return { frame_bytes_it, false }; // No complete frame yet
+}
+
+template<typename FrameOutputIt>
+LIBMODEM_INLINE std::pair<FrameOutputIt, bool> try_decode_bitstream_bare(uint8_t bit, bitstream_state& state, FrameOutputIt frame_bytes_it_first, FrameOutputIt frame_bytes_it_last)
+{
+    // Bufferless bitstream decoder. Assembles frame bytes incrementally as bits arrive,
+    // fusing NRZI decode, bit-unstuffing, and byte packing in a single per-bit pass.
+    // No raw bitstream buffer needed unlike try_decode_bitstream, only a small frame-bytes buffer (~400 bytes).
+    // Does not support diagnostics.
+    //
+    // Returns the iterator past the last written byte and true when a complete frame is available
+    // at [frame_bytes_it_first, returned_iterator)
+
+    // After a successful decode, we preserve the state (in_preamble with the shared flag)
+    // Only reset the complete flag, not the entire state - this allows shared flags to work
+    // where the postamble of one packet serves as the preamble of the next
+    if (state.complete)
+    {
+        state.complete = false;
+    }
+
+    // NRZI decode: no transition = 1, transition = 0
+    uint8_t decoded_bit = nrzi_decode(bit, state.last_nrzi_level);
+
+    state.last_nrzi_level = bit;
+
+    state.global_bit_count++;
+
+    // Check for HDLC flag pattern via rolling shift register
+    bool found_hdlc_flag = hdlc_shift_register_detect(decoded_bit, state.hdlc_shift_register) && (state.global_bit_count >= 8);
+
+    if (state.searching)
+    {
+        // Looking for the first HDLC flag
+        if (found_hdlc_flag)
+        {
+            state.searching = false;
+            state.in_preamble = true;
+            state.byte_count = 0;
+            state.current_byte = 0;
+            state.bit_index = 0;
+            state.stuff_count = 0;
+            state.preamble_count_pending = 1;
+            state.postamble_count_pending = 0;
+        }
+    }
+    else if (state.in_preamble)
+    {
+        // We've seen at least one flag. Check if this is another consecutive flag
+        // or if frame data has started.
+        if (found_hdlc_flag)
+        {
+            // Another consecutive flag - reset byte assembly for frame start
+            state.byte_count = 0;
+            state.current_byte = 0;
+            state.bit_index = 0;
+            state.stuff_count = 0;
+            state.preamble_count_pending++;
+        }
+        else
+        {
+            if (bit_unstuff_to_byte(decoded_bit, state.current_byte, state.bit_index, state.stuff_count))
+            {
+                size_t capacity = static_cast<size_t>(std::distance(frame_bytes_it_first, frame_bytes_it_last));
+                if (state.byte_count < capacity)
+                {
+                    *(frame_bytes_it_first + state.byte_count) = state.current_byte;
+                    state.byte_count++;
+                }
+                state.current_byte = 0;
+            }
+
+            // Check if we have at least 1 byte since the last flag
+            // to confirm we're in frame data (not still at a flag boundary)
+            if (state.byte_count >= 1)
+            {
+                state.in_preamble = false;
+                state.in_frame = true;
+            }
+        }
+    }
+    else if (state.in_frame)
+    {
+        // Collecting frame data. Check for postamble flag.
+        if (found_hdlc_flag)
+        {
+            state.postamble_count_pending = 1;
+
+            // Found postamble! The assembled bytes up to byte_count are the complete frame.
+            // The last partial byte (if any) is part of the flag, discard it.
+            if (state.byte_count > 0)
+            {
+                size_t frame_byte_count = state.byte_count;
+
+                // Prepare for next frame - the postamble can be the preamble of the next
+                state.in_preamble = true;
+                state.in_frame = false;
+                // If we found a valid frame, set complete flag regardless whether the packet was decoded successfully
+                state.complete = true;
+                state.preamble_count = state.preamble_count_pending;
+                state.postamble_count = state.postamble_count_pending;
+                state.preamble_count_pending = 1;
+                state.postamble_count_pending = 0;
+                state.byte_count = 0;
+                state.current_byte = 0;
+                state.bit_index = 0;
+                state.stuff_count = 0;
+
+                return { frame_bytes_it_first + frame_byte_count, true };
+            }
+            else
+            {
+                // Empty frame - just consecutive flags, stay in preamble mode
+                state.in_frame = false;
+                state.in_preamble = true;
+                state.byte_count = 0;
+                state.current_byte = 0;
+                state.bit_index = 0;
+                state.stuff_count = 0;
+            }
+        }
+        else
+        {
+            if (bit_unstuff_to_byte(decoded_bit, state.current_byte, state.bit_index, state.stuff_count))
+            {
+                size_t capacity = static_cast<size_t>(std::distance(frame_bytes_it_first, frame_bytes_it_last));
+                if (state.byte_count < capacity)
+                {
+                    *(frame_bytes_it_first + state.byte_count) = state.current_byte;
+                    state.byte_count++;
+                }
+                else
+                {
+                    // Something went wrong (noise, lost sync), reset to search mode
+                    state.searching = true;
+                    state.in_frame = false;
+                    state.byte_count = 0;
+                    state.current_byte = 0;
+                    state.bit_index = 0;
+                    state.stuff_count = 0;
+                    state.hdlc_shift_register = 0;
+                    return { frame_bytes_it_first, false };
+                }
+                state.current_byte = 0;
+            }
+        }
+    }
+
+    return { frame_bytes_it_first, false }; // No complete frame yet
+}
+
+template<typename FrameOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_bitstream_bare(uint8_t bit, bitstream_state& state, FrameOutputIt frame_bytes_it_first, FrameOutputIt frame_bytes_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_bitstream_bare(bit, state, frame_bytes_it_first, frame_bytes_it_last, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename FrameOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_bitstream_bare(uint8_t bit, bitstream_state& state, FrameOutputIt frame_bytes_it_first, FrameOutputIt frame_bytes_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    auto [frame_bytes_end, result] = try_decode_bitstream_bare(bit, state, frame_bytes_it_first, frame_bytes_it_last);
+
+    if (result)
+    {
+        return try_decode_frame(frame_bytes_it_first, frame_bytes_end, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+    }
+
+    return { path, data, false };
 }
 
 template <typename InputIt>
@@ -1646,6 +2157,13 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
 {
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_frame(frame_it_first, frame_it_last, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
     size_t frame_size = std::distance(frame_it_first, frame_it_last);
 
     if (frame_size < 18)
@@ -1662,11 +2180,48 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(In
         return { path, data, false };
     }
 
-    return try_decode_frame_no_fcs(frame_it_first, frame_it_last - 2, from, to, path, data, control, pid);
+    return try_decode_frame_no_fcs(frame_it_first, frame_it_last - 2, from, to, path, data, max_data_length, control, pid);
+}
+
+template<typename InputIt, typename UnstuffedOutputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, UnstuffedOutputIt unstuffed_bits_it, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_frame(from_nrzi_bits, frame_it_first, frame_it_last, unstuffed_bits_it, frame_bytes_it, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename InputIt, typename UnstuffedOutputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, UnstuffedOutputIt unstuffed_bits_it, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    auto unstuffed_last_it = bit_unstuff(frame_it_first, frame_it_last, unstuffed_bits_it);
+    auto bytes_last_it = bits_to_bytes(unstuffed_bits_it, unstuffed_last_it, frame_bytes_it);
+    return try_decode_frame(frame_bytes_it, bytes_last_it, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename InputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<BytesOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_frame(from_nrzi_bits, frame_it_first, frame_it_last, frame_bytes_it, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+}
+
+template<typename InputIt, typename BytesOutputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<BytesOutputIt, PathOutputIt, DataOutputIt, bool> try_decode_frame(from_nrzi_bits_t, InputIt frame_it_first, InputIt frame_it_last, BytesOutputIt frame_bytes_it, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid, std::array<uint8_t, 2>& actual_crc, std::array<uint8_t, 2>& expected_crc)
+{
+    auto bytes_last_it = bit_unstuff_to_bytes(frame_it_first, frame_it_last, frame_bytes_it);
+    auto [path_out, data_out, result] = try_decode_frame(frame_bytes_it, bytes_last_it, from, to, path, data, max_data_length, control, pid, actual_crc, expected_crc);
+    return { bytes_last_it, path_out, data_out, result };
 }
 
 template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
 LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, uint8_t& control, uint8_t& pid)
+{
+    constexpr size_t max_data_length = SIZE_MAX;
+    return try_decode_frame_no_fcs(frame_it_first, frame_it_last, from, to, path, data, max_data_length, control, pid);
+}
+
+template<typename InputIt, typename PathOutputIt, typename DataOutputIt>
+LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no_fcs(InputIt frame_it_first, InputIt frame_it_last, address& from, address& to, PathOutputIt path, DataOutputIt data, size_t max_data_length, uint8_t& control, uint8_t& pid)
 {
     // Decode an AX.25 frame from a byte range
     //
@@ -1771,6 +2326,12 @@ LIBMODEM_INLINE std::tuple<PathOutputIt, DataOutputIt, bool> try_decode_frame_no
     }
 
     size_t info_field_length = frame_size - info_field_start;
+
+    if (info_field_length > max_data_length)
+    {
+        return { path, data, false };
+    }
+
     if (info_field_length > 0)
     {
         data = std::copy(frame_it_first + info_field_start, frame_it_first + info_field_start + info_field_length, data);

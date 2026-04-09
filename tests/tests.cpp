@@ -662,7 +662,7 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("WIDE2-1", s));
-        EXPECT_TRUE(s.text == "WIDE2");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "WIDE2");
         EXPECT_TRUE(s.ssid == 1);
     }
 
@@ -670,7 +670,7 @@ TEST(address, try_parse_address)
         address s;
         EXPECT_TRUE(s.mark == false);
         EXPECT_TRUE(try_parse_address("WIDE2-1*", s));
-        EXPECT_TRUE(s.text == "WIDE2");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "WIDE2");
         EXPECT_TRUE(s.ssid == 1);
         EXPECT_TRUE(s.mark == true);
     }
@@ -678,7 +678,7 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("WIDE2*", s));
-        EXPECT_TRUE(s.text == "WIDE2");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "WIDE2");
         EXPECT_TRUE(s.mark == true);
         EXPECT_TRUE(s.ssid == 0);
     }
@@ -686,7 +686,7 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("WIDE*", s));
-        EXPECT_TRUE(s.text == "WIDE");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "WIDE");
         EXPECT_TRUE(s.mark == true);
         EXPECT_TRUE(s.ssid == 0);
     }
@@ -694,7 +694,7 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("N0CALL-10", s));
-        EXPECT_TRUE(s.text == "N0CALL");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "N0CALL");
         EXPECT_TRUE(s.ssid == 10);
         EXPECT_TRUE(s.mark == false);
     }
@@ -702,7 +702,7 @@ TEST(address, try_parse_address)
     {
         address s;
         EXPECT_TRUE(try_parse_address("N0CALL-10*", s));
-        EXPECT_TRUE(s.text == "N0CALL");
+        EXPECT_TRUE(std::string_view(s.text.data(), s.text_length) == "N0CALL");
         EXPECT_TRUE(s.ssid == 10);
         EXPECT_TRUE(s.mark == true);
     }
@@ -711,7 +711,8 @@ TEST(address, try_parse_address)
 TEST(address, to_string)
 {
     address s;
-    s.text = "WIDE2";
+    s.text = { 'W', 'I', 'D', 'E', '2' };
+    s.text_length = 5;
     s.ssid = 1;
     s.mark = false;
     EXPECT_TRUE(to_string(s) == "WIDE2-1");
@@ -723,25 +724,29 @@ TEST(address, to_string)
     s.ssid = 0;
     EXPECT_TRUE(to_string(s) == "WIDE2*");
 
-    s.text = "WIDE";
+    s.text = { 'W', 'I', 'D', 'E' };
+    s.text_length = 4;
     s.ssid = 0;
     EXPECT_TRUE(to_string(s) == "WIDE*");
 
     s = address{};
-    s.text = "N0CALL";
+    s.text = { 'N', '0', 'C', 'A', 'L', 'L' };
+    s.text_length = 6;
     s.ssid = 10;
     EXPECT_TRUE(to_string(s) == "N0CALL-10");
 
     s = address{};
-    s.text = "N0CALL";
+    s.text = { 'N', '0', 'C', 'A', 'L', 'L' };
+    s.text_length = 6;
     s.ssid = 10;
     s.mark = true;
     EXPECT_TRUE(to_string(s) == "N0CALL-10*");
 
     s = address{};
-    s.text = "N0CALL-10";
+    s.text = { 'A', '-', '1' };
+    s.text_length = 3;
     s.ssid = 10;
-    EXPECT_TRUE(to_string(s) == "N0CALL-10-10"); // to_string preserves the text even if ssid is specified and results in an invalid address
+    EXPECT_TRUE(to_string(s) == "A-1-10"); // to_string preserves the text even if ssid is specified and results in an invalid address
 }
 
 // **************************************************************** //
@@ -769,11 +774,11 @@ TEST(ax25, encode_header)
 LIBMODEM_AX25_USING_NAMESPACE
 
     {
-        address from = { "N0CALL", 10, false };
-        address to = { "APZ001", 0, false };
+        address from = address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 };
+        address to = address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 };
         std::vector<address> path = {
-            { "WIDE1", 1, false },
-            { "WIDE2", 2, false }
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
         };
 
         std::vector<uint8_t> header = encode_header(from, to, path);
@@ -795,8 +800,8 @@ LIBMODEM_AX25_USING_NAMESPACE
     {
         // Source address is set as set becuase the path is empty
 
-        address from = { "N0CALL", 10, false };
-        address to = { "APZ001", 0, false };
+        address from = address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 };
+        address to = address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 };
 
         std::vector<uint8_t> header = encode_header(from, to, {});
 
@@ -869,14 +874,16 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     {
         // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-        struct frame frame {
-            { "N0CALL", 10, false },
-            { "APZ001", 0, false },
+        struct frame frame = {
+            address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+            address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
             {
-                { "WIDE1", 1, false },
-                { "WIDE2", 2, false }
+                address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+                address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
             },
-            { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+            2,
+            { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+            12
         };
 
         std::vector<uint8_t> frame_bytes = encode_frame(frame);
@@ -929,20 +936,21 @@ TEST(ax25, encode_frame_output_iterator)
 LIBMODEM_AX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    struct frame frame
-    {
-        { "N0CALL", 10, false },
-        { "APZ001", 0, false },
-            {
-                { "WIDE1", 1, false },
-                { "WIDE2", 2, false }
-            },
-        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+    struct frame frame = {
+        address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+        address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
+        {
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
+        },
+        2,
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+        12
     };
 
     std::vector<uint8_t> frame_bytes(100);
 
-    auto end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), frame_bytes.begin());
+    auto end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.begin() + frame.path_count, frame.data.begin(), frame.data.begin() + frame.data_length, frame_bytes.begin());
 
     size_t frame_size = std::distance(frame_bytes.begin(), end_it);
 
@@ -973,20 +981,21 @@ TEST(ax25, encode_frame_output_iterator_stack)
 LIBMODEM_AX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    struct frame frame
-    {
-        { "N0CALL", 10, false },
-        { "APZ001", 0, false },
-            {
-                { "WIDE1", 1, false },
-                { "WIDE2", 2, false }
-            },
-        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+    struct frame frame = {
+        address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+        address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
+        {
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
+        },
+        2,
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+        12
     };
 
     uint8_t frame_bytes[100] = { 0 };
 
-    auto end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), std::begin(frame_bytes));
+    auto end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.begin() + frame.path_count, frame.data.begin(), frame.data.begin() + frame.data_length, std::begin(frame_bytes));
 
     size_t frame_size = std::distance(std::begin(frame_bytes), end_it);
 
@@ -1018,9 +1027,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // s-frame
     {
         frame f;
-        f.to = { "KA2DEW", 2 };
+        f.to = address{ { 'K', 'A', '2', 'D', 'E', 'W' }, 6, 2 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x81, 0x00 };
         f.pid = 0x00;
@@ -1042,8 +1051,8 @@ LIBMODEM_AX25_USING_NAMESPACE
     // u-frame
     {
         frame f;
-        f.to = { "CQ" };
-        f.from = { "KK4HEJ", 15 };
+        f.to = address{ { 'C', 'Q' }, 2 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 15 };
         f.from.command_response = true;
         f.control = { 0x03, 0x00 };
         f.pid = 0xF0;
@@ -1065,13 +1074,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     // i-frame
     {
         frame f;
-        f.to = { "KA2DEW", 2 };
+        f.to = address{ { 'K', 'A', '2', 'D', 'E', 'W' }, 6, 2 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 2 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 2 };
         f.from.command_response = false;
         f.control = { 0xB8, 0x00 };
         f.pid = 0xCF;
         f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+        f.data_length = 9;
 
         std::vector<uint8_t> ax25_bytes = encode_frame(f);
 
@@ -1092,9 +1102,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: SABM, client connects to RMS gateway (command, P=1)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x3F, 0x00 };
         f.pid = 0x00;
@@ -1116,9 +1126,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: UA, gateway accepts connection (response, F=1)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x73, 0x00 };
         f.pid = 0x00;
@@ -1140,13 +1150,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: I-frame, client sends B2F login (N(S)=0, N(R)=0, P=0)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x00, 0x00 };
         f.pid = 0xF0;
         f.data = { 0x3B, 0x50, 0x51, 0x3A, 0x20, 0x37, 0x36, 0x73, 0x74, 0x72, 0x41, 0x54, 0x55, 0x0D }; // ";PQ: 76strATU\r"
+        f.data_length = 14;
 
         std::vector<uint8_t> ax25_bytes = encode_frame(f);
 
@@ -1168,9 +1179,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: RR, gateway acknowledges I-frame (response, N(R)=1, F=0)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x21, 0x00 };
         f.pid = 0x00;
@@ -1192,13 +1203,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: I-frame, gateway sends B2F response (N(S)=0, N(R)=1, P=0)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x20, 0x00 };
         f.pid = 0xF0;
         f.data = { 0x3B, 0x50, 0x51, 0x3A, 0x20, 0x39, 0x41, 0x33, 0x32, 0x76, 0x52, 0x31, 0x71, 0x0D }; // ";PQ: 9A32vR1q\r"
+        f.data_length = 14;
 
         std::vector<uint8_t> ax25_bytes = encode_frame(f);
 
@@ -1220,9 +1232,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: RR, client acknowledges (command, N(R)=1, P=0)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x21, 0x00 };
         f.pid = 0x00;
@@ -1244,13 +1256,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: I-frame, client sends message proposal (N(S)=1, N(R)=1, P=0)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x22, 0x00 };
         f.pid = 0xF0;
         f.data = { 0x46, 0x43, 0x20, 0x45, 0x4D, 0x20, 0x41, 0x42, 0x43, 0x44, 0x45, 0x31, 0x32, 0x33, 0x34, 0x35, 0x20, 0x31, 0x32, 0x33, 0x20, 0x34, 0x35, 0x20, 0x30, 0x0D }; // "FC EM ABCDE12345 123 45 0\r"
+        f.data_length = 26;
 
         std::vector<uint8_t> ax25_bytes = encode_frame(f);
 
@@ -1273,9 +1286,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: REJ, gateway requests retransmit (response, N(R)=1, F=0)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x29, 0x00 };
         f.pid = 0x00;
@@ -1297,9 +1310,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: RNR, gateway flow control busy (response, N(R)=1, F=0)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x25, 0x00 };
         f.pid = 0x00;
@@ -1321,9 +1334,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: RR P=1, client polls gateway (command, N(R)=2, P=1)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x51, 0x00 };
         f.pid = 0x00;
@@ -1345,9 +1358,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: RR F=1, gateway responds to poll (response, N(R)=2, F=1)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x51, 0x00 };
         f.pid = 0x00;
@@ -1369,9 +1382,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: DISC, client disconnects (command, P=1)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x53, 0x00 };
         f.pid = 0x00;
@@ -1393,9 +1406,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: UA, gateway confirms disconnect (response, F=1)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x73, 0x00 };
         f.pid = 0x00;
@@ -1417,9 +1430,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: DM, gateway rejects connection (response, F=1)
     {
         frame f;
-        f.to = { "KK4HEJ", 7 };
+        f.to = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.to.command_response = false;
-        f.from = { "W3ADO", 10 };
+        f.from = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.from.command_response = true;
         f.control = { 0x1F, 0x00 };
         f.pid = 0x00;
@@ -1441,9 +1454,9 @@ LIBMODEM_AX25_USING_NAMESPACE
     // winlink: SABME, client connects in extended mode (command, P=1)
     {
         frame f;
-        f.to = { "W3ADO", 10 };
+        f.to = address{ { 'W', '3', 'A', 'D', 'O' }, 5, 10 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x7F, 0x00 };
         f.pid = 0x00;
@@ -1468,15 +1481,16 @@ TEST(ax25, to_packet)
 LIBMODEM_AX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    struct frame frame
-    {
-        { "N0CALL", 10, false },
-        { "APZ001", 0, false },
-            {
-                { "WIDE1", 1, false },
-                { "WIDE2", 2, false }
-            },
-        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 }
+    struct frame frame = {
+        address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+        address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
+        {
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
+        },
+        2,
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+        12
     };
 
     EXPECT_TRUE(to_string(to_packet(frame)) == "N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!");
@@ -1683,7 +1697,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(data, addresses);
         EXPECT_TRUE(addresses.size() == 1);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
     }
@@ -1698,10 +1712,10 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(data, addresses);
         EXPECT_TRUE(addresses.size() == 2);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
-        EXPECT_TRUE(addresses[1].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[1].text.data(), addresses[1].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[1].ssid == 11);
         EXPECT_FALSE(addresses[1].mark);
     }
@@ -1726,7 +1740,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(data, addresses);
         EXPECT_TRUE(addresses.size() == 1);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
     }
@@ -1742,7 +1756,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
         EXPECT_TRUE(addresses.size() == 1);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
     }
@@ -1756,10 +1770,10 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
         EXPECT_TRUE(addresses.size() == 2);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
-        EXPECT_TRUE(addresses[1].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[1].text.data(), addresses[1].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[1].ssid == 11);
         EXPECT_FALSE(addresses[1].mark);
     }
@@ -1781,7 +1795,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<address> addresses;
         parse_addresses(address_bytes.begin(), address_bytes.end(), std::back_inserter(addresses));
         EXPECT_TRUE(addresses.size() == 1);
-        EXPECT_TRUE(addresses[0].text == "N0CALL");
+        EXPECT_TRUE(std::string_view(addresses[0].text.data(), addresses[0].text_length) == "N0CALL");
         EXPECT_TRUE(addresses[0].ssid == 10);
         EXPECT_FALSE(addresses[0].mark);
     }
@@ -1970,7 +1984,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         EXPECT_EQ(f.pid, 0xCF);
         EXPECT_EQ(to_string(f.from), "KK4HEJ-2");
         EXPECT_EQ(to_string(f.to), "KA2DEW-2");
-        EXPECT_EQ(f.data, (std::vector<uint8_t>{ 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }));
+        EXPECT_EQ((std::vector<uint8_t>(f.data.begin(), f.data.begin() + f.data_length)), (std::vector<uint8_t>{ 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }));
     }
 }
 
@@ -2228,9 +2242,9 @@ TEST(il2p, encode_frame)
     // s-frame
     {
         LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
-        f.to = { "KA2DEW", 2 };
+        f.to = address{ { 'K', 'A', '2', 'D', 'E', 'W' }, 6, 2 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 7 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 7 };
         f.from.command_response = false;
         f.control = { 0x81, 0x00 };
         f.pid = 0x00;
@@ -2250,8 +2264,8 @@ TEST(il2p, encode_frame)
     // u-frame
     {
         LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
-        f.to = { "CQ" };
-        f.from = { "KK4HEJ", 15 };
+        f.to = address{ { 'C', 'Q' }, 2 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 15 };
         f.from.command_response = true;
         f.control = { 0x03, 0x00 };
         f.pid = 0xF0;
@@ -2271,13 +2285,14 @@ TEST(il2p, encode_frame)
     // i-frame
     {
         LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
-        f.to = { "KA2DEW", 2 };
+        f.to = address{ { 'K', 'A', '2', 'D', 'E', 'W' }, 6, 2 };
         f.to.command_response = true;
-        f.from = { "KK4HEJ", 2 };
+        f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 2 };
         f.from.command_response = false;
         f.control = { 0xB8, 0x00 };
         f.pid = 0xCF;
         f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+        f.data_length = 9;
 
         std::vector<uint8_t> il2p_bytes = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_frame(f);
 
@@ -2304,13 +2319,14 @@ LIBMODEM_IL2P_USING_NAMESPACE
     // which has exact byte-level verification
 
     LIBMODEM_AX25_NAMESPACE_REFERENCE frame f;
-    f.to = { "KA2DEW", 2 };
+    f.to = address{ { 'K', 'A', '2', 'D', 'E', 'W' }, 6, 2 };
     f.to.command_response = true;
-    f.from = { "KK4HEJ", 2 };
+    f.from = address{ { 'K', 'K', '4', 'H', 'E', 'J' }, 6, 2 };
     f.from.command_response = false;
     f.control = { 0xB8, 0x00 };
     f.pid = 0xCF;
     f.data = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38 }; // "012345678"
+    f.data_length = 9;
 
     std::vector<uint8_t> bitstream = LIBMODEM_IL2P_NAMESPACE_REFERENCE encode_bitstream(f, 1, 1);
 
@@ -3114,21 +3130,22 @@ TEST(bitstream, encode_basic_bitstream_output_iterator_stack)
 LIBMODEM_AX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    struct frame frame
-    {
-        { "N0CALL", 10, false }, // N0CALL-10
-        { "APZ001", 0, false }, // APZ001
-            {
-                { "WIDE1", 1, false }, // WIDE1-1
-                { "WIDE2", 2, false } // WIDE2-2
-            },
-        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 } // Hello, APRS!
+    struct frame frame = {
+        address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+        address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
+        {
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
+        },
+        2,
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+        12
     };
 
     uint8_t frame_bytes[100] = { 0 }; // 100 bytes stack buffer
 
     // AX.25 frame
-    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), std::begin(frame_bytes));
+    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.begin() + frame.path_count, frame.data.begin(), frame.data.begin() + frame.data_length, std::begin(frame_bytes));
 
     uint8_t bitstream[500] = { 0 }; // 500 bytes stack buffer
 
@@ -3204,21 +3221,22 @@ TEST(bitstream, encode_basic_bitstream_output_iterator_linked_list)
 LIBMODEM_AX25_USING_NAMESPACE
 
     // N0CALL-10>APZ001,WIDE1-1,WIDE2-2:Hello, APRS!
-    struct frame frame
-    {
-        { "N0CALL", 10, false }, // N0CALL-10
-        { "APZ001", 0, false }, // APZ001
-            {
-                { "WIDE1", 1, false }, // WIDE1-1
-                { "WIDE2", 2, false } // WIDE2-2
-            },
-        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 } // Hello, APRS!
+    struct frame frame = {
+        address{ { 'N', '0', 'C', 'A', 'L', 'L' }, 6, 10 },
+        address{ { 'A', 'P', 'Z', '0', '0', '1' }, 6, 0 },
+        {
+            address{ { 'W', 'I', 'D', 'E', '1' }, 5, 1 },
+            address{ { 'W', 'I', 'D', 'E', '2' }, 5, 2 }
+        },
+        2,
+        { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x41, 0x50, 0x52, 0x53, 0x21 },
+        12
     };
 
     std::list<uint8_t> frame_bytes(100, 0);
 
     // AX.25 frame
-    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.end(), frame.data.begin(), frame.data.end(), frame_bytes.begin());
+    auto frame_bytes_end_it = encode_frame(frame.from, frame.to, frame.path.begin(), frame.path.begin() + frame.path_count, frame.data.begin(), frame.data.begin() + frame.data_length, frame_bytes.begin());
 
     std::list<uint8_t> bitstream(500, 0);
 
@@ -3818,10 +3836,11 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     packet p;
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state, bitstream_buffer))
         {
             break;
         }
@@ -3896,7 +3915,8 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     size_t read = 0;
     bitstream_state state;
-    EXPECT_TRUE(try_decode_bitstream(bitstream, 0, p, read, state));
+    std::vector<uint8_t> bitstream_buffer;
+    EXPECT_TRUE(try_decode_bitstream(bitstream, 0, p, read, state, bitstream_buffer));
 
     // The entire bitstream should be consumed
     EXPECT_TRUE(read == bitstream.size());
@@ -3926,6 +3946,7 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     std::vector<uint8_t> buffer;
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     size_t buffer_offset = 0;
 
@@ -3940,7 +3961,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         {
             size_t read = 0;
             packet packet;
-            if (try_decode_bitstream(buffer, offset, packet, read, state))
+            if (try_decode_bitstream(buffer, offset, packet, read, state, bitstream_buffer))
             {
                 packets.push_back(packet);
             }
@@ -3968,7 +3989,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     // three phases to catch different classes of bugs:
     //
     //   1. Basic decode with packet output
-    //     - Feeds raw bits through try_decode_bitstream(bit, packet, state)
+    //     - Feeds raw bits through try_decode_bitstream(bit, packet, state, bitstream_buffer)
     //     - Verifies the decoder finds exactly 1005 packets
     //     - Confirms state.complete is set on each successful decode
     //     - Tests the high-level API that returns packets directly
@@ -4010,11 +4031,12 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<packet> packets;
 
         bitstream_state state;
+        std::vector<uint8_t> bitstream_buffer;
 
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, packet, state))
+            if (try_decode_bitstream(bit, packet, state, bitstream_buffer))
             {
                 EXPECT_TRUE(state.complete == true);
 
@@ -4031,13 +4053,15 @@ LIBMODEM_AX25_USING_NAMESPACE
         std::vector<packet> packets;
 
         bitstream_state state;
+        std::vector<uint8_t> bitstream_buffer;
+        frame decoded_frame;
 
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, state))
+            if (try_decode_bitstream(bit, state, bitstream_buffer, decoded_frame))
             {
-                packet = to_packet(state.frame);
+                packet = to_packet(decoded_frame);
                 packets.push_back(packet);
             }
         }
@@ -4066,13 +4090,15 @@ LIBMODEM_AX25_USING_NAMESPACE
         }
 
         bitstream_state state;
+        std::vector<uint8_t> bitstream_buffer;
+        frame decoded_frame;
 
         for (uint8_t bit : bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, state))
+            if (try_decode_bitstream(bit, state, bitstream_buffer, decoded_frame))
             {
-                packet = to_packet(state.frame);
+                packet = to_packet(decoded_frame);
                 std::string packet_str = to_string(packet); // packet to string
                 packet_str = replace_crlf(packet_str); // replace newlines for printing
                 actual_packets.push_back(packet_str);
@@ -4129,6 +4155,88 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 }
 
+TEST(bitstream, try_decode_bitstream_bare_1005)
+{
+LIBMODEM_AX25_USING_NAMESPACE
+
+    // Same as try_decode_basic_bitstream_1005 but uses try_decode_bitstream_bare
+    // which assembles frame bytes incrementally without a raw bitstream buffer.
+
+    std::ifstream file("bitstream_1.txt");
+    if (!file.is_open())
+    {
+        FAIL() << "Failed to open bitstream_1.txt";
+    }
+
+    std::vector<uint8_t> bitstream;
+    char c;
+    while (file.get(c))
+    {
+        if (c == '0') bitstream.push_back(0);
+        else if (c == '1') bitstream.push_back(1);
+    }
+
+    {
+        std::vector<std::string> actual_packets;
+
+        std::ifstream file("packets_1d.txt");
+        if (!file.is_open())
+        {
+            FAIL() << "Failed to open packets_1d.txt";
+        }
+
+        std::vector<std::string> expected_packets;
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            expected_packets.push_back(line);
+        }
+
+        bitstream_state state;
+        std::array<uint8_t, 400> frame_bytes;
+
+        // All the components of a decoded frame
+        address from;
+        address to;
+        std::array<address, 8> path;
+        std::array<uint8_t, 256> data;
+        uint8_t control = 0;
+        uint8_t pid = 0;
+        std::array<uint8_t, 2> actual_crc = {};
+        std::array<uint8_t, 2> expected_crc = {};
+
+        for (uint8_t bit : bitstream)
+        {
+            auto [path_out, data_out, result] = try_decode_bitstream_bare(bit, state, frame_bytes.begin(), frame_bytes.end(), from, to, path.begin(), data.begin(), control, pid, actual_crc, expected_crc);
+            if (result)
+            {
+                EXPECT_TRUE(state.complete == true);
+
+                frame decoded_frame;
+                decoded_frame.from = from;
+                decoded_frame.to = to;
+                decoded_frame.path_count = static_cast<size_t>(std::distance(path.begin(), path_out));
+                std::copy_n(path.begin(), decoded_frame.path_count, decoded_frame.path.begin());
+                decoded_frame.data_length = static_cast<size_t>(std::distance(data.begin(), data_out));
+                std::copy_n(data.begin(), decoded_frame.data_length, decoded_frame.data.begin());
+                decoded_frame.control[0] = control;
+                decoded_frame.pid = pid;
+                decoded_frame.crc = actual_crc;
+
+                std::string packet_string = to_string(to_packet(decoded_frame));
+                packet_string = replace_crlf(packet_string);
+                actual_packets.push_back(packet_string);
+            }
+        }
+
+        EXPECT_TRUE(actual_packets.size() == expected_packets.size());
+        EXPECT_TRUE(actual_packets == expected_packets);
+    }
+}
+
 TEST(bitstream, encode_basic_bitstream_1005)
 {
 LIBMODEM_AX25_USING_NAMESPACE
@@ -4171,6 +4279,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     state.enable_diagnostics = true;
 
@@ -4178,12 +4287,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<uint8_t> packet_bitstream_nrzi_levels;
     std::vector<std::pair<size_t, size_t>> frame_preamble_postambles;
     std::vector<bitstream_state> states;
+    std::vector<frame> decoded_frames;
 
     for (uint8_t bit : bitstream)
     {
-        packet packet;
-        if (try_decode_bitstream(bit, packet, state))
+        frame decoded_frame;
+        if (try_decode_bitstream(bit, state, bitstream_buffer, decoded_frame))
         {
+            packet packet = to_packet(decoded_frame);
             std::vector<uint8_t> packet_bitstream;
 
             // state.start and state.end are 1-based, convert to 0-based for array indexing
@@ -4199,13 +4310,14 @@ LIBMODEM_AX25_USING_NAMESPACE
 
             frame_preamble_postambles.push_back(std::make_pair(state.preamble_count, state.postamble_count));
 
+            decoded_frames.push_back(decoded_frame);
             states.push_back(state);
         }
     }
 
-    for (size_t i = 0; i < states.size(); i++)
+    for (size_t i = 0; i < decoded_frames.size(); i++)
     {
-        struct frame frame = states[i].frame;
+        struct frame frame = decoded_frames[i];
 
         std::vector<uint8_t> encoded_bitstream = encode_bitstream(
             frame,
@@ -4238,12 +4350,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<std::string> packets;
 
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
+    frame decoded_frame;
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_bitstream(bit, state))
+        if (try_decode_bitstream(bit, state, bitstream_buffer, decoded_frame))
         {
-            packet packet = to_packet(state.frame);
+            packet packet = to_packet(decoded_frame);
             std::string packet_str = to_string(packet); // packet to string
             packet_str = replace_crlf(packet_str); // replace newlines for printing
             packets.push_back(packet_str);
@@ -4283,18 +4397,20 @@ LIBMODEM_AX25_USING_NAMESPACE
     }
 
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
+    frame decoded_frame;
 
     for (uint8_t bit : bitstream)
     {
-        if (try_decode_bitstream(bit, state)) // AX.25 only
+        if (try_decode_bitstream(bit, state, bitstream_buffer, decoded_frame)) // AX.25 only
         {
-            const frame& f = state.frame; // decoded frame
+            const frame& f = decoded_frame; // decoded frame
 
             fmt::println("from: {}\nto: {}\npath: {}\n{}\ncrc: {}",
                 to_string(f.from), // from address to string
                 to_string(f.to),   // from address to string
-                to_string(f.path), // from vector<address> to string
-                to_hex_string(f.data),  // from vector<uint8_t> to hex string
+                to_string(std::vector<address>(f.path.begin(), f.path.begin() + f.path_count)), // from array<address> to string
+                to_hex_string(std::vector<uint8_t>(f.data.begin(), f.data.begin() + f.data_length)),  // from array<uint8_t> to hex string
                 std::bit_cast<uint16_t>(f.crc));
 
             // Convert to packet
@@ -4338,6 +4454,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<packet> packets;
 
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     state.enable_diagnostics = true;
 
@@ -4347,7 +4464,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (uint8_t bit : bitstream)
     {
         packet packet;
-        if (try_decode_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state, bitstream_buffer))
         {
             std::vector<uint8_t> packet_bitstream;
 
@@ -4374,11 +4491,12 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
         bitstream_state packet_state;
+        std::vector<uint8_t> packet_bitstream_buffer;
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state, packet_bitstream_buffer))
             {
                 restored_packets.push_back(packet);
             }
@@ -4424,13 +4542,14 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<uint8_t> packet_bitstream_nrzi_levels;
 
     std::vector<uint8_t> buffer;
+    std::vector<uint8_t> bitstream_buffer;
 
     for (uint8_t bit : bitstream)
     {
         buffer.push_back(bit);
 
         packet packet;
-        if (try_decode_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state, bitstream_buffer))
         {
             packets.push_back(packet);
 
@@ -4457,11 +4576,12 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
         bitstream_state packet_state;
+        std::vector<uint8_t> packet_bitstream_buffer;
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state, packet_bitstream_buffer))
             {
                 restored_packets.push_back(packet);
             }
@@ -4516,6 +4636,7 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<uint8_t> packet_bitstream_nrzi_levels;
 
     std::vector<uint8_t> buffer;
+    std::vector<uint8_t> bitstream_buffer;
 
     for (size_t i = 0; uint8_t bit : bitstream)
     {
@@ -4527,7 +4648,7 @@ LIBMODEM_AX25_USING_NAMESPACE
         }
 
         packet packet;
-        if (try_decode_bitstream(bit, packet, state))
+        if (try_decode_bitstream(bit, packet, state, bitstream_buffer))
         {
             packets.push_back(packet);
 
@@ -4556,11 +4677,12 @@ LIBMODEM_AX25_USING_NAMESPACE
     for (int i = 0; const auto& packet_bitstream : packet_bitstreams)
     {
         bitstream_state packet_state;
+        std::vector<uint8_t> packet_bitstream_buffer;
         packet_state.last_nrzi_level = packet_bitstream_nrzi_levels[i];
         for (uint8_t bit : packet_bitstream)
         {
             packet packet;
-            if (try_decode_bitstream(bit, packet, packet_state))
+            if (try_decode_bitstream(bit, packet, packet_state, packet_bitstream_buffer))
             {
                 restored_packets.push_back(packet);
             }
@@ -4662,11 +4784,12 @@ LIBMODEM_AX25_USING_NAMESPACE
     std::vector<packet> packets;
 
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     for (uint8_t bit : combined_bitstream)
     {
         packet p;
-        if (try_decode_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state, bitstream_buffer))
         {
             packets.push_back(p);
         }
@@ -4718,11 +4841,12 @@ LIBMODEM_AX25_USING_NAMESPACE
 
     std::vector<packet> packets;
     bitstream_state state;
+    std::vector<uint8_t> bitstream_buffer;
 
     for (uint8_t bit : bitstream)
     {
         packet p;
-        if (try_decode_bitstream(bit, p, state))
+        if (try_decode_bitstream(bit, p, state, bitstream_buffer))
         {
             packets.push_back(p);
         }

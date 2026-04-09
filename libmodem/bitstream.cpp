@@ -67,7 +67,11 @@ bool try_parse_address(std::string_view address_string, struct address& address)
         return false;
     }
 
-    address.text = address_no_ssid;
+    size_t length = std::min(address_no_ssid.size(), size_t(6));
+
+    std::copy_n(address_no_ssid.begin(), length, address.text.data());
+
+    address.text_length = length;
     address.ssid = ssid;
     address.mark = mark;
 
@@ -187,12 +191,12 @@ std::string to_string(const struct address& address)
 
 std::string to_string(const struct address& address, bool ignore_mark)
 {
-    if (address.text.empty())
+    if (address.text_length == 0)
     {
         return "";
     }
 
-    std::string result = address.text;
+    std::string result(address.text.data(), address.text_length);
 
     if (address.ssid > 0)
     {
@@ -487,12 +491,12 @@ packet to_packet(const struct frame& frame)
     p.to = to_string(frame.to, true); // ignore mark in to address
 
     p.path.clear();
-    for (const auto& path_address : frame.path)
+    for (size_t i = 0; i < frame.path_count; i++)
     {
-        p.path.push_back(to_string(path_address));
+        p.path.push_back(to_string(frame.path[i]));
     }
 
-    p.data = std::string(frame.data.begin(), frame.data.end());
+    p.data = std::string(frame.data.begin(), frame.data.begin() + frame.data_length);
 
     return p;
 }
@@ -507,14 +511,24 @@ frame to_frame(const packet& p)
     LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.from, f.from);
     LIBMODEM_NAMESPACE_REFERENCE try_parse_address(p.to, f.to);
 
+    f.path_count = 0;
     for (const auto& path_address_string : p.path)
     {
+        if (f.path_count >= f.path.size())
+        {
+            break;
+        }
+
         address path_address;
         LIBMODEM_NAMESPACE_REFERENCE try_parse_address(path_address_string, path_address);
-        f.path.push_back(path_address);
+
+        f.path[f.path_count++] = path_address;
     }
 
-    f.data = std::vector<uint8_t>(p.data.begin(), p.data.end());
+    // Clamp data to the fixed-size frame buffer capacity
+    f.data_length = std::min(p.data.size(), f.data.size());
+
+    std::copy_n(p.data.begin(), f.data_length, f.data.begin());
 
     f.control = { ui_frame, 0x0 };
     f.pid = pid_no_layer3;
@@ -542,8 +556,13 @@ void bitstream_state::reset()
     complete = false;
     last_nrzi_level = 0;
     frame_start_index = 0;
-    bitstream.clear();
-    frame = {};
+    frame_end_index = 0;
+    bitstream_size = 0;
+    hdlc_shift_register = 0;
+    current_byte = 0;
+    bit_index = 0;
+    stuff_count = 0;
+    byte_count = 0;
     global_preamble_start = 0;
     global_postamble_end = 0;
     frame_nrzi_level = 0;
@@ -585,19 +604,20 @@ bool ax25_bitstream_converter::try_decode(const std::vector<uint8_t>& bitstream,
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
-    return try_decode_bitstream(bitstream, offset, p, read, state);
+    return try_decode_bitstream(bitstream, offset, p, read, state, bitstream_buffer);
 }
 
 bool ax25_bitstream_converter::try_decode(uint8_t bit, packet& p)
 {
 LIBMODEM_AX25_USING_NAMESPACE
 
-    return try_decode_bitstream(bit, p, state);
+    return try_decode_bitstream(bit, p, state, bitstream_buffer);
 }
 
 void ax25_bitstream_converter::reset()
 {
     state.reset();
+    bitstream_buffer.clear();
 }
 
 // **************************************************************** //
@@ -941,6 +961,42 @@ bool ends_with_hdlc_flag(const std::vector<uint8_t>& bitstream)
     return ends_with_hdlc_flag(bitstream.begin(), bitstream.end());
 }
 
+bool hdlc_shift_register_detect(uint8_t decoded_bit, uint8_t& shift_register)
+{
+    // Shift in the new bit and check for HDLC flag pattern (0x7E = 01111110)
+    shift_register = static_cast<uint8_t>((shift_register << 1) | decoded_bit);
+    return shift_register == 0x7E;
+}
+
+bool bit_unstuff_to_byte(uint8_t bit, uint8_t& byte, int& bit_index, int& stuff_count)
+{
+    if (bit == 1)
+    {
+        stuff_count++;
+        byte |= (1 << bit_index);
+        bit_index++;
+    }
+    else
+    {
+        if (stuff_count == 5)
+        {
+            stuff_count = 0;
+            return false;
+        }
+
+        bit_index++;
+        stuff_count = 0;
+    }
+
+    if (bit_index == 8)
+    {
+        bit_index = 0;
+        return true;
+    }
+
+    return false;
+}
+
 uint16_t compute_crc_using_lut_init()
 {
     return 0xFFFF;
@@ -1075,7 +1131,8 @@ std::vector<uint8_t> encode_frame(const packet& p)
 
 std::vector<uint8_t> encode_frame(const struct frame& frame)
 {
-    return encode_frame(frame.from, frame.to, frame.path, frame.data.begin(), frame.data.end(), frame.control[0], frame.pid);
+    std::vector<address> path(frame.path.begin(), frame.path.begin() + frame.path_count);
+    return encode_frame(frame.from, frame.to, path, frame.data.begin(), frame.data.begin() + frame.data_length, frame.control[0], frame.pid);
 }
 
 std::vector<uint8_t> encode_frame(const address& from, const address& to, const std::vector<address>& path, std::string_view data)
@@ -1112,14 +1169,17 @@ bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, packet& p)
 
 bool try_decode_frame(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
 {
-    frame.path.clear();
-    frame.data.clear();
+    frame.path_count = 0;
+    frame.data_length = 0;
 
     uint8_t control = 0;
     uint8_t pid = 0;
-    auto [path_out, data_out, result] = try_decode_frame(frame_bytes.begin(), frame_bytes.end(), frame.from, frame.to, std::back_inserter(frame.path), std::back_inserter(frame.data), control, pid, frame.crc);
+    std::array<uint8_t, 2> expected_crc = {};
+    auto [path_out, data_out, result] = try_decode_frame(frame_bytes.begin(), frame_bytes.end(), frame.from, frame.to, frame.path.begin(), frame.data.begin(), frame.data.size(), control, pid, frame.crc, expected_crc);
     if (result)
     {
+        frame.path_count = static_cast<size_t>(std::distance(frame.path.begin(), path_out));
+        frame.data_length = static_cast<size_t>(std::distance(frame.data.begin(), data_out));
         frame.control[0] = control;
         frame.pid = pid;
     }
@@ -1166,7 +1226,24 @@ bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, packet& p)
 
 bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, struct frame& frame)
 {
-    return try_decode_frame_no_fcs(frame_bytes, frame.from, frame.to, frame.path, frame.data);
+    std::vector<address> path;
+    std::vector<uint8_t> data;
+
+    bool result = try_decode_frame_no_fcs(frame_bytes, frame.from, frame.to, path, data);
+
+    if (result)
+    {
+        assert(path.size() <= frame.path.size());
+        assert(data.size() <= frame.data.size());
+
+        frame.path_count = std::min(path.size(), frame.path.size());
+        std::copy_n(path.begin(), frame.path_count, frame.path.begin());
+
+        frame.data_length = std::min(data.size(), frame.data.size());
+        std::copy_n(data.begin(), frame.data_length, frame.data.begin());
+    }
+
+    return result;
 }
 
 bool try_decode_frame_no_fcs(const std::vector<uint8_t>& frame_bytes, address& from, address& to, std::vector<address>& path, std::vector<uint8_t>& data)
@@ -1181,7 +1258,24 @@ bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, address& from
 
 bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, struct frame& frame)
 {
-    return try_decode_frame_no_fcs(frame_bytes, frame.from, frame.to, frame.path, frame.data);
+    std::vector<address> path;
+    std::vector<uint8_t> data;
+
+    bool result = try_decode_frame_no_fcs(frame_bytes, frame.from, frame.to, path, data);
+
+    if (result)
+    {
+        assert(path.size() <= frame.path.size());
+        assert(data.size() <= frame.data.size());
+
+        frame.path_count = std::min(path.size(), frame.path.size());
+        std::copy_n(path.begin(), frame.path_count, frame.path.begin());
+
+        frame.data_length = std::min(data.size(), frame.data.size());
+        std::copy_n(data.begin(), frame.data_length, frame.data.begin());
+    }
+
+    return result;
 }
 
 bool try_decode_frame_no_fcs(std::span<const uint8_t> frame_bytes, packet& p)
@@ -1238,7 +1332,7 @@ std::vector<uint8_t> encode_addresses(const std::vector<address>& path)
 
 std::array<uint8_t, 7> encode_address(const struct address& address, bool last)
 {
-    return encode_address(address.text, address.ssid, (address.mark || address.command_response), last, address.reserved_bits);
+    return encode_address(std::string_view(address.text.data(), address.text_length), address.ssid, (address.mark || address.command_response), last, address.reserved_bits);
 }
 
 std::array<uint8_t, 7> encode_address(std::string_view address, int ssid, bool cr_or_h_bit, bool last)
@@ -1400,205 +1494,68 @@ std::vector<uint8_t> encode_bitstream(nrz_scrambled_t, const std::vector<uint8_t
     return encode_bitstream(nrz_scrambled, frame.begin(), frame.end(), initial_nrzi_level, preamble_flags, postamble_flags);
 }
 
-bool try_decode_bitstream(uint8_t bit, bitstream_state& state)
+bool try_decode_bitstream(uint8_t bit, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer)
 {
-    // Process one bit at a time through the AX.25 bitstream decoding pipeline:
-    //
-    // 1. NRZI decode the incoming raw bit
-    // 2. Add decoded bit to internal buffer
-    // 3. Check for HDLC flag patterns (0x7E = 01111110)
-    // 4. State machine:
-    //    - searching: Looking for first preamble flag
-    //    - in_preamble: Found flag(s), waiting for frame data or more flags
-    //    - in_frame: Collecting frame data until postamble flag
-    // 5. When postamble found, decode the accumulated frame
-    //
-    // Returns true when a complete packet has been decoded into 'packet'
-
-    // After a successful decode, we preserve the state (in_preamble with the shared flag)
-    // Only reset the complete flag, not the entire state - this allows shared flags to work
-    // where the postamble of one packet serves as the preamble of the next
-    if (state.complete)
-    {
-        state.complete = false;
-        // Don't reset phase, bitstream, or frame_start_index
-        // They were set correctly after decode to handle potential shared flags
-    }
-
-    // NRZI decode: no transition = 1, transition = 0
-    uint8_t decoded_bit = nrzi_decode(bit, state.last_nrzi_level);
-
-    state.last_nrzi_level = bit;
-
-    // Add decoded bit to buffer
-    state.bitstream.push_back(decoded_bit);
-
-    state.global_bit_count++;
-
-    // Check for HDLC flag pattern in the last 8 bits
-    bool found_hdlc_flag = ends_with_hdlc_flag(state.bitstream);
-
-    if (state.searching)
-    {
-        // Looking for the first HDLC flag
-        if (found_hdlc_flag)
-        {
-            state.searching = false;
-            state.in_preamble = true;
-            state.frame_start_index = state.bitstream.size(); // Frame starts after this flag
-            state.preamble_count_pending = 1;
-            state.postamble_count_pending = 0;
-
-            if (state.enable_diagnostics)
-            {
-                // Track where preamble started (first bit of this flag)
-                state.global_preamble_start_pending = state.global_bit_count - 7;
-
-                // Compute NRZI level before the preamble by working backwards through the 8 flag bits
-                uint8_t level = state.last_nrzi_level;
-                for (size_t i = 0; i < 8 && i < state.bitstream.size(); i++)
-                {
-                    if (state.bitstream[state.bitstream.size() - 1 - i] == 0)
-                    {
-                        level = level ? 0 : 1;
-                    }
-                }
-                state.frame_nrzi_level_pending = level;
-            }
-        }
-        else if (state.bitstream.size() > 16)
-        {
-            // Optimization: prevent buffer from growing indefinitely while searching
-            // Keep only the last 8 bits needed for flag detection
-            state.bitstream.erase(state.bitstream.begin(), state.bitstream.begin() + (state.bitstream.size() - 8));
-        }
-    }
-    else if (state.in_preamble)
-    {
-        // We've seen at least one flag. Check if this is another consecutive flag
-        // or if frame data has started.
-        if (found_hdlc_flag)
-        {
-            // Another consecutive flag - update frame start position
-            state.frame_start_index = state.bitstream.size();
-            state.preamble_count_pending++;
-        }
-        else
-        {
-            // Check if we have at least 8 bits since the last flag
-            // to confirm we're in frame data (not still at a flag boundary)
-            if (state.bitstream.size() >= state.frame_start_index + 8)
-            {
-                state.in_preamble = false;
-                state.in_frame = true;
-            }
-        }
-    }
-    else if (state.in_frame)
-    {
-        // Collecting frame data. Check for postamble flag.
-        if (found_hdlc_flag)
-        {
-            state.postamble_count_pending = 1;
-
-            // Found postamble! Extract frame bits (excluding the 8-bit postamble flag)
-            size_t frame_end = state.bitstream.size() - 8;
-
-            if (frame_end > state.frame_start_index)
-            {
-                // Extract frame bits
-                std::vector<uint8_t> frame_bits(state.bitstream.begin() + state.frame_start_index, state.bitstream.begin() + frame_end);
-
-                // Try to decode the packet
-                bool result = try_decode_frame(frame_bits.begin(), frame_bits.end(), state.frame);
-
-                // Set the global bit positions for the successfully found frame
-                state.global_preamble_start = state.global_preamble_start_pending;
-                state.global_postamble_end = state.global_bit_count;
-                state.frame_nrzi_level = state.frame_nrzi_level_pending;
-
-                // Prepare for next packet - the postamble can be the preamble of the next
-                // Keep only the last 8 bits (the flag) for potential reuse as preamble
-                state.bitstream.erase(state.bitstream.begin(), state.bitstream.begin() + frame_end);
-                state.frame_start_index = state.bitstream.size(); // = 8 (position after the flag)
-                state.in_preamble = true; // Ready for next frame
-                state.in_frame = false;
-                // If we found a valid frame, set complete flag regardless whether the packet was decoded successfully
-                state.complete = true;
-                state.preamble_count = state.preamble_count_pending;
-                state.postamble_count = state.postamble_count_pending;
-                state.preamble_count_pending = 1;
-                state.postamble_count_pending = 0;
-
-                state.frame_size_bits = frame_bits.size();
-
-                if (state.enable_diagnostics)
-                {
-                    // Set up tracking for potential next frame using the shared flag
-                    state.global_preamble_start_pending = state.global_bit_count - 7;
-
-                    // Compute NRZI level before this shared flag
-                    uint8_t level = state.last_nrzi_level;
-                    for (size_t i = 0; i < 8; i++)
-                    {
-                        if (state.bitstream[state.bitstream.size() - 1 - i] == 0)
-                        {
-                            level = level ? 0 : 1;
-                        }
-                    }
-
-                    state.frame_nrzi_level_pending = level;
-                }
-
-                return result;
-            }
-            else
-            {
-                // Empty frame - just consecutive flags, stay in preamble mode
-                state.frame_start_index = state.bitstream.size();
-                state.in_frame = false;
-                state.in_preamble = true;
-            }
-        }
-
-        // Continue collecting frame bits
-        //
-        // Safety check: prevent runaway buffer growth (max reasonable AX.25 frame)
-        // AX.25 max frame is ~330 bytes = 2640 bits, with bit stuffing could be ~3200 bits
-        // Add preamble flags overhead, let's say 4000 bits max
-
-        if (state.bitstream.size() > 8000)
-        {
-            // Something went wrong (noise, lost sync), reset to search mode
-            state.searching = true;
-            state.in_frame = false;
-            state.bitstream.clear();
-            state.frame_start_index = 0;
-            state.global_preamble_start_pending = 0;
-            state.frame_nrzi_level_pending = 0;
-            state.preamble_count_pending = 0;
-            state.postamble_count_pending = 0;
-        }
-    }
-
-    return false; // No complete packet yet
+    struct frame frame;
+    return try_decode_bitstream(bit, state, bitstream_buffer, frame);
 }
 
-bool try_decode_bitstream(uint8_t bit, packet& packet, bitstream_state& state)
+bool try_decode_bitstream(uint8_t bit, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer, struct frame& frame)
 {
-    bool result = try_decode_bitstream(bit, state);
+    constexpr size_t buffer_capacity = 8001;
+    if (bitstream_buffer.size() < buffer_capacity)
+    {
+        bitstream_buffer.resize(buffer_capacity);
+    }
+
+    address from;
+    address to;
+    std::array<address, 8> path = {};
+    std::array<uint8_t, 256> data = {};
+    uint8_t control = 0;
+    uint8_t pid = 0;
+    std::array<uint8_t, 2> actual_crc = {};
+    std::array<uint8_t, 2> expected_crc = {};
+
+    auto [path_out, data_out, result] = try_decode_bitstream(bit, state, bitstream_buffer.begin(), bitstream_buffer.end(), from, to, path.begin(), data.begin(), data.size(), control, pid, actual_crc, expected_crc);
+
     if (result)
     {
-        packet = to_packet(state.frame);
+        frame.from = from;
+        frame.to = to;
+
+        frame.path_count = static_cast<size_t>(std::distance(path.begin(), path_out));
+
+        std::copy_n(path.begin(), frame.path_count, frame.path.begin());
+
+        frame.data_length = static_cast<size_t>(std::distance(data.begin(), data_out));
+
+        std::copy_n(data.begin(), frame.data_length, frame.data.begin());
+
+        frame.control[0] = control;
+        frame.pid = pid;
+        frame.crc = actual_crc;
+    }
+
+    return result;
+}
+
+bool try_decode_bitstream(uint8_t bit, packet& packet, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer)
+{
+    struct frame frame;
+    bool result = try_decode_bitstream(bit, state, bitstream_buffer, frame);
+    if (result)
+    {
+        packet = to_packet(frame);
     }
     return result;
 }
 
-bool try_decode_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state)
+bool try_decode_bitstream(const std::vector<uint8_t>& bitstream, size_t offset, packet& packet, size_t& read, bitstream_state& state, std::vector<uint8_t>& bitstream_buffer)
 {
     for (size_t i = offset; i < bitstream.size(); i++)
     {
-        if (try_decode_bitstream(bitstream[i], packet, state))
+        if (try_decode_bitstream(bitstream[i], packet, state, bitstream_buffer))
         {
             read = i - offset + 1;
             return true;
@@ -2474,14 +2431,14 @@ header encode_structured_header(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f
 
     h.control = encode_control(type, control, command_response);
 
-    h.to_address = encode_address_sixbit(f.to.text);
-    h.from_address = encode_address_sixbit(f.from.text);
+    h.to_address = encode_address_sixbit(std::string_view(f.to.text.data(), f.to.text_length));
+    h.from_address = encode_address_sixbit(std::string_view(f.from.text.data(), f.from.text_length));
 
     // Mask SSIDs to 4 bits — AX.25 SSIDs are 0–15 and IL2P packs both into a single byte.
     h.to_address_ssid = static_cast<uint8_t>(f.to.ssid & 0b00001111u);
     h.from_address_ssid = static_cast<uint8_t>(f.from.ssid & 0b00001111u);
 
-    h.payload_length = static_cast<uint16_t>(f.data.size());
+    h.payload_length = static_cast<uint16_t>(f.data_length);
 
     h.pid = encode_pid(type, f.pid);
 
@@ -2545,7 +2502,7 @@ bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& 
 
     constexpr size_t max_payload = 1023;
 
-    if (f.data.size() > max_payload)
+    if (f.data_length > max_payload)
     {
         return false;
     }
@@ -2585,7 +2542,7 @@ bool try_encode_structured_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& 
     std::array<uint8_t, 13> header_bytes = encode_header(header);
 
     scramble_and_reed_solomon_encode_header(header_encoder, header_bytes, output);
-    scramble_and_reed_solomon_encode_payload(payload_encoder, f.data, output);
+    scramble_and_reed_solomon_encode_payload(payload_encoder, std::span<const uint8_t>(f.data.data(), f.data_length), output);
 
     std::array<uint8_t, 4> encoded_crc = encode_crc_hamming(crc);
     output.insert(output.end(), encoded_crc.begin(), encoded_crc.end());
@@ -2691,7 +2648,7 @@ std::vector<uint8_t> encode_frame(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame&
 
     bool success = false;
 
-    if (f.path.empty())
+    if (f.path_count == 0)
     {
         success = try_encode_structured_frame(f, rs_header.get(), rs_payload.get(), output);
     }
