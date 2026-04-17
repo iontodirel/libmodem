@@ -32,6 +32,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #ifndef LIBMODEM_NAMESPACE
 #define LIBMODEM_NAMESPACE libmodem
@@ -46,55 +47,36 @@
 #define LIBMODEM_NAMESPACE_END }
 #endif
 
-// **************************************************************** //
-//                                                                  //
-//                                                                  //
-// sdft_afsk_demodulator_double                                     //
-//                                                                  //
-//                                                                  //
-// **************************************************************** //
-
 LIBMODEM_NAMESPACE_BEGIN
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// biquad_bandpass                                                  //
+// demod_result                                                     //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct biquad_bandpass
+struct demod_result
 {
-    biquad_bandpass() = default;
-    biquad_bandpass(double f_center, double bandwidth, int sample_rate);
-
-    double process(double sample) noexcept;
-    void reset() noexcept;
-
-private:
-    double b0_ = 0;
-    double b2_ = 0;
-    double a1_ = 0;
-    double a2_ = 0;
-    double w1_ = 0;
-    double w2_ = 0;
+    uint8_t bit = 0;
+    double confidence = 0.0;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// pll_gardner                                                      //
+// gardner_ted                                                      //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct pll_gardner
+struct gardner_ted
 {
-    pll_gardner() = default;
-    pll_gardner(double samples_per_bit, double alpha);
+    gardner_ted() = default;
+    gardner_ted(double samples_per_bit, double alpha);
 
-    bool advance(double soft) noexcept;
+    bool process(double soft) noexcept;
     void reset() noexcept;
 
 private:
@@ -102,64 +84,184 @@ private:
     double freq_ = 0;
     double freq_nominal_ = 0;
     double alpha_ = 0;
-
-    // Gardner TED state
     double mid_soft_ = 0;
     double prev_soft_ = 0;
+    double prev_sample_ = 0;
+    double decision_soft_ = 0;
     bool mid_captured_ = false;
 };
 
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// sdft_afsk_demodulator_double                                     //
+// truncated_fir_bandpass                                            //
+//                                                                  //
+// Truncated-window (no tapering) FIR bandpass filter.              //
+// Sharp cutoff with -13dB sidelobes. Optimal for AFSK where       //
+// sharp frequency isolation beats smooth rolloff.                  //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
 
-struct sdft_afsk_demodulator_double
+struct truncated_fir_bandpass
 {
-    sdft_afsk_demodulator_double(double f_mark = 1200.0, double f_space = 2200.0, int bitrate = 1200, int sample_rate = 48000);
+    truncated_fir_bandpass() = default;
+    truncated_fir_bandpass(double f_mark, double f_space, int bitrate, int sample_rate, double prefilter_baud, double filter_sym_lengths);
 
-    bool try_demodulate(double sample, uint8_t& bit) noexcept;
+    double process(double sample) noexcept;
     void reset() noexcept;
 
 private:
-    double samples_per_bit_ = 0; // exact ratio (e.g. 36.75)
-    static constexpr int sdft_window_length = 51;
-    static constexpr double bpf_extra_bandwidth = 600.0;
-    static constexpr double pll_alpha = -0.07;
-    int current_bit_samples_ = sdft_window_length;
+    static constexpr int max_taps = 512;
+    double coeffs_[max_taps] = {};
+    double buffer_[max_taps] = {};
+    int taps_ = 0;
+    int pos_ = 0;
+};
 
-    // Band-pass filter
-    biquad_bandpass bpf_;
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// quad_sinc_filter                                                 //
+//                                                                  //
+// 4-channel truncated sinc (brick-wall) lowpass filter.            //
+// Shares one coefficient set across mark I/Q + space I/Q.          //
+// bandwidth = cutoff as fraction of symbol rate.                   //
+// width = filter length in symbol periods.                         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
 
-    // Circular buffer for sliding DFT
-    static constexpr int max_window_size = 64;
-    double sdft_window_[max_window_size] = {};
-    int sdft_window_pos_ = 0;
-    int sdft_samples_fed_ = 0;
+struct sinc_filter_result
+{
+    double mark_i;
+    double mark_q;
+    double space_i;
+    double space_q;
+};
 
-    // Sliding DFT complex state
-    double re_mark_ = 0;
-    double im_mark_ = 0;
-    double re_space_ = 0;
-    double im_space_ = 0;
+struct quad_sinc_filter
+{
+    quad_sinc_filter() = default;
+    quad_sinc_filter(double bandwidth, double width, double samples_per_bit);
 
-    // Twiddle factors
-    double tw_re_mark_ = 0;
-    double tw_im_mark_ = 0;
-    double tw_re_space_ = 0;
-    double tw_im_space_ = 0;
+    sinc_filter_result process(double in_mark_i, double in_mark_q, double in_space_i, double in_space_q) noexcept;
+    void reset() noexcept;
 
-    // W^N correction
-    double wn_re_mark_ = 0;
-    double wn_im_mark_ = 0;
-    double wn_re_space_ = 0;
-    double wn_im_space_ = 0;
+private:
+    static constexpr int max_taps = 256;
+    double coeffs_[max_taps] = {};
+    double buf0_[max_taps] = {};
+    double buf1_[max_taps] = {};
+    double buf2_[max_taps] = {};
+    double buf3_[max_taps] = {};
+    int taps_ = 0;
+    int pos_ = 0;
+};
 
-    // PLL bit timing recovery
-    pll_gardner pll_;
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// iq_mixer                                                         //
+//                                                                  //
+// Dual-tone I/Q mixer for mark and space frequencies.              //
+// Outputs 4 channels: mark_I, mark_Q, space_I, space_Q.           //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct iq_mix_result
+{
+    double mark_i;
+    double mark_q;
+    double space_i;
+    double space_q;
+};
+
+struct iq_mixer
+{
+    iq_mixer() = default;
+    iq_mixer(double f_mark, double f_space, int sample_rate);
+
+    iq_mix_result process(double sample) noexcept;
+    void reset() noexcept;
+
+private:
+    double phase_mark_ = 0;
+    double phase_space_ = 0;
+    double phase_inc_mark_ = 0;
+    double phase_inc_space_ = 0;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// dfb_agc                                                          //
+//                                                                  //
+// Decision-feedback AGC. Tracks mark and space reference levels    //
+// independently using the sign of the previous soft decision.      //
+// Asymmetric rates: mark tracks faster than space.                 //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct agc_result
+{
+    double mark_norm;
+    double space_norm;
+};
+
+struct dfb_agc
+{
+    dfb_agc() = default;
+    dfb_agc(double alpha_mark, double alpha_space);
+
+    // Normalize mark/space amplitudes. Caller provides last decision for feedback.
+    agc_result process(double mark_amp, double space_amp, double last_soft) noexcept;
+    void reset() noexcept;
+
+private:
+    double mark_ref_ = 0.001;
+    double space_ref_ = 0.001;
+    double alpha_mark_ = 0.008;
+    double alpha_space_ = 0.005;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
+// sinc_corr_afsk_demodulator                                       //
+//                                                                  //
+// Sinc-LPF correlator AFSK 1200 demodulator.                       //
+//                                                                  //
+// Composed from modular blocks:                                    //
+//                                                                  //
+//   BPF -> I/Q mixer -> quad LPF -> sqrt -> DFB-AGC -> TED         //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct sinc_corr_afsk_demodulator
+{
+    sinc_corr_afsk_demodulator() = default;
+    sinc_corr_afsk_demodulator(double f_mark, double f_space, int bitrate, int sample_rate,
+                               double prefilter_baud, double filter_sym_lengths,
+                               double sinc_bw, double sinc_rw,
+                               double dfb_alpha_mark, double dfb_alpha_space,
+                               double pll_alpha);
+
+    bool try_demodulate(double sample, uint8_t& bit) noexcept;
+    bool try_demodulate(double sample, demod_result& result) noexcept;
+    void reset() noexcept;
+
+private:
+    truncated_fir_bandpass bpf_;
+    iq_mixer mixer_;
+    quad_sinc_filter lpf_;
+    dfb_agc agc_;
+    gardner_ted ted_;
+    double last_soft_ = 0;
+    double ref_amplitude_ = 1.0;
 };
 
 LIBMODEM_NAMESPACE_END
