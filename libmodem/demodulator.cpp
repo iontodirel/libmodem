@@ -40,6 +40,22 @@ LIBMODEM_NAMESPACE_BEGIN
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// hard_limiter                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+double hard_limiter::process(double sample) noexcept
+{
+    // Clips audio to +/-1 (sign function). Removes all amplitude
+    // information, leaving only zero-crossing frequency content.
+
+    return (sample >= 0) ? 1.0 : -1.0;
+}
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // gardner_ted                                                      //
 //                                                                  //
 //                                                                  //
@@ -449,7 +465,9 @@ bool sinc_corr_afsk_demodulator::try_demodulate(double sample, demod_result& res
 
     // Decision-feedback AGC: normalize mark/space using tracked reference levels
     auto agc_out = agc_.process(mark_amp, space_amp, last_soft_);
+
     double soft = agc_out.mark_norm - agc_out.space_norm;
+
     last_soft_ = soft;
 
     // Symbol timing recovery: Gardner TED fires when a bit boundary is detected

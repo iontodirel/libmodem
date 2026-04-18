@@ -221,6 +221,33 @@ std::string to_string(const struct address& address, bool ignore_mark)
     return result;
 }
 
+bool validate_address(const struct address& address)
+{
+    // Reject empty callsigns and lengths that exceed the fixed-size text buffer.
+    if (address.text_length == 0 || address.text_length > address.text.size())
+    {
+        return false;
+    }
+
+    // AX.25 address field allows only uppercase letters and digits (shifted ASCII).
+    for (size_t i = 0; i < address.text_length; i++)
+    {
+        unsigned char c = static_cast<unsigned char>(address.text[i]);
+        if (!std::isupper(c) && !std::isdigit(c))
+        {
+            return false;
+        }
+    }
+
+    // SSID is a 4-bit field, so valid values are 0..15.
+    if (address.ssid < 0 || address.ssid > 15)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool try_parse_int(std::string_view string, int& value)
 {
     // Attempt to parse an integer from the given string_view.
@@ -536,6 +563,57 @@ frame to_frame(const packet& p)
     return f;
 }
 
+bool validate_pid(uint8_t pid)
+{
+    // Validates that the PID (Protocol Identifier) byte matches one of the
+    // layer-3 protocol values defined by the AX.25 v2.2 specification.
+
+    // AX.25 layer-3 PIDs occupy the ranges 0x10-0x1F and 0x20-0x2F.
+    if ((pid & 0x30) == 0x10 || (pid & 0x30) == 0x20)
+    {
+        return true;
+    }
+
+    switch (pid)
+    {
+        case 0x01: // ISO 8208
+        case 0x06: // compressed TCP/IP
+        case 0x07: // uncompressed TCP/IP
+        case 0x08: // segmentation fragment
+        case 0xC3: // TEXNET
+        case 0xC4: // link quality protocol
+        case 0xCA: // Appletalk
+        case 0xCB: // Appletalk ARP
+        case 0xCC: // ARPA IP
+        case 0xCD: // ARPA ARP
+        case 0xCE: // FlexNet
+        case 0xCF: // TheNET
+        case 0xF0: // no layer 3 (APRS)
+        case 0xFF: // escape
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool validate_frame(const struct frame& frame)
+{
+    // AX.25 permits at most 8 digipeater addresses in the path, and the
+    // information (data) field is capped at 256 bytes.
+    if (frame.path_count > 8 || frame.data_length > 256)
+    {
+        return false;
+    }
+
+    // Delegate to the field-level overload, passing only the populated
+    // portions of the path and data buffers.
+    //
+    // The frame already carries a CRC that was produced earlier in the pipeline;
+    // re-validating it is out of scope here, so we pass it as both the actual and
+    // expected CRC, effectively skipping the CRC comparison at this layer.
+    return validate_frame(frame.from, frame.to, frame.path.begin(), frame.path.begin() + frame.path_count, frame.data.begin(), frame.data.begin() + frame.data_length, frame.control[0], frame.pid, frame.crc, frame.crc);
+}
+
 LIBMODEM_AX25_NAMESPACE_END
 
 // **************************************************************** //
@@ -554,6 +632,7 @@ void bitstream_state::reset()
     in_preamble = false;
     in_frame = false;
     complete = false;
+    aborted = false;
     last_nrzi_level = 0;
     frame_start_index = 0;
     frame_end_index = 0;
@@ -566,7 +645,9 @@ void bitstream_state::reset()
     global_preamble_start = 0;
     global_postamble_end = 0;
     frame_nrzi_level = 0;
+    preamble_nrzi_level = 0;
     frame_size_bits = 0;
+    // max_frame_bits is intentionally not reset; it is a configuration setting
     global_bit_count = 0;
     global_preamble_start_pending = 0;
     frame_nrzi_level_pending = 0;
@@ -1816,18 +1897,18 @@ enum class header_type : uint8_t
 
 enum class pid_abbreviation : uint8_t
 {
-    s_frame = 0x0,          // supervisory frame — no AX.25 PID byte
-    u_frame = 0x1,          // unnumbered frame — no PID for non-UI
-    layer3 = 0x2,           // AX.25 PID 0x10-0x1F or 0x20-0x2F (AX.25 layer 3)
-    iso8208 = 0x3,          // AX.25 PID 0x01 (ISO 8208/CCITT X.25 PLP)
-    compressed_tcp = 0x4,   // AX.25 PID 0x06
-    uncompressed_tcp = 0x5, // AX.25 PID 0x07
-    segmentation = 0x6,     // AX.25 PID 0x08
-    ip = 0xB,               // AX.25 PID 0xCC (ARPA IP)
-    arp = 0xC,              // AX.25 PID 0xCD (ARPA ARP)
-    flexnet = 0xD,          // AX.25 PID 0xCE (FlexNet)
-    thenet = 0xE,           // AX.25 PID 0xCF (TheNET)
-    no_layer3 = 0xF,        // AX.25 PID 0xF0 (APRS)
+    s_frame = 0x0,          // supervisory frame (no PID byte)
+    u_frame = 0x1,          // non-UI unnumbered frame (no PID byte)
+    layer3 = 0x2,           // AX.25 layer 3 (PID 0x10-0x1F or 0x20-0x2F)
+    iso8208 = 0x3,          // ISO 8208 / CCITT X.25 PLP (PID 0x01)
+    compressed_tcp = 0x4,   // compressed TCP/IP (PID 0x06)
+    uncompressed_tcp = 0x5, // uncompressed TCP/IP (PID 0x07)
+    segmentation = 0x6,     // segmentation fragment (PID 0x08)
+    ip = 0xB,               // ARPA IP (PID 0xCC)
+    arp = 0xC,              // ARPA ARP (PID 0xCD)
+    flexnet = 0xD,          // FlexNet (PID 0xCE)
+    thenet = 0xE,           // TheNET (PID 0xCF)
+    no_layer3 = 0xF,        // APRS / no layer 3 (PID 0xF0)
     unknown = 0xFF
 };
 
@@ -1913,15 +1994,17 @@ std::array<char, 6> encode_address_sixbit(std::string_view address)
 
 uint8_t encode_header_byte(char address_char, uint8_t bit6, uint8_t bit7)
 {
+    // Packs a single IL2P header byte:
+    //
     // +-------+-------+-------+-------+-------+-------+-------+-------+
     // | bit 7 | bit 6 | bit 5 | bit 4 | bit 3 | bit 2 | bit 1 | bit 0 |
     // +-------+-------+-------+-------+-------+-------+-------+-------+
     // | bit7  | bit6  |       6-bit encoded callsign character        |
     // +-------+-------+-----------------------------------------------+
     //
-    // bits [5:0] — ASCII character converted to IL2P 6-bit encoding
-    // bit  [6]   — a single bit from the UI flag, PID, or control field
-    // bit  [7]   — a single bit from the frame type or payload length
+    // bits [5:0] - ASCII character converted to IL2P 6-bit encoding
+    // bit  [6]   - one bit from the UI flag, PID, or control field
+    // bit  [7]   - one bit from the frame type or payload length
 
     return encode_address_char(address_char) | ((bit6 & 0b1) << 6) | ((bit7 & 0b1) << 7);
 }
@@ -2434,7 +2517,7 @@ header encode_structured_header(const LIBMODEM_AX25_NAMESPACE_REFERENCE frame& f
     h.to_address = encode_address_sixbit(std::string_view(f.to.text.data(), f.to.text_length));
     h.from_address = encode_address_sixbit(std::string_view(f.from.text.data(), f.from.text_length));
 
-    // Mask SSIDs to 4 bits — AX.25 SSIDs are 0–15 and IL2P packs both into a single byte.
+    // Mask SSIDs to 4 bits. AX.25 SSIDs are 0-15 and IL2P packs both into a single byte.
     h.to_address_ssid = static_cast<uint8_t>(f.to.ssid & 0b00001111u);
     h.from_address_ssid = static_cast<uint8_t>(f.from.ssid & 0b00001111u);
 
@@ -2449,8 +2532,8 @@ std::array<uint8_t, 13> encode_transparent_header(uint16_t payload_length)
 {
     // Builds the 13-byte IL2P transparent (Type 0) header.
     //
-    // The payload length (up to 1023 bytes) is encoded as a 10-bit
-    // value spread across the MSBs of header bytes [2..11] — one bit per byte.
+    // The payload length (up to 1023 bytes) is a 10-bit field scattered across the
+    // MSBs of header bytes [2..11], one bit per byte:
     //
     //  +-------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+-------+
     //  | header byte | [ 2]  | [ 3]  | [ 4]  | [ 5]  | [ 6]  | [ 7]  | [ 8]  | [ 9]  | [10]  | [11]  |
@@ -2460,9 +2543,9 @@ std::array<uint8_t, 13> encode_transparent_header(uint16_t payload_length)
     //  |             | (MSB) |       |       |       |       |       |       |       |       | (LSB) |
     //  +-------------+-------+-------+-------+-------+-------+-------+-------+-------+-------+-------+
     //
-    // This scatters the length field across the header so that Reed-Solomon
-    // can protect each bit independently, rather than having a contiguous
-    // multi-byte length field where a burst error could corrupt all bits at once.
+    // Spreading the bits this way lets Reed-Solomon protect each length bit independently:
+    // a burst error that would wipe out a contiguous multi-byte length field only
+    // damages one bit per byte here, which the ECC can recover.
 
     std::array<uint8_t, 13> header{};
 

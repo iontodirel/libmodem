@@ -66,6 +66,19 @@ struct demod_result
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
+// hard_limiter                                                     //
+//                                                                  //
+//                                                                  //
+// **************************************************************** //
+
+struct hard_limiter
+{
+    double process(double sample) noexcept;
+};
+
+// **************************************************************** //
+//                                                                  //
+//                                                                  //
 // gardner_ted                                                      //
 //                                                                  //
 //                                                                  //
@@ -94,11 +107,12 @@ private:
 // **************************************************************** //
 //                                                                  //
 //                                                                  //
-// truncated_fir_bandpass                                            //
+// truncated_fir_bandpass                                           //
 //                                                                  //
-// Truncated-window (no tapering) FIR bandpass filter.              //
-// Sharp cutoff with -13dB sidelobes. Optimal for AFSK where       //
-// sharp frequency isolation beats smooth rolloff.                  //
+// FIR bandpass filter using a rectangular (untapered) window.      //
+// Delivers a sharp passband edge at the cost of -13 dB sidelobes,  //
+// which is a good trade-off for AFSK, where isolating the mark and //
+// space tones matters more than smooth spectral rolloff.           //
 //                                                                  //
 //                                                                  //
 // **************************************************************** //
@@ -232,8 +246,7 @@ private:
 //                                                                  //
 // sinc_corr_afsk_demodulator                                       //
 //                                                                  //
-// Sinc-LPF correlator AFSK 1200 demodulator.                       //
-//                                                                  //
+// Correlator AFSK 1200 demodulator.                                //
 // Composed from modular blocks:                                    //
 //                                                                  //
 //   BPF -> I/Q mixer -> quad LPF -> sqrt -> DFB-AGC -> TED         //
